@@ -44,8 +44,8 @@ that complements the 14-day post-hoc demotion verdict.
 promote_events log and (in `--auto-daemon-mode act`) auto-invokes
 `promote.py` for file-swap levers when a verdict says go AND a
 14-day cooldown has elapsed since the last action. Ships in
-`preview` mode by default -- logs decisions only, takes no action --
-so operators can review what the daemon would do for several sessions
+`preview` mode by default (logs decisions only; takes no action), so
+operators can review what the daemon would do for several sessions
 before flipping to `act`. CLI-flag levers (stake-scaling,
 gate-threshold) stay manual under the daemon since they don't actuate
 through a file swap. This is the transition from "self-improving with
@@ -111,11 +111,11 @@ These fields are diagnostic-only today. They help separate real state-value oppo
 
 ### The fair-value model (3 stages)
 
-**Stage 1 â€” Poisson base probability**: A historical lookup table built from 5 years of MLB game data. Given the exact game state (score, inning, half-inning, outs, base runners), it returns the historical probability of the total going over the line. Poisson calibration smooths cells with limited data.
+**Stage 1 -- Poisson base probability**: A historical lookup table built from 5 years of MLB game data. Given the exact game state (score, inning, half-inning, outs, base runners), it returns the historical probability of the total going over the line. Poisson calibration smooths cells with limited data.
 
-**Stage 2 â€” Park & weather adjustment**: Adjusts the Stage-1 probability based on the venue (park factor) and current weather (temperature, wind direction and speed). A 90-degree day with wind blowing out at Wrigley is materially different from a cold night at Oakland Coliseum. The Stage-2 model has six feature families: `park` (categorical per-stadium baseline), `temp`, `wind`, `park_wind` (interaction), `density_alt` (elevation Ã— temperature interaction â€” captures ball-carry physics so a hot day at Coors â†’ ~8,900 ft density altitude is treated differently from a cold night at Coors), and `hr_factor` (per-(park, season) HR rate vs league mean â€” captures year-over-year drift in park HR-friendliness from juiced ball, fence moves, humidor changes, etc., that the multi-year `park` bucket averages away). The `density_alt` and `hr_factor` families were added 2026-05-08 and only take effect after the next Stage-2 cache rebuild.
+**Stage 2 -- Park & weather adjustment**: Adjusts the Stage-1 probability based on the venue (park factor) and current weather (temperature, wind direction and speed). A 90-degree day with wind blowing out at Wrigley is materially different from a cold night at Oakland Coliseum. The Stage-2 model has six feature families: `park` (categorical per-stadium baseline), `temp`, `wind`, `park_wind` (interaction), `density_alt` (elevation x temperature interaction -- captures ball-carry physics so a hot day at Coors -> ~8,900 ft density altitude is treated differently from a cold night at Coors), and `hr_factor` (per-(park, season) HR rate vs league mean -- captures year-over-year drift in park HR-friendliness from juiced ball, fence moves, humidor changes, etc., that the multi-year `park` bucket averages away). The `density_alt` and `hr_factor` families were added 2026-05-08 and only take effect after the next Stage-2 cache rebuild.
 
-**Stage 3 â€” Team offense adjustment**: Adjusts further for the two teams actually playing. A game between the Yankees and Dodgers has a different run expectation than the same game state between two weak offenses. The current Stage-3 (deployed 2026-05-07, TR20) blends three EB-shrunk per-team windows -- prior season (negative coefficient -0.151, regression-to-mean), season-to-date (+0.141), and trailing 10-game momentum (+0.150) -- multiplied by a linear inning-weight ramp. Replaces the original 2026-04 single-50-game-window v1 model that was found to be ~3.2x too aggressive on a 1.13M-row residual table over 2021-2026. See `model_improvements/team_offense_v2_phase4_findings_2026_05_07.txt`.
+**Stage 3 -- Team offense adjustment**: Adjusts further for the two teams actually playing. A game between the Yankees and Dodgers has a different run expectation than the same game state between two weak offenses. The current Stage-3 (deployed 2026-05-07, TR20) blends three EB-shrunk per-team windows -- prior season (negative coefficient -0.151, regression-to-mean), season-to-date (+0.141), and trailing 10-game momentum (+0.150) -- multiplied by a linear inning-weight ramp. Replaces the original 2026-04 single-50-game-window v1 model that was found to be ~3.2x too aggressive on a 1.13M-row residual table over 2021-2026. See `model_improvements/team_offense_v2_phase4_findings_2026_05_07.txt`.
 
 ### The gates (filters that prevent bad bets)
 
@@ -123,19 +123,19 @@ Even when the math looks good, many game situations are known to produce unrelia
 
 | Gate | What it blocks | Why |
 |---|---|---|
-| Inning minimum | Lines < 8.5: no bets before inning 4; lines â‰¥ 8.5: before inning 5 | Too many innings remain, too much variance |
+| Inning minimum | Lines < 8.5: no bets before inning 4; lines >= 8.5: before inning 5 | Too many innings remain, too much variance |
 | Minimum ask | Standard lines: ask < 0.55; high lines: ask < 0.60 | Thin books / noisy pricing |
-| Pace check | Current run pace Ã— 9 innings < line âˆ’ 1.5 | Game is objectively too slow-scoring |
+| Pace check | Current run pace x 9 innings < line - 1.5 | Game is objectively too slow-scoring |
 | Runs still needed | More than 3.5 runs still needed to hit the line | Historically poor ROI at this distance |
-| Close game + far from line | Lead â‰¤ 1 AND runs needed â‰¥ 4 | Both managers play defense-first in tight games |
-| Inning 5 dead zone | Inning 5 AND runs needed â‰¥ 2.5 | Bullpen transition inning suppresses scoring |
-| Inning 6 dead zone | Inning 6 AND runs needed â‰¥ 2.5 | Setup relievers create another scoring lull |
-| Blowout / blowout-adjacent | Trailing â‰¤ 1 run AND lead â‰¥ 6 AND inning â‰¥ 6; OR trailing â‰¤ 1 AND lead â‰¥ 4 AND inning â‰¥ 7 | Poisson inflates probability 11â€“30pp; trailing team is functionally eliminated |
-| FV saturation | Stage-1 base fair value â‰¥ 0.99 | Poisson ceiling = phantom API score update; market LTP contradicts model |
-| Large FV/ask gap (late) | Model edge > 28pp AND inning â‰¥ 7 | Market is better-informed; large late-inning gaps are a phantom-run fingerprint |
-| **Extreme edge (any inning) [TR17, ENFORCED 2026-05-01; threshold tightened TR19, 2026-05-03]** | **Model edge > 22pp in ANY inning** | **Originally enforced at 0.30 on 2026-05-01 (TR17). Tightened to 0.22 on 2026-05-03 (TR19) after the 2026-04-28 → 2026-05-03 live window: edge>0.20 cohort was 4W/8L, -$79.57 on 12 bets at avg fill ~0.63 (Wilson 95% upper bound ~58%, well below break-even ~62%). All 8 unique window losses had `p_score_event_proxy = 0.000` -- no ask-jump confirmation that an actual run scored. Bets with edge<0.20 in the same window were +$24.38 (10W/1L). See `scripts/analysis/analyze_window_2026_04_28_to_05_03.py` for the full analysis.** |
-| Stage-2 extreme suppression | S2 logit delta â‰¤ âˆ’0.20 AND inning â‰¥ 6 | Extreme park/weather suppression exceeds Stage-2 model's correction capacity |
-| Pitcher quality boost | Current pitcher ERA < 3.75 AND inning â‰¤ 6 | Raises minimum edge by 3pp when facing a quality starter (requires pitcher cache) |
+| Close game + far from line | Lead <= 1 AND runs needed >= 4 | Both managers play defense-first in tight games |
+| Inning 5 dead zone | Inning 5 AND runs needed >= 2.5 | Bullpen transition inning suppresses scoring |
+| Inning 6 dead zone | Inning 6 AND runs needed >= 2.5 | Setup relievers create another scoring lull |
+| Blowout / blowout-adjacent | Trailing <= 1 run AND lead >= 6 AND inning >= 6; OR trailing <= 1 AND lead >= 4 AND inning >= 7 | Poisson inflates probability 11-30pp; trailing team is functionally eliminated |
+| FV saturation | Stage-1 base fair value >= 0.99 | Poisson ceiling = phantom API score update; market LTP contradicts model |
+| Large FV/ask gap (late) | Model edge > 28pp AND inning >= 7 | Market is better-informed; large late-inning gaps are a phantom-run fingerprint |
+| **Extreme edge (any inning) [TR17, ENFORCED 2026-05-01; threshold tightened TR19, 2026-05-03]** | **Model edge > 22pp in ANY inning** | **Originally enforced at 0.30 on 2026-05-01 (TR17). Tightened to 0.22 on 2026-05-03 (TR19) after the 2026-04-28 -> 2026-05-03 live window: edge>0.20 cohort was 4W/8L, -$79.57 on 12 bets at avg fill ~0.63 (Wilson 95% upper bound ~58%, well below break-even ~62%). All 8 unique window losses had `p_score_event_proxy = 0.000` -- no ask-jump confirmation that an actual run scored. Bets with edge<0.20 in the same window were +$24.38 (10W/1L). See `scripts/analysis/analyze_window_2026_04_28_to_05_03.py` for the full analysis.** |
+| Stage-2 extreme suppression | S2 logit delta <= -0.20 AND inning >= 6 | Extreme park/weather suppression exceeds Stage-2 model's correction capacity |
+| Pitcher quality boost | Current pitcher ERA < 3.75 AND inning <= 6 | Raises minimum edge by 3pp when facing a quality starter (requires pitcher cache) |
 
 ### Order execution
 
@@ -150,8 +150,8 @@ limit = bid + spread x 0.65
 This is a baseline heuristic, not a guaranteed edge. The long-term objective is to replace fixed spread heuristics with an execution policy optimized on realized EV.
 
 **Order management after placement:**
-- Every ~4â€“10 seconds, open orders are polled for fills
-- If the model's current fair value decays to within 5% of our limit price (edge collapsed), the order is cancelled â€” the thesis is no longer valid
+- Every ~4-10 seconds, open orders are polled for fills
+- If the model's current fair value decays to within 5% of our limit price (edge collapsed), the order is cancelled -- the thesis is no longer valid
 - If the game ends before the order fills, it is cancelled and recorded as a missed signal
 - A 3-hour safety-net timeout exists for abandoned orders
 
@@ -164,22 +164,22 @@ Until calibration quality is proven, conservative sizing (flat or tightly capped
 The Kelly formula for a binary prediction market is:
 
 ```
-f* = (fair_value âˆ’ limit_price) / (1 âˆ’ limit_price)
+f* = (fair_value - limit_price) / (1 - limit_price)
 ```
 
 Where `fair_value` is the model's probability estimate and `limit_price` is the price we're paying. This fraction represents how much of the bankroll has positive expected value at this edge. Multiplying by quarter-Kelly (0.25) and the daily budget gives the stake:
 
 ```
-stake = f* Ã— 0.25 Ã— daily_budget
+stake = f* x 0.25 x daily_budget
 ```
 
 For example, if the model says an over has a 78% chance and our limit is 0.62, then:
-- `f* = (0.78 âˆ’ 0.62) / (1 âˆ’ 0.62) = 0.42`
-- `stake = 0.42 Ã— 0.25 Ã— $125 = ~$13`
+- `f* = (0.78 - 0.62) / (1 - 0.62) = 0.42`
+- `stake = 0.42 x 0.25 x $125 = ~$13`
 
 A bet with tighter edge (say FV=0.72, limit=0.67) would size to ~$5. A bet with strong edge (FV=0.85, limit=0.65) would size to ~$26. The system caps any single bet at 33% of the daily budget (~$41 at the default $125 budget) and floors at $5.
 
-**Why quarter-Kelly?** Full Kelly maximizes long-run growth rate but requires a perfectly calibrated model. Quarter-Kelly gives roughly 50% of the maximum growth rate at 1/16th the variance â€” a standard choice when there is uncertainty about model precision. As live data accumulates and the model is further calibrated, this fraction can be tuned upward.
+**Why quarter-Kelly?** Full Kelly maximizes long-run growth rate but requires a perfectly calibrated model. Quarter-Kelly gives roughly 50% of the maximum growth rate at 1/16th the variance -- a standard choice when there is uncertainty about model precision. As live data accumulates and the model is further calibrated, this fraction can be tuned upward.
 
 ### Accounting
 
@@ -200,47 +200,47 @@ All session activity is written to `logs/real-logs/YYYY-MM-DD.log` at DEBUG leve
 baseball/
   README.md
   requirements.txt
-  model_overview.txt          â€” detailed model design notes
-  buying_model_1.txt          â€” limit price calibration notes
-  codex_thoughts.txt          â€” external code review findings
-  claude_response.txt         â€” response to code review with verifications
+  model_overview.txt          -- detailed model design notes
+  buying_model_1.txt          -- limit price calibration notes
+  codex_thoughts.txt          -- external code review findings
+  claude_response.txt         -- response to code review with verifications
 
   cache/
-    build_mlb_ou_cache.py     â€” builds Stage-1 Poisson probability table
-    build_mlb_stage2_run_env.py â€” builds Stage-2 park/weather model
-    stage2_run_env_model.py   â€” Stage-2 runtime module
-    mlb_ou_cache.json         â€” Stage-1 production cache (5 completed prior seasons; metadata-audited)
-    mlb_stage2_run_env.json   â€” Stage-2 model weights
-    team_game_log.json        â€” per-team RPG history (Stage-3 input)
+    build_mlb_ou_cache.py     -- builds Stage-1 Poisson probability table
+    build_mlb_stage2_run_env.py -- builds Stage-2 park/weather model
+    stage2_run_env_model.py   -- Stage-2 runtime module
+    mlb_ou_cache.json         -- Stage-1 production cache (5 completed prior seasons; metadata-audited)
+    mlb_stage2_run_env.json   -- Stage-2 model weights
+    team_game_log.json        -- per-team RPG history (Stage-3 input)
     MLB_OU_CACHE_DESIGN.md
     STAGE2_RUN_ENV_MODEL.md
 
   scripts/
     scraping/
-      scrape_mlb_history.py   â€” pulls historical MLB game data from StatsAPI
+      scrape_mlb_history.py   -- pulls historical MLB game data from StatsAPI
 
     monitor/
-      monitor_mlb_polymarket_ou.py â€” live game + market monitor (orchestrator + CLI)
-      monitor_constants.py    â€” URLs, defaults, TEAM_SLUGS, regex, debug cadences
-      monitor_utils.py        â€” _safe_float / _safe_int / slug + iso helpers
-      monitor_system.py       â€” performance-mode (CPU pinning) + sleep prevention
-      monitor_models.py       â€” ScheduleScore / ScheduledGame / OUMarket / GameMarketMatch
-      monitor_recorder.py     â€” LocalRecorder (per-game JSONL writer)
-      monitor_stats_client.py â€” MLBStatsClient (schedule fetch + pitcher ERA cache)
-      monitor_discovery.py    â€” PolymarketDiscoveryClient (Gamma event matching)
-      monitor_book_client.py  â€” PolymarketBookClient (CLOB + Gamma fallback)
-      monitor_cli.py          â€” parse_args
+      monitor_mlb_polymarket_ou.py -- live game + market monitor (orchestrator + CLI)
+      monitor_constants.py    -- URLs, defaults, TEAM_SLUGS, regex, debug cadences
+      monitor_utils.py        -- _safe_float / _safe_int / slug + iso helpers
+      monitor_system.py       -- performance-mode (CPU pinning) + sleep prevention
+      monitor_models.py       -- ScheduleScore / ScheduledGame / OUMarket / GameMarketMatch
+      monitor_recorder.py     -- LocalRecorder (per-game JSONL writer)
+      monitor_stats_client.py -- MLBStatsClient (schedule fetch + pitcher ERA cache)
+      monitor_discovery.py    -- PolymarketDiscoveryClient (Gamma event matching)
+      monitor_book_client.py  -- PolymarketBookClient (CLOB + Gamma fallback)
+      monitor_cli.py          -- parse_args
 
     analysis/
       evaluate_no_score_drift_policy.py   - shadow/paper no-score drift policy evaluator
       build_queue_aware_execution_replay.py - offline execution price policy replay
-      analyze_polymarket_overreactions.py â€” detects scoring events and market lag
-      analyze_book_captures.py            â€” post-session order fill diagnostics
-      backtest_gates.py                   â€” backtests gate stack against historical data
-      team_offense_model.py               â€” Stage-3 team offense runtime module
-      build_team_game_log.py              â€” builds team_game_log.json from history
-      build_pitcher_cache.py              â€” builds pitcher ERA cache for Stage-4 gate
-      build_unified_signal_table.py       â€” canonical event-level signal table builder
+      analyze_polymarket_overreactions.py -- detects scoring events and market lag
+      analyze_book_captures.py            -- post-session order fill diagnostics
+      backtest_gates.py                   -- backtests gate stack against historical data
+      team_offense_model.py               -- Stage-3 team offense runtime module
+      build_team_game_log.py              -- builds team_game_log.json from history
+      build_pitcher_cache.py              -- builds pitcher ERA cache for Stage-4 gate
+      build_unified_signal_table.py       -- canonical event-level signal table builder
       build_calibration_opportunity_training_table.py -- model-bearing opportunity table from calibration + score-confirmation rows
       analyze_scoring_environment_trends.py -- 10-season scoring drift + season-weight research
       analyze_scoring_path_effects.py -- 10-season scoring-path timing research for FV feature candidates
@@ -255,48 +255,48 @@ baseball/
       build_fv_disagreement_quality_report.py -- FV-vs-market disagreement quality by family, support/trust, CLV, ROI
       fv_disagreement_quality_walk_forward.py -- rolling bucket-trust validation for FV-vs-market disagreement regimes
       build_analysis_safe_trade_table.py -- canonical session/ledger trade table; excludes order errors and labels live vs paper fallback
-      build_signal_training_table.py      â€” leakage-aware modeling table + date splits
-      train_baseline_models.py            â€” baseline signal/fill model trainer
-      backtest_ev_policy.py               â€” EV-ranked policy tuning and test backtest
-      build_execution_diagnostics_report.py â€” per-trade execution diagnostics (limit touch, first-touch, cancel reason, counterfactual)
-      build_state_value_transition_report.py â€” score-event vs no-score drift regime diagnostics
-      walk_forward_runner.py              â€” rolling walk-forward backtest harness (top roadmap item)
-      no_score_drift_walk_forward.py      â€” deduped no-score drift training table + walk-forward harness
-      session_report.py                   â€” live session analytics dashboard (P&L, gate sim, venue breakdown)
+      build_signal_training_table.py      -- leakage-aware modeling table + date splits
+      train_baseline_models.py            -- baseline signal/fill model trainer
+      backtest_ev_policy.py               -- EV-ranked policy tuning and test backtest
+      build_execution_diagnostics_report.py -- per-trade execution diagnostics (limit touch, first-touch, cancel reason, counterfactual)
+      build_state_value_transition_report.py -- score-event vs no-score drift regime diagnostics
+      walk_forward_runner.py              -- rolling walk-forward backtest harness (top roadmap item)
+      no_score_drift_walk_forward.py      -- deduped no-score drift training table + walk-forward harness
+      session_report.py                   -- live session analytics dashboard (P&L, gate sim, venue breakdown)
 
     trading/
-      models.py            â€” data models: BetRecord, LiveBetRecord, OrderResult, OrderStatus, TradeRecord
-      signal_engine.py     â€” core signal detection + gate pipeline + paper simulation (was paper_trader.py)
-      live_engine.py       â€” live CLOB execution engine, Kelly sizing, order lifecycle (was real_trader.py)
-      polymarket_client.py â€” Polymarket CLOB REST client: auth, orders, fills (was clob_order_client.py)
-      ev_policy.py         â€” EV policy model scoring runtime (LogisticJsonScorer)
-      paper_trader.py      â€” entry-point shim â†’ signal_engine.main() (backward-compat)
-      real_trader.py       â€” entry-point shim â†’ live_engine.main() (backward-compat)
-      clob_order_client.py â€” re-export shim â†’ polymarket_client (backward-compat)
+      models.py            -- data models: BetRecord, LiveBetRecord, OrderResult, OrderStatus, TradeRecord
+      signal_engine.py     -- core signal detection + gate pipeline + paper simulation (was paper_trader.py)
+      live_engine.py       -- live CLOB execution engine, Kelly sizing, order lifecycle (was real_trader.py)
+      polymarket_client.py -- Polymarket CLOB REST client: auth, orders, fills (was clob_order_client.py)
+      ev_policy.py         -- EV policy model scoring runtime (LogisticJsonScorer)
+      paper_trader.py      -- entry-point shim -> signal_engine.main() (backward-compat)
+      real_trader.py       -- entry-point shim -> live_engine.main() (backward-compat)
+      clob_order_client.py -- re-export shim -> polymarket_client (backward-compat)
 
   data/
-    games/                     â€” raw MLB StatsAPI game JSONs
-    schedules/                 â€” daily MLB schedule JSONs
-    manifests/                 â€” scrape run manifests
-    polymarket/mlb_ou/         â€” live tick data from monitor
+    games/                     -- raw MLB StatsAPI game JSONs
+    schedules/                 -- daily MLB schedule JSONs
+    manifests/                 -- scrape run manifests
+    polymarket/mlb_ou/         -- live tick data from monitor
     paper_trading/
-      master_ledger.jsonl      â€” all paper bets (48 records)
-      sessions/                â€” per-date paper session JSONs
-      book_captures/           â€” post-signal bid/ask snapshots
+      master_ledger.jsonl      -- all paper bets (48 records)
+      sessions/                -- per-date paper session JSONs
+      book_captures/           -- post-signal bid/ask snapshots
     live_trading/
       candidate_universe/*_candidate_rollup.json - compact daily candidate rollups; raw JSONL remains canonical
-      master_ledger.jsonl      â€” all live bets (filled + missed)
-      live_orders_ledger.jsonl â€” canonical live order lifecycle stream
-      candidate_universe/      â€” trade, skip, skip-with-features, and shadow no-score drift rows
-      sessions/                â€” per-date live session JSONs
-      book_captures/           â€” post-signal bid/ask streaming captures (legacy)
-      tape_captures/           â€” Family A (recent-flow) sidecars: per signal + per late-stage skip
-      book_decision_snapshots/ â€” Family B (book state at decision) sidecars
-      velocity_snapshots/      â€” Family C (book velocity / drift) sidecars
+      master_ledger.jsonl      -- all live bets (filled + missed)
+      live_orders_ledger.jsonl -- canonical live order lifecycle stream
+      candidate_universe/      -- trade, skip, skip-with-features, and shadow no-score drift rows
+      sessions/                -- per-date live session JSONs
+      book_captures/           -- post-signal bid/ask streaming captures (legacy)
+      tape_captures/           -- Family A (recent-flow) sidecars: per signal + per late-stage skip
+      book_decision_snapshots/ -- Family B (book state at decision) sidecars
+      velocity_snapshots/      -- Family C (book velocity / drift) sidecars
 
   logs/
-    test-logs/                 â€” TestRun1 through TestRun11 iteration notes
-    real-logs/                 â€” per-date live session logs (DEBUG level)
+    test-logs/                 -- TestRun1 through TestRun11 iteration notes
+    real-logs/                 -- per-date live session logs (DEBUG level)
 ```
 
 ---
@@ -461,7 +461,7 @@ Writes tick data to `data/polymarket/mlb_ou/YYYY-MM-DD/`.
 Runs the full signal + gate pipeline but records simulated bets instead of placing real orders.
 Useful for testing gate changes before going live.
 
-The core logic lives in `scripts/trading/signal_engine.py`. The `paper_trader.py` entry point is a thin shim that calls it â€” both work identically:
+The core logic lives in `scripts/trading/signal_engine.py`. The `paper_trader.py` entry point is a thin shim that calls it -- both work identically:
 
 ```bash
 # Default run (either form works)
@@ -480,7 +480,7 @@ python scripts/trading/signal_engine.py --date 2026-04-09
 | Parameter | Default | Notes |
 |---|---|---|
 | `--edge-threshold` | 0.15 | Standard lines (< 8.5) |
-| `--edge-threshold-high-line` | 0.16 | Lines â‰¥ 8.5 |
+| `--edge-threshold-high-line` | 0.16 | Lines >= 8.5 |
 | `--jump-threshold` | 0.06 | Min ask jump to flag signal |
 | `--max-spread` | 0.20 | Max bid/ask spread allowed |
 | `--min-inning` | 4 | Standard line minimum inning |
@@ -491,10 +491,10 @@ python scripts/trading/signal_engine.py --date 2026-04-09
 | `--min-close-game-rn` | 4.0 | Close-game high-rn dead zone |
 | `--inn5-rn-max` | 2.5 | Inning 5 runs-needed ceiling |
 | `--inn6-rn-max` | 2.5 | Inning 6 runs-needed ceiling |
-| `--blowout-lead-min` | 6 | Full blowout: lead â‰¥ this AND inning â‰¥ 6 |
-| `--blowout-adj-lead-min` | 4 | Blowout-adjacent: lead â‰¥ this AND inning â‰¥ 7 |
+| `--blowout-lead-min` | 6 | Full blowout: lead >= this AND inning >= 6 |
+| `--blowout-adj-lead-min` | 4 | Blowout-adjacent: lead >= this AND inning >= 7 |
 | `--max-base-fv` | 0.99 | FV saturation skip threshold |
-| `--fv-ask-gap-max` | 0.28 | Large-gap skip: model edge > this AND inning â‰¥ 7 |
+| `--fv-ask-gap-max` | 0.28 | Large-gap skip: model edge > this AND inning >= 7 |
 | `--s2-suppress-max` | -0.20 | Stage-2 extreme suppression logit threshold |
 | `--s2-suppress-min-inning` | 6 | Minimum inning for S2 suppression gate |
 | `--sp-era-threshold` | 3.75 | Pitcher quality gate ERA threshold |
@@ -514,16 +514,16 @@ Outputs: `data/paper_trading/master_ledger.jsonl`, `data/paper_trading/sessions/
 
 Places real orders on the Polymarket CLOB. Inherits all gate and signal logic from `signal_engine.py`. Requires `.env` with `POLY_PRIVATE_KEY`.
 
-> **TR17 (2026-05-01) — `gate_extreme_edge` is now ENFORCED.** Any signal with
+> **TR17 (2026-05-01) -- `gate_extreme_edge` is now ENFORCED.** Any signal with
 > `edge > 0.30` (configurable via `--extreme-edge-max`) is now skipped in any
-> inning, not just inning ≥ 7. This is a direct response to the cumulative
-> live evidence: edge>0.25 settled bets through 2026-04-30 are 1W/5L, −$117.56
+> inning, not just inning >= 7. This is a direct response to the cumulative
+> live evidence: edge>0.25 settled bets through 2026-04-30 are 1W/5L, -$117.56
 > on $140.29 stake. See the Gate Evolution table and the Evidence Snapshot for
 > the full justification. The `ltp_ask_gap` shadow tag remains shadow-only.
 >
-> **TR19 (2026-05-03) — `gate_extreme_edge` threshold tightened 0.30 → 0.22.**
-> The 6-day live window 2026-04-28 → 2026-05-03 ran 21 settled bets at 11W/8L
-> for −$55.19 P&L. The edge>0.20 cohort was 4W/8L (33% WR) for −$79.57 on 12
+> **TR19 (2026-05-03) -- `gate_extreme_edge` threshold tightened 0.30 -> 0.22.**
+> The 6-day live window 2026-04-28 -> 2026-05-03 ran 21 settled bets at 11W/8L
+> for -$55.19 P&L. The edge>0.20 cohort was 4W/8L (33% WR) for -$79.57 on 12
 > bets; the edge<0.20 cohort was 10W/1L (91% WR) for +$24.38 on 11 bets. All
 > 8 unique losses had `p_score_event_proxy = 0.000` (no ask-jump confirmation
 > of a real run). Wilson 95% upper bound on the high-edge cohort WR is ~58%,
@@ -560,7 +560,7 @@ python scripts/trading/live_engine.py --no-performance-mode
 
 Live startup runs the canonical daily refresh before `LiveTradingEngine` loads
 its runtime artifacts. As of 2026-05-16 it is a **45-step base pipeline**
-(plus one `daily_human_review:<date>` step per stale completed session) — it
+(plus one `daily_human_review:<date>` step per stale completed session) -- it
 scrapes yesterday's completed games, refreshes today's MLB schedule, rebuilds
 Stage-1/2/3 inputs, runs preflight cache checks, retrains every research
 artifact whose inputs have changed (Stage-2 staging, Stage-3 v2 weight fits,
@@ -574,33 +574,33 @@ policy selection.
 
 Steps run in this order:
 
-1. `preflight_env_secrets` (inline) — verify `.env` and `POLY_PRIVATE_KEY` (warning by default; hard-fail with `--startup-refresh-require-poly-private-key`)
-2. `scrape_recent_games` — backfill the last N completed days of MLB game JSONs (default lookback 7 days, end date = yesterday)
-3. `stage1_ou_cache` — rebuild `cache/mlb_ou_cache.json` from the five completed prior regular seasons for the active year
-4. `scrape_active_schedule` — refresh the active-month schedule (`--dry-run`, no in-progress feed downloads)
-5. `game_weather_cache` — `cache/weather/game_weather_<active-date>.json` (canonical Weather v2 live Stage-2 input)
-6. `pitcher_cache` — `cache/pitcher_cache.json`
-7. `team_game_log` — explicit Stage-3 input rebuild (`cache/team_game_log.json`); replaces lazy first-tick rebuild
-8. `park_hr_factors` — Stage-2 `hr_factor` family input (`cache/park_hr_factors.json`); per-(park, season) HR rate vs league mean
-9. `preflight_artifacts` (inline) — validate Stage-1/2/3 cache loads + Stage-1 production coverage metadata + Stage-3 active-season team coverage ≥ 80%; warns if `park_hr_factors.json` is missing
-Optional. `daily_human_review:<date>` — one step per missing/stale completed session
-10. `analysis_safe_trade_table` — canonical session/ledger trade table; excludes `order_status=error`, dedupes ledger lifecycle rows, and labels live vs paper fallback.
-11–21. `candidate_universe_table`, `calibration_opportunity_training`, `calibrate_signal_probabilities` (`--artifact-purpose runtime-refit`), `model_maturity_report`, `fair_value_stage_ablation`, `fv_gap_decomposition`, `fv_trust_shrinkage`, `calibration_market_anchored_alpha` (`--artifact-purpose runtime-refit`), `stage1_inferred_empirical_audit`, `unified_signals`, `signal_training_table`
-22. `clv_report` — entry price vs late captured mid, grouped by family/gate/bucket and compared with realized ROI. Staleness-checked.
-23. `fv_disagreement_quality` — when raw FV disagrees with market, rank buckets by outcome calibration gain, CLV, ROI, and Stage-1 support/trust. Staleness-checked.
-24. `train_baseline_models` — EV-policy win + fill models (Active #6 part 2 prerequisite). **Staleness-checked** against `signal_training_table.jsonl` mtime
-25. `ev_policy_backtest` — rebuilds `ev_policy_report.json` and runtime-safe EV model artifacts with `--artifact-purpose runtime-refit`. Staleness-checked
-26. `stage2_run_env_retrain_staging` — refits Stage-2 from the full 2021-2026 corpus to `cache/mlb_stage2_run_env.staging.json` (NOT the production cache; promotion stays manual). Staleness-checked against `data/games/regular/` dir mtimes; biggest single saver (~16 min when corpus unchanged)
-27–29. `stage3_team_offense_features`, `stage3_team_offense_calibration_table`, `stage3_team_offense_v2_fit` — three-step Stage-3 v2 retrain chain. All staleness-checked. Output is research-only (`phase4_models.json`); production weights at `cache/team_offense_v2_weights.json` require an explicit `promote_team_offense_v2.py` run
-30. `model_freshness_health` (inline) — diffs Stage-2 staging vs production validation Brier and surfaces drift alerts at the 0.001 (0.1pp) level; age-checks every model artifact and flags anything > 30 days old
-31–35. `execution_diagnostics`, `queue_aware_execution_replay`, `learn_execution_policy` (Active #7 prototype), `state_value_transition_report`, `no_score_drift_policy`
+1. `preflight_env_secrets` (inline) -- verify `.env` and `POLY_PRIVATE_KEY` (warning by default; hard-fail with `--startup-refresh-require-poly-private-key`)
+2. `scrape_recent_games` -- backfill the last N completed days of MLB game JSONs (default lookback 7 days, end date = yesterday)
+3. `stage1_ou_cache` -- rebuild `cache/mlb_ou_cache.json` from the five completed prior regular seasons for the active year
+4. `scrape_active_schedule` -- refresh the active-month schedule (`--dry-run`, no in-progress feed downloads)
+5. `game_weather_cache` -- `cache/weather/game_weather_<active-date>.json` (canonical Weather v2 live Stage-2 input)
+6. `pitcher_cache` -- `cache/pitcher_cache.json`
+7. `team_game_log` -- explicit Stage-3 input rebuild (`cache/team_game_log.json`); replaces lazy first-tick rebuild
+8. `park_hr_factors` -- Stage-2 `hr_factor` family input (`cache/park_hr_factors.json`); per-(park, season) HR rate vs league mean
+9. `preflight_artifacts` (inline) -- validate Stage-1/2/3 cache loads + Stage-1 production coverage metadata + Stage-3 active-season team coverage >= 80%; warns if `park_hr_factors.json` is missing
+Optional. `daily_human_review:<date>` -- one step per missing/stale completed session
+10. `analysis_safe_trade_table` -- canonical session/ledger trade table; excludes `order_status=error`, dedupes ledger lifecycle rows, and labels live vs paper fallback.
+11-21. `candidate_universe_table`, `calibration_opportunity_training`, `calibrate_signal_probabilities` (`--artifact-purpose runtime-refit`), `model_maturity_report`, `fair_value_stage_ablation`, `fv_gap_decomposition`, `fv_trust_shrinkage`, `calibration_market_anchored_alpha` (`--artifact-purpose runtime-refit`), `stage1_inferred_empirical_audit`, `unified_signals`, `signal_training_table`
+22. `clv_report` -- entry price vs late captured mid, grouped by family/gate/bucket and compared with realized ROI. Staleness-checked.
+23. `fv_disagreement_quality` -- when raw FV disagrees with market, rank buckets by outcome calibration gain, CLV, ROI, and Stage-1 support/trust. Staleness-checked.
+24. `train_baseline_models` -- EV-policy win + fill models (Active #6 part 2 prerequisite). **Staleness-checked** against `signal_training_table.jsonl` mtime
+25. `ev_policy_backtest` -- rebuilds `ev_policy_report.json` and runtime-safe EV model artifacts with `--artifact-purpose runtime-refit`. Staleness-checked
+26. `stage2_run_env_retrain_staging` -- refits Stage-2 from the full 2021-2026 corpus to `cache/mlb_stage2_run_env.staging.json` (NOT the production cache; promotion stays manual). Staleness-checked against `data/games/regular/` dir mtimes; biggest single saver (~16 min when corpus unchanged)
+27-29. `stage3_team_offense_features`, `stage3_team_offense_calibration_table`, `stage3_team_offense_v2_fit` -- three-step Stage-3 v2 retrain chain. All staleness-checked. Output is research-only (`phase4_models.json`); production weights at `cache/team_offense_v2_weights.json` require an explicit `promote_team_offense_v2.py` run
+30. `model_freshness_health` (inline) -- diffs Stage-2 staging vs production validation Brier and surfaces drift alerts at the 0.001 (0.1pp) level; age-checks every model artifact and flags anything > 30 days old
+31-35. `execution_diagnostics`, `queue_aware_execution_replay`, `learn_execution_policy` (Active #7 prototype), `state_value_transition_report`, `no_score_drift_policy`
 36. `no_score_drift_paper_ledger`
-37–40. `walk_forward_score_event` (staleness-checked), `walk_forward_no_score_drift`, `walk_forward_market_anchored_alpha` (staleness-checked; family-separated alpha validation vs ask/no-vig baselines with clustered policy-P&L CIs), `walk_forward_fv_disagreement_quality` (staleness-checked; train/validation-selected FV disagreement buckets applied out of sample)
+37-40. `walk_forward_score_event` (staleness-checked), `walk_forward_no_score_drift`, `walk_forward_market_anchored_alpha` (staleness-checked; family-separated alpha validation vs ask/no-vig baselines with clustered policy-P&L CIs), `walk_forward_fv_disagreement_quality` (staleness-checked; train/validation-selected FV disagreement buckets applied out of sample)
 41. `stake_scaling_promotion_analyzer`
 42. `walk_forward_certification`
 43. `weekly_drift_rollup`
-44. `artifact_lineage_freshness` — writes `data/analysis_output/artifact_lineage_freshness/artifact_lineage_freshness_report.{json,md,csv}` with generated/max dates, input hashes/mtimes, row/family counts, and stale-downstream flags.
-45. `refresh_health_rollup` (inline) — reads per-step results + latest daily human-review alert counts + walk-forward summary + `model_freshness_health` notes + artifact-lineage summary and prints one INFO block. The operator-facing answer to "is the project healthy?"
+44. `artifact_lineage_freshness` -- writes `data/analysis_output/artifact_lineage_freshness/artifact_lineage_freshness_report.{json,md,csv}` with generated/max dates, input hashes/mtimes, row/family counts, and stale-downstream flags.
+45. `refresh_health_rollup` (inline) -- reads per-step results + latest daily human-review alert counts + walk-forward summary + `model_freshness_health` notes + artifact-lineage summary and prints one INFO block. The operator-facing answer to "is the project healthy?"
 
 `StalenessCheck` policy: subprocess steps with a declared `output_path` + input
 set are skipped (`status="skipped_fresh"`) when the output mtime is at least
@@ -700,7 +700,7 @@ Differences from the default flags table below:
 | `--stake` | 25 | USDC per bet (flat mode only) |
 | `--min-order-size` | 5 | Minimum order size in USDC |
 | `--spread-factor` | 0.65 | Limit price position in spread |
-| `--fv-cancel-min-edge` | 0.03 | Cancel order if FV âˆ’ limit < this (P0 lowered from 0.05 on 2026-04-22) |
+| `--fv-cancel-min-edge` | 0.03 | Cancel order if FV - limit < this (P0 lowered from 0.05 on 2026-04-22) |
 | `--fv-decay-min-age-secs` | 90 | Minimum order age before FV-decay cancel checks (P0 raised from 30 on 2026-04-22) |
 | `--fv-decay-min-ask-drop` | 0.03 | Ask must also confirm decay before cancellation |
 | `--ask-reversal-drop` | 0.08 | Early cancel if ask drops sharply post-placement |
@@ -710,7 +710,7 @@ Differences from the default flags table below:
 | `--max-open-orders` | 5 | Max simultaneous open orders |
 | `--dry-run` | off | Logs orders without posting to CLOB |
 | `--performance-mode` / `--no-performance-mode` | on | Pin process to P-cores, set HIGH priority (requires psutil); opt out with `--no-performance-mode` |
-| `--pitcher-cache-path` | â€” | Path to pitcher ERA cache for Stage-4 gate (from build_pitcher_cache.py) |
+| `--pitcher-cache-path` | -- | Path to pitcher ERA cache for Stage-4 gate (from build_pitcher_cache.py) |
 | `--wait-for-clob` | off | Wait for CLOB API to become available before starting (for maintenance windows) |
 | `--wait-for-clob-timeout-secs` | 1800 | Max wait time for `--wait-for-clob` (30 min) |
 | `--startup-refresh` / `--no-startup-refresh` | on | Rebuild completed-session analysis artifacts before live startup |
@@ -724,19 +724,19 @@ Differences from the default flags table below:
 
 ```
 Signal fires
-    â†“
-Limit order placed at: bid + spread Ã— 0.65
-    â†“
-Every ~4â€“10s: poll CLOB for fill
-    â†“                        â†“
+    v
+Limit order placed at: bid + spread x 0.65
+    v
+Every ~4-10s: poll CLOB for fill
+    v                        v
 FV still high            FV decayed to within 3% of limit
-(keep order alive)           â†“
-    â†“                    Cancel â†’ record as "missed signal"
+(keep order alive)           v
+    v                    Cancel -> record as "missed signal"
 Game Final
-    â†“                â†“
+    v                v
 Filled           Still open
-  â†“                  â†“
-Settle P&L      Cancel â†’ record as "missed signal"
+  v                  v
+Settle P&L      Cancel -> record as "missed signal"
 ```
 
 Execution notes for current logic:
@@ -745,11 +745,11 @@ Execution notes for current logic:
 - Timeout cancellation (`--order-timeout-secs`) is a safety net, not the primary exit path.
 
 Outputs:
-- `data/live_trading/master_ledger.jsonl` â€” all bets (filled: `_event: settled`, unfilled: `_event: missed`)
-- `data/live_trading/live_orders_ledger.jsonl` â€” canonical live order lifecycle stream
-- `data/live_trading/candidate_universe/` â€” trade, skip, and shadow state-value candidates
-- `data/live_trading/sessions/YYYY-MM-DD_session.json` â€” full session state
-- `data/live_trading/book_captures/` â€” post-signal book snapshots
+- `data/live_trading/master_ledger.jsonl` -- all bets (filled: `_event: settled`, unfilled: `_event: missed`)
+- `data/live_trading/live_orders_ledger.jsonl` -- canonical live order lifecycle stream
+- `data/live_trading/candidate_universe/` -- trade, skip, and shadow state-value candidates
+- `data/live_trading/sessions/YYYY-MM-DD_session.json` -- full session state
+- `data/live_trading/book_captures/` -- post-signal book snapshots
 
 ---
 
@@ -764,17 +764,17 @@ python scripts/analysis/session_report.py
 ```
 
 Reports:
-- Overall P&L: filled win rate vs cancelled (counterfactual) win rate â€” quantifies the Winner's Curse
+- Overall P&L: filled win rate vs cancelled (counterfactual) win rate -- quantifies the Winner's Curse
 - Fill win rate by inning, edge bucket, Stage-2 delta
 - ask_drop_5s distribution for all bets (fills + cancels): market confirmation signal
 - Per-session P&L with active gate flags read from session params
 - Gate simulation: how many losses each current gate blocks vs wins it costs
 - Per-venue fill win rate with suppressive-park flag
-- Near-gate bets: signals that just passed a threshold (within 2pp) â€” flags for future tuning
+- Near-gate bets: signals that just passed a threshold (within 2pp) -- flags for future tuning
 
 ### Pitcher ERA cache
 
-Required to activate Gate 8i (pitcher quality edge boost). Fetches current-season ERA from the MLB Stats API and writes `cache/pitcher_cache.json`. Run once before each session (or weekly â€” ERA is stable):
+Required to activate Gate 8i (pitcher quality edge boost). Fetches current-season ERA from the MLB Stats API and writes `cache/pitcher_cache.json`. Run once before each session (or weekly -- ERA is stable):
 
 ```bash
 python scripts/analysis/build_pitcher_cache.py --season 2026
@@ -788,7 +788,7 @@ python scripts/trading/live_engine.py --pitcher-cache-path cache/pitcher_cache.j
 **Failure mode and recovery (TR14 hardening):** The 2026-04-28 V2-cutover session
 had two consecutive StatsAPI 15s timeouts during cache build, which silently
 disabled Gate 8i for the entire session. The monitor now retries cache builds 3
-times with growing timeouts (15s â†’ 30s â†’ 60s) and falls back to the **stale
+times with growing timeouts (15s -> 30s -> 60s) and falls back to the **stale
 on-disk cache** if all rebuild attempts fail, so Gate 8i remains active across
 transient StatsAPI hiccups. Stale-cache fallback is allowed up to
 `PITCHER_CACHE_STALE_FALLBACK_MAX_AGE_HOURS` (currently 72h).
@@ -1191,7 +1191,7 @@ validation path for the no-score family.
 
 ### Walk-forward backtest harness
 
-The single most important validation tool â€” promoted to roadmap item #1 in 2026-04-30.
+The single most important validation tool -- promoted to roadmap item #1 in 2026-04-30.
 Trains models on past dates only, tunes on a trailing validation window, tests
 on the next date, then rolls the window forward by one date. Reports
 out-of-sample model calibration/discrimination plus baseline live-engine P&L,
@@ -1211,10 +1211,10 @@ python scripts/analysis/walk_forward_runner.py --mode live --plan-only
 ```
 
 Outputs are written to `data/analysis_output/walk_forward/`:
-- `summary.json` â€” rolling-window aggregate metrics, including
+- `summary.json` -- rolling-window aggregate metrics, including
   `baseline_live_engine_results` vs `model_policy_results`
-- `per_window_results.jsonl` â€” one row per (train_window, val_window, test_date)
-- `calibration_drift.csv` â€” Brier score / reliability metrics over time
+- `per_window_results.jsonl` -- one row per (train_window, val_window, test_date)
+- `calibration_drift.csv` -- Brier score / reliability metrics over time
 
 `model_policy_results` is a skip/select simulation over historical live orders
 only. It can show whether the walk-forward model would have skipped bad orders
@@ -1312,26 +1312,26 @@ This reduces operator noise without deleting forensic data.
 
 | Run | Key change |
 |---|---|
-| TR1â€“TR2 | Baseline stabilization, ask-based signal, confirmation ticks |
+| TR1-TR2 | Baseline stabilization, ask-based signal, confirmation ticks |
 | TR3 | Inning minimums, pace gate, ask floors, min current total |
 | TR4 | Cross-inning dedup gap |
-| TR5 | Edge threshold raised 0.10â†’0.12, high-line tier added |
+| TR5 | Edge threshold raised 0.10->0.12, high-line tier added |
 | TR6 | Close-game + high-rn dead zone |
 | TR7 | Stage-3 team offense model integrated, Stage-2 bug fixed |
 | TR8 | Inning 5 bullpen transition gate |
 | TR9 | Inning 6 setup-reliever gate, book capture duration extended |
-| TR10 | Edge threshold raised 0.12â†’0.15, runs-needed lowered 4.0â†’3.5, inn5 threshold 3.0â†’2.5 |
-| TR11 | Blowout shutout gate (trailing â‰¤ 1, lead â‰¥ 6, inning â‰¥ 6) |
-| TR12 | FV saturation skip (base_fv â‰¥ 0.99), large FV/ask gap gate (edge > 0.28 AND inning â‰¥ 7); motivated by Apr 21 phantom-run analysis |
-| TR13 | Blowout-adjacent gate (lead â‰¥ 4, inning â‰¥ 7); Stage-2 extreme suppression (S2 â‰¤ âˆ’0.20, inning â‰¥ 6); Stage-4 pitcher quality boost; FV saturation threshold corrected 0.98â†’0.99; edge gap threshold 0.30â†’0.28 |
-| TR14 | Conditional blowout-relax (`gate_blowout_relax_mode=enforce`) â€” re-allows trades on blowout-blocked candidates with ask â‰¥ 0.74 and runs_needed â‰¤ 2.5 in inning â‰¤ 7; shadow-relaxed framework added for offline gate calibration; Family A/B/C/D/E fill-model feature capture wired into both trade and late-stage skip paths; **extreme-edge** (edge > 0.30 in any inning) and **LTP-vs-ask** (`abs(ask âˆ’ ltp) > 0.50`) added as **shadow risk tags** rather than enforced gates pending more sample; pitcher cache hardened (3-attempt retry + stale on-disk fallback); schedule refresh hardened (3-attempt retry with backoff); state-value transition diagnostics (`state_value_strategy`, `current_state_value_edge`, `shadow_phantom_risk_*`) added |
-| TR15 (post-cutover) | Polymarket CLOB V2 SDK migration (`py-clob-client` â†’ `py-clob-client-v2==1.0.0`); validated in production 2026-04-28 with 3 placed orders, 2 fills, V2 cancel-by-`OrderPayload` working; collateral wrap USDC.e â†’ pUSD on funder wallet; `POLY_CLOB_HOST` env override added for pre-cutover testing |
+| TR10 | Edge threshold raised 0.12->0.15, runs-needed lowered 4.0->3.5, inn5 threshold 3.0->2.5 |
+| TR11 | Blowout shutout gate (trailing <= 1, lead >= 6, inning >= 6) |
+| TR12 | FV saturation skip (base_fv >= 0.99), large FV/ask gap gate (edge > 0.28 AND inning >= 7); motivated by Apr 21 phantom-run analysis |
+| TR13 | Blowout-adjacent gate (lead >= 4, inning >= 7); Stage-2 extreme suppression (S2 <= -0.20, inning >= 6); Stage-4 pitcher quality boost; FV saturation threshold corrected 0.98->0.99; edge gap threshold 0.30->0.28 |
+| TR14 | Conditional blowout-relax (`gate_blowout_relax_mode=enforce`) -- re-allows trades on blowout-blocked candidates with ask >= 0.74 and runs_needed <= 2.5 in inning <= 7; shadow-relaxed framework added for offline gate calibration; Family A/B/C/D/E fill-model feature capture wired into both trade and late-stage skip paths; **extreme-edge** (edge > 0.30 in any inning) and **LTP-vs-ask** (`abs(ask - ltp) > 0.50`) added as **shadow risk tags** rather than enforced gates pending more sample; pitcher cache hardened (3-attempt retry + stale on-disk fallback); schedule refresh hardened (3-attempt retry with backoff); state-value transition diagnostics (`state_value_strategy`, `current_state_value_edge`, `shadow_phantom_risk_*`) added |
+| TR15 (post-cutover) | Polymarket CLOB V2 SDK migration (`py-clob-client` -> `py-clob-client-v2==1.0.0`); validated in production 2026-04-28 with 3 placed orders, 2 fills, V2 cancel-by-`OrderPayload` working; collateral wrap USDC.e -> pUSD on funder wallet; `POLY_CLOB_HOST` env override added for pre-cutover testing |
 | TR16 (state-value measurement) | No enforced gate changes; added no-score drift paper evaluator, current-state-edge band end-of-run diagnostics, queue-aware execution replay, candidate rollup sidecars, and monitor log rollups/deduped INFO chatter. |
 | **TR17 (extreme-edge promotion, 2026-05-01)** | **`gate_extreme_edge` PROMOTED FROM SHADOW TO ENFORCE.** Skips any signal where `edge > extreme_edge_max` (default `0.30`) regardless of inning. This complements `gate_fv_ask_gap` (which is late-inning only). Justification: edge>0.25 settled filled bets through 2026-04-30 are 1W/5L, -$117.56 on $140.29 stake (loss bucket is ~120% of total realized loss). The 2026-04-28 LAA@CWS loss (edge=0.302, inning 4) bypassed `gate_fv_ask_gap` because that gate only fires inning >= 7; `gate_extreme_edge` would have blocked it. Gate is in `LATE_STAGE_SKIP_GATES` so triggered skips fire Family A-E feature capture. The `ltp_ask_gap` shadow tag remains shadow-only (weaker historical evidence). Threshold tunable via `--extreme-edge-max`. |
 | **TR18 (deposit-wallet resilience, 2026-05-04)** | **No gate logic changes.** Transient-error retry with exponential backoff (2s/4s/8s, 3 attempts) added to all CLOB API operations in `polymarket_client.py` for the Polymarket Deposit Wallet rollout (May 4, 12:30 UTC). Open-order polling in `live_order_lifecycle.py` hardened to skip poll cycles on transient errors instead of triggering spurious fill-recovery. New `--wait-for-clob` startup flag blocks until the CLOB API responds (polls every 15s, 30-min timeout), allowing the bot to survive scheduled maintenance windows. `health_check()` method added to `CLOBOrderClient`. |
-| **TR19 (extreme-edge threshold tightened, 2026-05-03)** | **`gate_extreme_edge` threshold lowered from 0.30 → 0.22** (`DEFAULT_EXTREME_EDGE_MAX` in `signal_config.py`). No new gate; tightens the existing TR17 enforcement based on the 2026-04-28 → 2026-05-03 live window analysis (`scripts/analysis/analyze_window_2026_04_28_to_05_03.py`). Window total: 21 settled, 11W/8L, −$55.19 P&L. The edge > 0.20 cohort was 4W/8L for −$79.57 on 12 bets at avg fill 0.63 (Wilson 95% upper-bound WR ≈ 58% vs ≈ 62% structural break-even). The edge < 0.20 cohort was 10W/1L for +$24.38 on 11 bets at avg fill 0.745. All 8 unique window losses had `p_score_event_proxy = 0.000` (no ask-jump confirmation of a real run), confirming systematic phantom-run rather than variance. Threshold choice 0.22 (not 0.20) preserves a 2pp buffer above the empirical cohort boundary so signals near the configured `edge_threshold` floors (0.10 / 0.15) still pass. Tunable via `--extreme-edge-max`. The `ltp_ask_gap` shadow tag remains shadow-only. Walk-forward certification on 30 days recommended as a follow-up before further tightening. **NOTE: TR19's empirical calibration is superseded as of 2026-05-07 (TR20) -- the TR19 threshold was tuned around v1 Stage-3's edge distribution; v2 produces a different distribution. Treat the 0.22 cap as a placeholder pending fresh post-TR20 calibration.** |
+| **TR19 (extreme-edge threshold tightened, 2026-05-03)** | **`gate_extreme_edge` threshold lowered from 0.30 -> 0.22** (`DEFAULT_EXTREME_EDGE_MAX` in `signal_config.py`). No new gate; tightens the existing TR17 enforcement based on the 2026-04-28 -> 2026-05-03 live window analysis (`scripts/analysis/analyze_window_2026_04_28_to_05_03.py`). Window total: 21 settled, 11W/8L, -$55.19 P&L. The edge > 0.20 cohort was 4W/8L for -$79.57 on 12 bets at avg fill 0.63 (Wilson 95% upper-bound WR ~ 58% vs ~ 62% structural break-even). The edge < 0.20 cohort was 10W/1L for +$24.38 on 11 bets at avg fill 0.745. All 8 unique window losses had `p_score_event_proxy = 0.000` (no ask-jump confirmation of a real run), confirming systematic phantom-run rather than variance. Threshold choice 0.22 (not 0.20) preserves a 2pp buffer above the empirical cohort boundary so signals near the configured `edge_threshold` floors (0.10 / 0.15) still pass. Tunable via `--extreme-edge-max`. The `ltp_ask_gap` shadow tag remains shadow-only. Walk-forward certification on 30 days recommended as a follow-up before further tightening. **NOTE: TR19's empirical calibration is superseded as of 2026-05-07 (TR20) -- the TR19 threshold was tuned around v1 Stage-3's edge distribution; v2 produces a different distribution. Treat the 0.22 cap as a placeholder pending fresh post-TR20 calibration.** |
 | **TR20 (Stage-3 v2 swap + fresh-test marker, 2026-05-07)** | **Stage-3 team-offense model REPLACED.** Deployed Model 3 from the V2 calibration work (`model_improvements/team_offense_v2_phase{1,4,45,5}_findings_2026_05_07.txt`). New Stage-3 blends three EB-shrunk per-team windows: prior_season_rpg (coef -0.1514), season_to_date_rpg (+0.1407), momentum_rpg_10 (+0.1503). Linear inning-weight ramp retained; per-inning weights tested but overfit on holdout. Fit on 1,129,081 leakage-free residual rows from 2021-2024, validated on 2025, holdout-tested on 2026. Replaces v1's 50-game-window + hard-clamp + LOGIT_DELTA_PER_RUN=0.20 model that Phase 1 showed was ~3.2x too aggressive. v1 code deleted in this changeset. **FRESH TESTING WINDOW STARTS 2026-05-07.** All TR1-TR19 evidence (gate thresholds, edge cohorts, win rates, P&L splits) was collected with v1 Stage-3 driving the edge distribution. v2 produces materially different edges, so prior gate calibrations may need re-tuning. Treat post-2026-05-07 data as the canonical source for any future gate-threshold or model-promotion decisions; pre-2026-05-07 data remains forensically useful but is no longer apples-to-apples. |
-| **TR21 (Stage-2 park-HR feature pair, 2026-05-08)** | **Stage-2 model EXTENDED with two new feature families and REBUILT/PROMOTED.** Added `density_alt` (elevation × temperature interaction; standard density-altitude formula `DA = elev + 120*(T_F-59)`, bucketed `<0/0_1k/1k_2_5k/2_5k_5k/5k+`) and `hr_factor` (per-(park, season) HR rate vs league mean, EB-shrunk with prior n=30 games, bucketed `<0.85/0.85_0.95/0.95_1.05/1.05_1.15/1.15+`). Both are non-redundant with the existing static `park` bucket: `density_alt` varies with same-day temperature, `hr_factor` varies year-over-year (juiced ball, fence moves, humidor, etc.). Refit on 12,553 games (train ≤ 2024, val ≥ 2025, 148,270 val rows). Validation Brier improvements: O6.5 +0.42%, O7.5 +0.70%, O8.5 +0.58%, O9.5 +0.64%, O10.5 +0.42%, O11.5 +0.33%. Both features selected by the validation tuner on every line; `density_alt` weight 0.5 on 5/6 lines, `hr_factor` weight 0.25-0.5 on every line. New model promoted to `cache/mlb_stage2_run_env.json` (prior model backed up to `*.pre_density_alt_hr_factor_2026_05_08.bak`). New daily-refresh step `park_hr_factors` (in canonical startup) runs `scripts/analysis/build_park_hr_factors.py` to keep `cache/park_hr_factors.json` fresh; preflight_artifacts warns when missing. No gate threshold changes in this transaction; the Stage-2 edge distribution may shift slightly so post-TR20 fresh-test calibration audit (Phase 6, due ~2026-06-07) should account for both TR20 and TR21 together. |
+| **TR21 (Stage-2 park-HR feature pair, 2026-05-08)** | **Stage-2 model EXTENDED with two new feature families and REBUILT/PROMOTED.** Added `density_alt` (elevation x temperature interaction; standard density-altitude formula `DA = elev + 120*(T_F-59)`, bucketed `<0/0_1k/1k_2_5k/2_5k_5k/5k+`) and `hr_factor` (per-(park, season) HR rate vs league mean, EB-shrunk with prior n=30 games, bucketed `<0.85/0.85_0.95/0.95_1.05/1.05_1.15/1.15+`). Both are non-redundant with the existing static `park` bucket: `density_alt` varies with same-day temperature, `hr_factor` varies year-over-year (juiced ball, fence moves, humidor, etc.). Refit on 12,553 games (train <= 2024, val >= 2025, 148,270 val rows). Validation Brier improvements: O6.5 +0.42%, O7.5 +0.70%, O8.5 +0.58%, O9.5 +0.64%, O10.5 +0.42%, O11.5 +0.33%. Both features selected by the validation tuner on every line; `density_alt` weight 0.5 on 5/6 lines, `hr_factor` weight 0.25-0.5 on every line. New model promoted to `cache/mlb_stage2_run_env.json` (prior model backed up to `*.pre_density_alt_hr_factor_2026_05_08.bak`). New daily-refresh step `park_hr_factors` (in canonical startup) runs `scripts/analysis/build_park_hr_factors.py` to keep `cache/park_hr_factors.json` fresh; preflight_artifacts warns when missing. No gate threshold changes in this transaction; the Stage-2 edge distribution may shift slightly so post-TR20 fresh-test calibration audit (Phase 6, due ~2026-06-07) should account for both TR20 and TR21 together. |
 
 ---
 
@@ -1372,14 +1372,14 @@ Edge split (still important, now through 2026-05-02):
 - `edge > 0.25` settled filled bets: **1W/6L, -$127.56** on $150.29 stake. **As of 2026-05-01 (TR17), `gate_extreme_edge` was ENFORCED at 0.30; on 2026-05-03 (TR19) the threshold was tightened to 0.22 -- see Gate Evolution table for justification.** Bets in the 0.22-0.30 band are now blocked.
 - `edge > 0.30` settled filled bets: **0W/2L, -$51.24** on $51.24 stake. Blocked by TR17 since 2026-05-01.
 - `0.25 < edge <= 0.30` settled filled bets: **1W/4L, -$76.32** on $99.05 stake. **Now blocked by TR19 (2026-05-03)** along with the rest of the 0.22-0.30 band.
-- `edge <= 0.25` settled filled bets: **17W/6L, +$20.82** on $358.50 stake. The 2026-04-28 → 2026-05-03 window further confirmed that edge<0.20 is the profitable cohort (10W/1L, +$24.38).
-- 2026-04-28 → 2026-05-03 window edge cohort detail: edge>0.20 was 4W/8L, -$79.57 on 12 bets; edge<0.20 was 10W/1L, +$24.38 on 11 bets. All 8 unique losses had `p_score_event_proxy = 0.000` (no ask-jump confirming a real run). Source: `scripts/analysis/analyze_window_2026_04_28_to_05_03.py`.
+- `edge <= 0.25` settled filled bets: **17W/6L, +$20.82** on $358.50 stake. The 2026-04-28 -> 2026-05-03 window further confirmed that edge<0.20 is the profitable cohort (10W/1L, +$24.38).
+- 2026-04-28 -> 2026-05-03 window edge cohort detail: edge>0.20 was 4W/8L, -$79.57 on 12 bets; edge<0.20 was 10W/1L, +$24.38 on 11 bets. All 8 unique losses had `p_score_event_proxy = 0.000` (no ask-jump confirming a real run). Source: `scripts/analysis/analyze_window_2026_04_28_to_05_03.py`.
 
 Interpretation:
 - Directional signal quality is high but fill selection quality is what matters
-- Large model-to-market gaps are information asymmetry, not edge — `gate_fv_ask_gap` (late-inning, TR12) and `gate_extreme_edge` (any-inning, TR17 + tightened TR19) jointly address this failure mode
+- Large model-to-market gaps are information asymmetry, not edge -- `gate_fv_ask_gap` (late-inning, TR12) and `gate_extreme_edge` (any-inning, TR17 + tightened TR19) jointly address this failure mode
 - The TR12/TR13/TR17/TR19 gate additions directly address the worst historical losses; `ltp_ask_gap` remains shadow-only pending more sample
-- `p_score_event_proxy` is a strong winner-vs-loser separator in the 2026-04-28 → 2026-05-03 window (wins mean 0.065, losses mean 0.000); promoting it from shadow to a soft gate is the next candidate for evidence-driven enforcement after TR19's walk-forward audit
+- `p_score_event_proxy` is a strong winner-vs-loser separator in the 2026-04-28 -> 2026-05-03 window (wins mean 0.065, losses mean 0.000); promoting it from shadow to a soft gate is the next candidate for evidence-driven enforcement after TR19's walk-forward audit
 
 ### State-value pivot evidence (through 2026-05-02)
 
