@@ -1676,3 +1676,4 @@ WARNING Artifact lineage freshness: status=warning, 30 ok / 16 warning / 0 error
 2026-05-17 15:23:12,524 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
 2026-05-17 15:25:17,499 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
 2026-05-17 15:27:22,846 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 15:29:27,864 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
