@@ -54,6 +54,91 @@ first production data.
 
 ## Recently completed
 
+- **Walk-forward gate-scorecard expansion** *(2026-05-17)* -- the
+  Active #1 walk-forward certification report expanded from 5 to
+  **15 gates** evaluated per refresh. When the cert hits READY
+  (~2026-06-10), every enforced trading gate has its own verdict
+  + threshold sweep, not just five.
+
+  **Previous coverage** (5 gates): `gate_extreme_edge`,
+  `gate_min_edge`, `gate_min_inning`, `gate_min_entry_ask`,
+  `gate_runs_needed_max`. Most never blocked any bet in the
+  sample, so 4 of 5 returned `KEEP (low confidence) -- 0 blocked`
+  with no actionable signal.
+
+  **Added coverage** (10 new gates):
+  - **`gate_max_base_fv`** (universal) -- blocks when Stage-1
+    base_fair_value > 0.99; phantom-score fingerprint.
+  - **`gate_fv_ask_gap_max`** (inning>=7) -- the gate whose
+    default we lowered 0.28 -> 0.26 today; now its impact is
+    auditable cohort-by-cohort.
+  - **`gate_min_current_total`** (universal) -- low-scoring-
+    game block (away+home < 4).
+  - **`gate_inn5_rn_max`** (inning==5) -- reliever-transition
+    runs-needed cap.
+  - **`gate_inn6_rn_max`** (inning==6) -- setup-reliever dead-
+    zone runs-needed cap.
+  - **`gate_close_game_rn`** (lead_abs<2) -- close-game
+    runs-needed cap.
+  - **`gate_s2_suppress_max`** (inning>=6) -- Stage-2 run-env
+    suppression. Direction='min' (block when delta is BELOW the
+    threshold; more negative = block).
+  - **`gate_high_line_min_edge`** (line>=8.5) -- separate edge
+    floor for high-line markets.
+  - **`gate_high_line_min_inning`** (line>=8.5) -- separate
+    inning floor for high-line markets.
+  - **`shadow_gate_current_state_edge_min`** -- shadow-only;
+    no production threshold. The 2026-05-17 cohort breakdown
+    showed `cse<0.03` is +10.5% ROI vs `cse>=0.08` -11.4%, so
+    Active #3's proposed `current_state_edge_min >= 0.05` is
+    being re-evaluated. This shadow gate runs the sweep so the
+    operator can read the EXPLORE verdict and decide a
+    direction.
+
+  **Mechanism**: `GateDef` gained an `applicability` predicate
+  that filters the bet population BEFORE threshold evaluation.
+  Composite gates (e.g. `gate_inn6_rn_max` applies only when
+  inning==6) exclude out-of-domain rows from BOTH kept and
+  blocked cohorts so the verdict comparison stays apples-to-
+  apples within the gate's scope. `BetRow` gained four fields
+  (`current_total`, `lead_abs`, `base_fair_value`,
+  `stage2_run_env_delta`) so the composite gates have the
+  signals they need. `evaluate_gate` gained a `shadow_only`
+  branch that emits an EXPLORE verdict (best sweep threshold by
+  kept-vs-blocked ROI delta) instead of KEEP/RETUNE/RETIRE.
+
+  **Findings on 2026-05-17 PRELIMINARY data** (88 fills / 27
+  dates; verdicts directional only):
+  - `gate_extreme_edge` remains the only confidently-supported
+    gate (blocked cohort -69% ROI vs kept +4.8%; 73.8pp gap).
+  - `gate_fv_ask_gap_max` (inning>=7 cohort) shows 28 kept at
+    +16.9% ROI vs 2 blocked at -100%. Gate is doing real work
+    within its domain.
+  - `gate_inn6_rn_max` (inning==6 cohort) shows 25 kept bets
+    at **-36.8% ROI** with 0 blocked. **Inning 6 is the worst-
+    performing band in the entire dataset**; current rn>=2.5
+    threshold blocks nothing. Strong candidate for a TIGHTER
+    threshold once data matures.
+  - `gate_close_game_rn` (close-game cohort) shows 25 kept at
+    +14.5% ROI with 0 blocked. Close games look profitable in
+    this sample -- counter-intuitive.
+  - `shadow_gate_current_state_edge_min` confirms the inverted
+    signal we expected: the operator should re-think Active #3's
+    proposed direction.
+
+  **Files**: `scripts/analysis/build_walk_forward_certification.py`
+  (`BetRow` extension, `GateDef.applicability` + `shadow_only`
+  fields, `_sweep_one` applicability filter, `evaluate_gate`
+  shadow branch, 10 new `GateDef` entries),
+  `tests/test_build_walk_forward_certification.py` (11 new tests:
+  4 applicability semantics, 2 shadow-only EXPLORE, 2 BetRow
+  extension, 3 gate-presence + universal-vs-composite shape).
+  988 tests + 41 subtests pass.
+
+  **Refresh**: the daily refresh already runs the cert; tomorrow's
+  refresh will produce the expanded scorecard automatically. No
+  wiring change.
+
 - **CLI default convergence** *(2026-05-17)* -- five `real_trader.py`
   defaults bumped to match values the operator has been running
   explicitly for weeks, removing the need to pass them on every

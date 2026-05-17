@@ -273,5 +273,247 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(payload["overall"]["n_bets"], 0)
 
 
+def _bet_row(**overrides):
+    """Helper for the expanded-gate tests. Defaults represent a
+    plausible mid-game OVER bet that lost $10."""
+    defaults = dict(
+        session_date="2026-05-10",
+        family="score_event_transition",
+        line=8.5,
+        inning=6,
+        runs_needed=2.0,
+        decision_ask=0.70,
+        edge_at_ask=0.12,
+        fair_value=0.82,
+        limit_price=0.70,
+        current_state_edge=0.04,
+        phantom_risk_band="low",
+        target_filled=1,
+        target_win=0,
+        target_profit=-10.0,
+        current_total=5,
+        lead_abs=1,
+        base_fair_value=0.82,
+        stage2_run_env_delta=0.0,
+    )
+    defaults.update(overrides)
+    return cert.BetRow(**defaults)
+
+
+class ExpandedGateScorecardTests(unittest.TestCase):
+    """2026-05-17: the per-gate scorecard expanded from 5 -> 15 gates
+    (10 enforced + 1 shadow-only). Composite gates use an
+    `applicability` predicate so only rows in the gate's domain
+    contribute to kept/blocked cohorts. These tests cover the
+    applicability semantics + the shadow-only EXPLORE verdict shape."""
+
+    def test_all_expected_gates_present(self):
+        names = {g.name for g in cert.GATE_DEFS}
+        for expected in (
+            # Original 5
+            "gate_extreme_edge", "gate_min_edge", "gate_min_inning",
+            "gate_min_entry_ask", "gate_runs_needed_max",
+            # New (2026-05-17)
+            "gate_max_base_fv", "gate_fv_ask_gap_max",
+            "gate_min_current_total", "gate_inn5_rn_max",
+            "gate_inn6_rn_max", "gate_close_game_rn",
+            "gate_s2_suppress_max", "gate_high_line_min_edge",
+            "gate_high_line_min_inning",
+            "shadow_gate_current_state_edge_min",
+        ):
+            self.assertIn(expected, names, f"missing gate {expected!r}")
+
+    def test_applicability_excludes_out_of_domain_rows(self):
+        """gate_fv_ask_gap_max applies only inning>=7. Rows in
+        inning<7 should be EXCLUDED from both kept and blocked
+        cohorts (not counted as kept-by-default)."""
+        rows = [
+            _bet_row(inning=6, fair_value=0.90, decision_ask=0.50),  # gap 0.40, out-of-domain
+            _bet_row(inning=7, fair_value=0.90, decision_ask=0.50),  # gap 0.40, blocked
+            _bet_row(inning=7, fair_value=0.70, decision_ask=0.60),  # gap 0.10, kept
+        ]
+        gate = next(g for g in cert.GATE_DEFS if g.name == "gate_fv_ask_gap_max")
+        kept, blocked = cert._sweep_one(rows, gate, 0.26)
+        # Only the 2 inning>=7 rows participate
+        self.assertEqual(kept.n_bets + blocked.n_bets, 2)
+        self.assertEqual(blocked.n_bets, 1)
+        self.assertEqual(kept.n_bets, 1)
+
+    def test_close_game_applicability_lead_abs_lt_2(self):
+        rows = [
+            _bet_row(lead_abs=0, runs_needed=4.5),  # close, blocked
+            _bet_row(lead_abs=1, runs_needed=3.0),  # close, kept
+            _bet_row(lead_abs=2, runs_needed=4.5),  # NOT close, excluded
+            _bet_row(lead_abs=5, runs_needed=4.5),  # blowout, excluded
+        ]
+        gate = next(g for g in cert.GATE_DEFS if g.name == "gate_close_game_rn")
+        kept, blocked = cert._sweep_one(rows, gate, 4.0)
+        self.assertEqual(kept.n_bets + blocked.n_bets, 2)
+        self.assertEqual(blocked.n_bets, 1)
+        self.assertEqual(kept.n_bets, 1)
+
+    def test_high_line_applicability_line_gte_8_5(self):
+        rows = [
+            _bet_row(line=7.5, edge_at_ask=0.10),  # low line, excluded
+            _bet_row(line=8.5, edge_at_ask=0.20),  # high line, kept
+            _bet_row(line=8.5, edge_at_ask=0.10),  # high line, blocked
+            _bet_row(line=9.5, edge_at_ask=0.25),  # high line, kept
+        ]
+        gate = next(g for g in cert.GATE_DEFS if g.name == "gate_high_line_min_edge")
+        kept, blocked = cert._sweep_one(rows, gate, 0.16)
+        # Only line>=8.5 rows participate (3 of 4)
+        self.assertEqual(kept.n_bets + blocked.n_bets, 3)
+        self.assertEqual(blocked.n_bets, 1)
+        self.assertEqual(kept.n_bets, 2)
+
+    def test_inn5_rn_only_applies_to_inning_5(self):
+        rows = [
+            _bet_row(inning=4, runs_needed=3.0),  # excluded
+            _bet_row(inning=5, runs_needed=3.0),  # blocked (>=2.5)
+            _bet_row(inning=5, runs_needed=2.0),  # kept
+            _bet_row(inning=6, runs_needed=3.0),  # excluded (gate_inn6 handles)
+        ]
+        gate = next(g for g in cert.GATE_DEFS if g.name == "gate_inn5_rn_max")
+        kept, blocked = cert._sweep_one(rows, gate, 2.5)
+        self.assertEqual(kept.n_bets + blocked.n_bets, 2)
+        self.assertEqual(blocked.n_bets, 1)
+        self.assertEqual(kept.n_bets, 1)
+
+    def test_s2_suppress_max_applies_inning_gte_6_min_direction(self):
+        """gate_s2_suppress_max uses direction='min' -- block when
+        stage2_run_env_delta is BELOW the threshold (more negative
+        = worse run env)."""
+        rows = [
+            _bet_row(inning=5, stage2_run_env_delta=-0.30),  # excluded
+            _bet_row(inning=6, stage2_run_env_delta=-0.30),  # blocked
+            _bet_row(inning=7, stage2_run_env_delta=-0.10),  # kept
+            _bet_row(inning=6, stage2_run_env_delta=0.05),   # kept
+        ]
+        gate = next(g for g in cert.GATE_DEFS if g.name == "gate_s2_suppress_max")
+        kept, blocked = cert._sweep_one(rows, gate, -0.20)
+        self.assertEqual(kept.n_bets + blocked.n_bets, 3)
+        self.assertEqual(blocked.n_bets, 1)
+        self.assertEqual(kept.n_bets, 2)
+
+    def test_min_current_total_universal_applicability(self):
+        """gate_min_current_total has no applicability predicate --
+        every row participates."""
+        rows = [
+            _bet_row(current_total=3),  # blocked
+            _bet_row(current_total=4),  # kept (boundary)
+            _bet_row(current_total=7),  # kept
+            _bet_row(current_total=None),  # None -> kept-by-default
+        ]
+        gate = next(g for g in cert.GATE_DEFS if g.name == "gate_min_current_total")
+        kept, blocked = cert._sweep_one(rows, gate, 4)
+        # All 4 rows participate (no applicability filter)
+        self.assertEqual(kept.n_bets + blocked.n_bets, 4)
+        self.assertEqual(blocked.n_bets, 1)
+        self.assertEqual(kept.n_bets, 3)
+
+
+class ShadowOnlyGateVerdictTests(unittest.TestCase):
+    """A shadow_only gate has no production threshold. evaluate_gate
+    must emit an EXPLORE verdict with the best-by-ROI-delta sweep
+    threshold instead of KEEP/RETUNE/RETIRE."""
+
+    def test_shadow_only_emits_explore_verdict(self):
+        # Build a bet population where blocking cse<0.05 helps
+        # (i.e., the cse>=0.05 cohort is profitable; cse<0.05 loses).
+        rows = []
+        # 15 cse>=0.05 winners
+        for i in range(15):
+            rows.append(_bet_row(
+                current_state_edge=0.08,
+                target_profit=5.0,  # win
+                target_win=1,
+            ))
+        # 15 cse<0.05 losers
+        for i in range(15):
+            rows.append(_bet_row(
+                current_state_edge=0.02,
+                target_profit=-10.0,  # loss
+                target_win=0,
+            ))
+        gate = next(g for g in cert.GATE_DEFS
+                    if g.name == "shadow_gate_current_state_edge_min")
+        result = cert.evaluate_gate(rows, gate)
+        self.assertTrue(result["shadow_only"])
+        self.assertIsNone(result["current_threshold"])
+        self.assertEqual(result["verdict"]["verdict"], "EXPLORE")
+
+    def test_shadow_only_no_actionable_sweep_returns_explore_low(self):
+        """When no sweep threshold has enough blocked rows, EXPLORE
+        still emits but with a 'no sweep' reason."""
+        rows = [_bet_row(current_state_edge=0.10) for _ in range(5)]
+        gate = next(g for g in cert.GATE_DEFS
+                    if g.name == "shadow_gate_current_state_edge_min")
+        result = cert.evaluate_gate(rows, gate)
+        self.assertEqual(result["verdict"]["verdict"], "EXPLORE")
+        # Either the message says "no sweep threshold meets minimum"
+        # or the recommended_threshold is None
+        v = result["verdict"]
+        self.assertTrue(
+            "No sweep threshold" in v["reason"]
+            or v["recommended_threshold"] is None,
+        )
+
+
+class BetRowExtensionTests(unittest.TestCase):
+    """2026-05-17: BetRow gained current_total / lead_abs /
+    base_fair_value / stage2_run_env_delta. Verify they round-trip
+    through _to_bet_row from a training-table row."""
+
+    def test_to_bet_row_populates_new_fields(self):
+        row = {
+            "session_date": "2026-05-15",
+            "signal_model_family": "score_event_transition",
+            "line": 8.5,
+            "inning": 6,
+            "runs_needed": 2.0,
+            "decision_ask": 0.70,
+            "edge_at_ask": 0.12,
+            "fair_value": 0.82,
+            "limit_price": 0.70,
+            "target_filled": 1,
+            "target_win": 0,
+            "target_profit": -10.0,
+            "current_total": 7,
+            "lead_abs": 2,
+            "base_fair_value": 0.78,
+            "stage2_run_env_delta": -0.05,
+        }
+        b = cert._to_bet_row(row)
+        self.assertIsNotNone(b)
+        self.assertEqual(b.current_total, 7)
+        self.assertEqual(b.lead_abs, 2)
+        self.assertAlmostEqual(b.base_fair_value, 0.78)
+        self.assertAlmostEqual(b.stage2_run_env_delta, -0.05)
+
+    def test_to_bet_row_handles_missing_new_fields(self):
+        """Back-compat: training rows without the new fields should
+        still project; new fields default to None."""
+        row = {
+            "session_date": "2026-05-15",
+            "signal_model_family": "score_event_transition",
+            "line": 8.5,
+            "inning": 6,
+            "runs_needed": 2.0,
+            "decision_ask": 0.70,
+            "edge_at_ask": 0.12,
+            "fair_value": 0.82,
+            "limit_price": 0.70,
+            "target_filled": 1,
+            "target_win": 0,
+            "target_profit": -10.0,
+        }
+        b = cert._to_bet_row(row)
+        self.assertIsNotNone(b)
+        self.assertIsNone(b.current_total)
+        self.assertIsNone(b.lead_abs)
+        self.assertIsNone(b.base_fair_value)
+        self.assertIsNone(b.stage2_run_env_delta)
+
+
 if __name__ == "__main__":
     unittest.main()

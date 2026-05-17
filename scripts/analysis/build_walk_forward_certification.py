@@ -93,6 +93,14 @@ class BetRow:
     target_filled: int
     target_win: Optional[int]
     target_profit: float
+    # Fields added 2026-05-17 for the expanded per-gate scorecard so
+    # composite + applicability-gated gates (e.g. gate_fv_ask_gap_max
+    # applies only inning>=7; gate_min_current_total looks at the
+    # game-state total) can be evaluated without schema gymnastics.
+    current_total: Optional[int] = None
+    lead_abs: Optional[int] = None
+    base_fair_value: Optional[float] = None
+    stage2_run_env_delta: Optional[float] = None
 
 
 def _safe_float(v: Any) -> Optional[float]:
@@ -166,6 +174,10 @@ def _to_bet_row(r: Dict[str, Any]) -> Optional[BetRow]:
         target_filled=int(target_filled),
         target_win=target_win,
         target_profit=float(target_profit),
+        current_total=_safe_int(r.get("current_total")),
+        lead_abs=_safe_int(r.get("lead_abs")),
+        base_fair_value=_safe_float(r.get("base_fair_value")),
+        stage2_run_env_delta=_safe_float(r.get("stage2_run_env_delta")),
     )
 
 
@@ -338,14 +350,75 @@ class GateDef:
     description: str
     bet_field: Callable[[BetRow], Optional[float]]
     direction: str                  # "max" (block above) or "min" (block below)
-    current_threshold: float
+    current_threshold: Optional[float]    # None for shadow-only (no enforcement today)
     sweep_thresholds: Sequence[float]
+    # Optional predicate that filters the bet population BEFORE
+    # threshold evaluation. Used for composite gates like
+    # gate_fv_ask_gap_max (only applies inning>=7) or
+    # gate_close_game_rn (only applies lead_abs<2). When None, the
+    # gate sees every bet. Bets that fail applicability are
+    # EXCLUDED from both kept and blocked cohorts so the verdict
+    # comparison stays apples-to-apples within the gate's domain.
+    # Added 2026-05-17 (expanded per-gate scorecard).
+    applicability: Optional[Callable[[BetRow], bool]] = None
+    # Shadow gates carry no enforced threshold; the cert report
+    # surfaces the sweep so the operator can pick a value to
+    # promote later. Indicated by current_threshold=None.
+    shadow_only: bool = False
 
 
 def _bet_field_edge(b: BetRow) -> float:           return b.edge_at_ask
 def _bet_field_decision_ask(b: BetRow) -> float:   return b.decision_ask
 def _bet_field_inning(b: BetRow) -> float:         return float(b.inning)
 def _bet_field_runs_needed(b: BetRow) -> float:    return b.runs_needed
+
+
+# ---- 2026-05-17 expanded scorecard helpers ----
+
+def _bet_field_base_fair_value(b: BetRow) -> Optional[float]:
+    return b.base_fair_value
+
+
+def _bet_field_fv_ask_gap(b: BetRow) -> Optional[float]:
+    """fair_value - decision_ask; the phantom-score detection gap."""
+    if b.fair_value is None or b.decision_ask is None:
+        return None
+    return b.fair_value - b.decision_ask
+
+
+def _bet_field_current_total(b: BetRow) -> Optional[float]:
+    return float(b.current_total) if b.current_total is not None else None
+
+
+def _bet_field_s2_delta(b: BetRow) -> Optional[float]:
+    return b.stage2_run_env_delta
+
+
+def _bet_field_current_state_edge(b: BetRow) -> Optional[float]:
+    return b.current_state_edge
+
+
+def _applies_inning_gte(threshold: int) -> Callable[[BetRow], bool]:
+    """Composite-gate applicability: only rows in inning >= threshold."""
+    def _pred(b: BetRow) -> bool:
+        return b.inning is not None and b.inning >= threshold
+    return _pred
+
+
+def _applies_inning_eq(value: int) -> Callable[[BetRow], bool]:
+    def _pred(b: BetRow) -> bool:
+        return b.inning is not None and b.inning == value
+    return _pred
+
+
+def _applies_close_game(b: BetRow) -> bool:
+    """Close-game gate domain: lead < 2."""
+    return b.lead_abs is not None and b.lead_abs < 2
+
+
+def _applies_high_line(b: BetRow) -> bool:
+    """High-line gate domain: line >= 8.5 (matches DEFAULT_HIGH_LINE_CUTOFF)."""
+    return b.line is not None and b.line >= 8.5
 
 
 GATE_DEFS: List[GateDef] = [
@@ -389,21 +462,171 @@ GATE_DEFS: List[GateDef] = [
         current_threshold=3.5,
         sweep_thresholds=[2.5, 3.0, 3.5, 4.0, 5.0],
     ),
-    # Note: gate_fv_ask_gap_max requires the post-FV ask gap and isn't
-    # always present on the training-row schema; defer until we wire it
-    # in cleanly. Same for blowout-relax / gate_min_current_total -- those
-    # are state-of-game gates and need richer features than the table
-    # currently exposes for sweeping.
+    # ---- 2026-05-17: expanded gate scorecard (9 new gates) ----
+    # The original 5 gates above are all SINGLE-CONDITION + UNIVERSAL.
+    # The 9 below split into:
+    #   - 1 universal: gate_max_base_fv
+    #   - 5 composite (applicability-gated): gate_fv_ask_gap_max,
+    #     gate_min_current_total, gate_inn5_rn_max, gate_inn6_rn_max,
+    #     gate_close_game_rn, gate_s2_suppress_max
+    #   - 2 high-line-only: gate_high_line_min_edge,
+    #     gate_high_line_min_inning
+    #   - 1 shadow-only (no production threshold today):
+    #     shadow_gate_current_state_edge_min
+    # All thresholds are pulled from scripts/trading/signal_config.py
+    # DEFAULT_* constants as of 2026-05-17.
+    GateDef(
+        name="gate_max_base_fv",
+        description=(
+            "Block if base_fair_value is at saturation (>0.99) -- "
+            "Stage-1 prior alone exceeds 99% Over probability, "
+            "which is a phantom-score fingerprint."
+        ),
+        bet_field=_bet_field_base_fair_value,
+        direction="max",
+        current_threshold=0.99,
+        sweep_thresholds=[0.95, 0.97, 0.98, 0.99, 1.00],
+    ),
+    GateDef(
+        name="gate_fv_ask_gap_max",
+        description=(
+            "Late-game phantom-score detection: in inning >= 7, "
+            "block when (fair_value - decision_ask) exceeds the gap "
+            "threshold. Default lowered 2026-05-17 to 0.26."
+        ),
+        bet_field=_bet_field_fv_ask_gap,
+        direction="max",
+        current_threshold=0.26,
+        sweep_thresholds=[0.20, 0.24, 0.26, 0.28, 0.30, 0.35],
+        applicability=_applies_inning_gte(7),
+    ),
+    GateDef(
+        name="gate_min_current_total",
+        description=(
+            "Block when game is too low-scoring (away+home < N runs) "
+            "-- low-total games don't generate the Over pressure the "
+            "model expects."
+        ),
+        bet_field=_bet_field_current_total,
+        direction="min",
+        current_threshold=4,
+        sweep_thresholds=[2, 3, 4, 5, 6],
+    ),
+    GateDef(
+        name="gate_inn5_rn_max",
+        description=(
+            "Inning 5 reliever transition: in inning == 5, block "
+            "when runs_needed >= 2.5 (sample shows 2W/5L 29% WR "
+            "-$375 at the boundary; TR10 hardened the threshold)."
+        ),
+        bet_field=_bet_field_runs_needed,
+        direction="max",
+        current_threshold=2.5,
+        sweep_thresholds=[2.0, 2.5, 3.0, 3.5],
+        applicability=_applies_inning_eq(5),
+    ),
+    GateDef(
+        name="gate_inn6_rn_max",
+        description=(
+            "Inning 6 setup-reliever dead zone: in inning == 6, "
+            "block when runs_needed >= 2.5 (TR9)."
+        ),
+        bet_field=_bet_field_runs_needed,
+        direction="max",
+        current_threshold=2.5,
+        sweep_thresholds=[2.0, 2.5, 3.0, 3.5],
+        applicability=_applies_inning_eq(6),
+    ),
+    GateDef(
+        name="gate_close_game_rn",
+        description=(
+            "Close-game runs-needed cap: when lead_abs < 2, block "
+            "if runs_needed >= 4.0 (TR6 -- close games rarely break "
+            "out into the high-RN over)."
+        ),
+        bet_field=_bet_field_runs_needed,
+        direction="max",
+        current_threshold=4.0,
+        sweep_thresholds=[3.0, 3.5, 4.0, 4.5, 5.0],
+        applicability=_applies_close_game,
+    ),
+    GateDef(
+        name="gate_s2_suppress_max",
+        description=(
+            "Stage-2 suppression: in inning >= 6, block when "
+            "stage2_run_env_delta <= -0.20 (logit; park/weather "
+            "model says scoring environment is materially worse "
+            "than average). TR13 default."
+        ),
+        bet_field=_bet_field_s2_delta,
+        direction="min",   # block when DELTA is below threshold (more negative = block)
+        current_threshold=-0.20,
+        sweep_thresholds=[-0.40, -0.30, -0.20, -0.10, 0.0],
+        applicability=_applies_inning_gte(6),
+    ),
+    GateDef(
+        name="gate_high_line_min_edge",
+        description=(
+            "High-line edge floor: when line >= 8.5, require edge "
+            ">= 0.16 (vs the universal 0.10). High-line markets "
+            "have wider FV uncertainty so a higher edge floor."
+        ),
+        bet_field=_bet_field_edge,
+        direction="min",
+        current_threshold=0.16,
+        sweep_thresholds=[0.10, 0.13, 0.16, 0.18, 0.22],
+        applicability=_applies_high_line,
+    ),
+    GateDef(
+        name="gate_high_line_min_inning",
+        description=(
+            "High-line inning floor: when line >= 8.5, require "
+            "inning >= 5 (vs universal 4). High-line resolution "
+            "needs more game played for Stage-1 stability."
+        ),
+        bet_field=_bet_field_inning,
+        direction="min",
+        current_threshold=5,
+        sweep_thresholds=[3, 4, 5, 6],
+        applicability=_applies_high_line,
+    ),
+    GateDef(
+        name="shadow_gate_current_state_edge_min",
+        description=(
+            "Shadow-only: would blocking on current_state_value_edge "
+            "below a threshold improve ROI? Surfaced for operator "
+            "review because the 2026-05-17 cohort breakdown shows "
+            "cse<0.03 = +10.5% ROI vs cse>=0.08 = -11.4%. The "
+            "counterintuitive direction (lower cse is BETTER) means "
+            "Active #3's proposed gate_current_state_edge_min >= 0.05 "
+            "should be RE-EVALUATED. This shadow gate runs the sweep "
+            "without enforcing anything."
+        ),
+        bet_field=_bet_field_current_state_edge,
+        direction="min",
+        current_threshold=None,    # shadow_only
+        sweep_thresholds=[0.0, 0.02, 0.03, 0.05, 0.08],
+        shadow_only=True,
+    ),
 ]
 
 
 def _sweep_one(
     rows: Sequence[BetRow], gate: GateDef, threshold: float,
 ) -> Tuple[CohortStats, CohortStats]:
-    """Return (kept_stats, blocked_stats) for one threshold value."""
+    """Return (kept_stats, blocked_stats) for one threshold value.
+
+    For composite gates with an `applicability` predicate, rows that
+    fail the predicate are EXCLUDED from both cohorts. This keeps the
+    verdict comparison apples-to-apples within the gate's domain
+    (e.g., gate_fv_ask_gap_max applies only inning>=7, so inning<7
+    bets don't dilute the kept-vs-blocked comparison).
+    """
     kept = CohortStats()
     blocked = CohortStats()
     for b in rows:
+        if gate.applicability is not None and not gate.applicability(b):
+            continue
         v = gate.bet_field(b)
         if v is None:
             kept.add(b)
@@ -493,7 +716,13 @@ def _gate_verdict(
 
 
 def evaluate_gate(rows: Sequence[BetRow], gate: GateDef) -> Dict[str, Any]:
-    current_kept, current_blocked = _sweep_one(rows, gate, gate.current_threshold)
+    """Evaluate one gate against the bet population.
+
+    For shadow-only gates (current_threshold is None), the verdict
+    becomes an EXPLORE recommendation pointing at the best sweep
+    threshold by blocked-vs-kept ROI delta, but never a KEEP/RETUNE
+    /RETIRE action label -- a shadow gate has nothing to retire.
+    """
     sweep: List[Dict[str, Any]] = []
     for thr in gate.sweep_thresholds:
         kept, blocked = _sweep_one(rows, gate, thr)
@@ -502,12 +731,63 @@ def evaluate_gate(rows: Sequence[BetRow], gate: GateDef) -> Dict[str, Any]:
             "kept": kept.to_dict(),
             "blocked": blocked.to_dict(),
         })
+
+    if gate.shadow_only or gate.current_threshold is None:
+        # No production threshold -- emit an EXPLORE verdict that
+        # surfaces the best sweep threshold by ROI delta.
+        best_thr = None
+        best_delta = None
+        for s in sweep:
+            kept_roi = s["kept"].get("roi")
+            blocked_roi = s["blocked"].get("roi")
+            n_blocked = s["blocked"].get("n_filled", 0)
+            if (
+                kept_roi is None or blocked_roi is None
+                or n_blocked < GATE_RETUNE_MIN_BLOCKED_N
+            ):
+                continue
+            delta = kept_roi - blocked_roi  # positive = blocking is good
+            if best_delta is None or delta > best_delta:
+                best_delta = delta
+                best_thr = s["threshold"]
+        verdict = {
+            "verdict": "EXPLORE",
+            "confidence": "low",
+            "recommended_threshold": best_thr,
+            "reason": (
+                f"Shadow-only gate (no production threshold today). "
+                + (
+                    f"Best sweep threshold by ROI delta: {best_thr} "
+                    f"(kept-blocked = {best_delta * 100:+.1f}pp)."
+                    if best_thr is not None
+                    else "No sweep threshold meets the minimum "
+                         f"blocked-N {GATE_RETUNE_MIN_BLOCKED_N} for "
+                         "a directional recommendation."
+                )
+            ),
+        }
+        return {
+            "name": gate.name,
+            "description": gate.description,
+            "direction": gate.direction,
+            "current_threshold": None,
+            "applicability": gate.applicability.__name__ if gate.applicability else None,
+            "shadow_only": True,
+            "current_kept": None,
+            "current_blocked": None,
+            "sweep": sweep,
+            "verdict": verdict,
+        }
+
+    current_kept, current_blocked = _sweep_one(rows, gate, gate.current_threshold)
     verdict = _gate_verdict(current_kept, current_blocked, sweep)
     return {
         "name": gate.name,
         "description": gate.description,
         "direction": gate.direction,
         "current_threshold": gate.current_threshold,
+        "applicability": gate.applicability.__name__ if gate.applicability else None,
+        "shadow_only": False,
         "current_kept": current_kept.to_dict(),
         "current_blocked": current_blocked.to_dict(),
         "sweep": sweep,
