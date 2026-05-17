@@ -1671,3 +1671,8 @@ WARNING Artifact lineage freshness: status=warning, 30 ok / 16 warning / 0 error
 2026-05-17 15:16:57,148 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
 2026-05-17 15:18:35,264 DEBUG mlb_poly_monitor Polling 140 token books (10 active games)
 2026-05-17 15:18:43,771 DEBUG mlb_poly_monitor Wrote 140 tick snapshots
+2026-05-17 15:19:02,139 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 15:21:07,606 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 15:23:12,524 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 15:25:17,499 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 15:27:22,846 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
