@@ -297,9 +297,26 @@ class Stage3V2PromoteTests(unittest.TestCase):
                 mock_run.return_value = SimpleNamespace(returncode=0, stdout="ok\n", stderr="")
                 rc = promote.cmd_stage3_v2(args)
             self.assertEqual(rc, 0)
-            # subprocess.run was invoked with expected args
-            self.assertEqual(mock_run.call_count, 1)
-            cmd = mock_run.call_args[0][0]
+            # subprocess.run was invoked AT LEAST once (the team_offense
+            # promotion). Active #16 (2026-05-17) added lineage capture
+            # which also calls subprocess.run for git metadata
+            # (rev-parse HEAD / symbolic-ref / status --porcelain). We
+            # assert the team_offense call happened among them, not a
+            # strict count.
+            self.assertGreaterEqual(mock_run.call_count, 1)
+            team_offense_call = next(
+                (
+                    call for call in mock_run.call_args_list
+                    if call[0] and str(args.promote_team_offense_script)
+                    in (call[0][0] if call[0] else [])
+                ),
+                None,
+            )
+            self.assertIsNotNone(
+                team_offense_call,
+                "team_offense script not found in any subprocess call",
+            )
+            cmd = team_offense_call[0][0]
             self.assertIn(str(args.promote_team_offense_script), cmd)
             self.assertIn(str(args.stage3_v2_research_fit_path), cmd)
             # Event row records the subprocess returncode

@@ -190,13 +190,17 @@ class ComputeLineageTests(unittest.TestCase):
     def test_compute_never_raises_on_bad_paths(self):
         """Lineage must be best-effort. A non-existent input path
         should return a None hash, not raise."""
+        bad_file = Path("/nonexistent/file.jsonl")
+        bad_dir = Path("/nonexistent/dir")
         out = lineage_mod.compute_lineage(
             builder_path="builder.py",
-            input_paths=["/nonexistent/file.jsonl"],
-            input_dir_paths=["/nonexistent/dir"],
+            input_paths=[bad_file],
+            input_dir_paths=[bad_dir],
         )
-        self.assertIsNone(out["input_hashes"]["/nonexistent/file.jsonl"])
-        self.assertIsNone(out["input_dir_summaries"]["/nonexistent/dir"])
+        # Key is str(Path(...)) when no project_root supplied --
+        # that differs by OS so compare via the str of the Path.
+        self.assertIsNone(out["input_hashes"][str(bad_file)])
+        self.assertIsNone(out["input_dir_summaries"][str(bad_dir)])
 
     def test_python_version_format(self):
         out = lineage_mod.compute_lineage(builder_path="x.py")
@@ -217,6 +221,87 @@ class PromotionLineageTests(unittest.TestCase):
         out = lineage_mod.promotion_lineage()
         # Ends with Z (UTC), parseable as ISO
         self.assertTrue(out["promoted_at_utc"].endswith("Z"))
+
+
+class PromotionLineageWiringTests(unittest.TestCase):
+    """End-to-end: promote a synthetic stake-scaling artifact and
+    verify the audit row carries both source_artifact_lineage (from
+    the artifact's own `lineage` block) and promotion_lineage
+    (fresh git stamp at promotion time)."""
+
+    def test_source_artifact_lineage_flows_to_audit_row(self):
+        ANALYSIS_DIR_LOCAL = PROJECT_DIR / "scripts" / "analysis"
+        if str(ANALYSIS_DIR_LOCAL) not in sys.path:
+            sys.path.insert(0, str(ANALYSIS_DIR_LOCAL))
+        import promote  # noqa: E402
+
+        with tempfile.TemporaryDirectory() as tdstr:
+            td = Path(tdstr)
+            # Synthetic stake-scaling verdict with a `lineage` block.
+            report = td / "stake_scaling.json"
+            report.write_text(json.dumps({
+                "verdict": "promote",
+                "verdict_reason": "ok",
+                "n_sessions": 30,
+                "thresholds": {"min_sessions": 30},
+                # The source artifact carries its own build-time lineage
+                "lineage": {
+                    "schema_version": 1,
+                    "git_sha": "sourcesha1",
+                    "git_branch": "main",
+                    "git_dirty": False,
+                    "builder_path": "scripts/analysis/analyze_stake_scaling_promotion.py",
+                    "built_at_utc": "2026-05-17T01:00:00Z",
+                },
+            }), encoding="utf-8")
+            overrides = td / "live_overrides.json"
+            from types import SimpleNamespace
+            args = SimpleNamespace(
+                stake_scaling_report_path=report,
+                event_log_path=td / "events.jsonl",
+                live_overrides_path=overrides,
+                operator="alice",
+                side="over",
+                dry_run=True,
+                force=False,
+            )
+            rc = promote.cmd_stake_scaling(args)
+            self.assertEqual(rc, 0)
+
+            rows = [
+                json.loads(line) for line in
+                (td / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            # Dry-run row -- no lineage added because lineage is only on the success path
+            self.assertEqual(rows[-1]["action"], "dry_run")
+
+            # Now do a real promotion (force=True since the lineage
+            # block only fires on success/forced).
+            args.dry_run = False
+            args.force = True
+            (td / "events.jsonl").write_text("", encoding="utf-8")
+            rc = promote.cmd_stake_scaling(args)
+            self.assertEqual(rc, 0)
+            rows = [
+                json.loads(line) for line in
+                (td / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            success_row = next(
+                r for r in rows if r["action"] in ("promoted", "forced")
+            )
+            self.assertIn("source_artifact_lineage", success_row)
+            self.assertEqual(
+                success_row["source_artifact_lineage"]["git_sha"],
+                "sourcesha1",
+            )
+            self.assertEqual(
+                success_row["source_artifact_lineage"]["builder_path"],
+                "scripts/analysis/analyze_stake_scaling_promotion.py",
+            )
+            self.assertIn("promotion_lineage", success_row)
+            # Promotion lineage was captured AT promote time; has its
+            # own timestamp (different from the source's built_at_utc).
+            self.assertIn("promoted_at_utc", success_row["promotion_lineage"])
 
 
 class ExtractLineageFromArtifactTests(unittest.TestCase):

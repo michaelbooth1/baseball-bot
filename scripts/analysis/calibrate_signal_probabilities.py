@@ -1542,6 +1542,38 @@ def main(argv: Optional[List[str]] = None) -> None:
             "dataset": calibration_payload["data"],
         }
 
+    # Active #16 (2026-05-17): stamp build-time lineage on both the
+    # calibration artifact and its report. The fast Wilson-UB demote
+    # check (#13) flags a failing post-promotion ROI within 5-6 days;
+    # when that fires, the operator's first question is "which
+    # calibrator was in production?" Lineage answers that without
+    # git-log archaeology.
+    try:
+        from scripts.analysis.artifact_lineage import compute_lineage as _compute_lineage
+    except ImportError:
+        try:
+            from artifact_lineage import compute_lineage as _compute_lineage  # type: ignore[no-redef]
+        except ImportError:
+            _compute_lineage = None  # type: ignore[assignment]
+    if _compute_lineage is not None:
+        artifact_lineage = _compute_lineage(
+            builder_path=__file__,
+            input_paths=[args.input_path, args.concept_drift_report_path],
+            project_root=PROJECT_DIR,
+            extra={
+                "cli_args_summary": {
+                    "side": getattr(args, "side", "over"),
+                    "family_mode": args.family_mode,
+                    "model_family": args.model_family,
+                    "mode": args.mode,
+                    "artifact_purpose": args.artifact_purpose,
+                    "stability_gate_enabled": args.stability_gate_enabled,
+                },
+            },
+        )
+        calibration_payload["lineage"] = artifact_lineage
+        report_payload["lineage"] = artifact_lineage
+
     calibration_path = args.output_root / f"{args.output_stem}.json"
     report_path = args.output_root / f"{args.output_stem}_report.json"
     predictions_path = args.output_root / f"{args.output_stem}_predictions.jsonl"

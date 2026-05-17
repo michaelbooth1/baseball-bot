@@ -85,9 +85,10 @@ coordinating updates in `scripts/trading`:
   `LOGGER`, `NOISY_LIBRARY_LOGGERS`, and `suppress_noisy_library_loggers`. No IO.
 - `monitor_utils.py`: `_safe_float`, `_safe_int`, `_normalize_slug_piece`,
   `_game_dir_name`, `_now_iso`. Pure helpers; do not add IO or logging here.
-- `monitor_system.py`: `_setup_performance_mode` (P-core pinning + HIGH process
-  priority via psutil; auto-detects i7-12700K, falls back to a warning if psutil
-  is missing or affinity fails) and `_prevent_sleep` (Windows
+- `monitor_system.py`: `_setup_performance_mode` (default-on P-core pinning +
+  HIGH process priority via psutil; auto-detects i7-12700K, falls back to a
+  warning if psutil is missing or affinity fails; opt out with
+  `--no-performance-mode`) and `_prevent_sleep` (Windows
   `SetThreadExecutionState` so the monitor does not sleep mid-game; no-op on
   non-Windows; cleared via `atexit`). Both fail open with a warning.
 - `monitor_models.py`: dataclasses `ScheduleScore`, `ScheduledGame` (with

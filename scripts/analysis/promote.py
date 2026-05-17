@@ -154,6 +154,16 @@ class PromotionEvent:
     # CLI-flag levers (stake-scaling, gate-threshold) and for first-time
     # promotions where no prior production file existed.
     backup_path: Optional[str] = None
+    # Active #16 (2026-05-17): lineage tracking. `source_artifact_lineage`
+    # is the BUILD-time lineage pulled from the artifact JSON being
+    # promoted (which builder produced it, from which git_sha, with
+    # which input hashes). `promotion_lineage` is the lineage stamped
+    # AT PROMOTION (current git_sha + timestamp). Together they let
+    # operators trace: "fast_demote fired -> which artifact was in
+    # production? -> what built it? -> who promoted it from where?"
+    # Both default to None for back-compat reads.
+    source_artifact_lineage: Optional[Dict[str, Any]] = None
+    promotion_lineage: Optional[Dict[str, Any]] = None
 
     def to_row(self) -> Dict[str, Any]:
         row: Dict[str, Any] = {
@@ -178,6 +188,10 @@ class PromotionEvent:
             row["notes"] = self.notes
         if self.backup_path:
             row["backup_path"] = self.backup_path
+        if self.source_artifact_lineage:
+            row["source_artifact_lineage"] = self.source_artifact_lineage
+        if self.promotion_lineage:
+            row["promotion_lineage"] = self.promotion_lineage
         return row
 
 
@@ -228,6 +242,45 @@ def _atomic_copy(src: Path, dst: Path) -> None:
     tmp = dst.with_suffix(dst.suffix + ".promote_tmp")
     shutil.copy2(src, tmp)
     os.replace(tmp, dst)
+
+
+def _capture_artifact_lineage(artifact_path: Path) -> Optional[Dict[str, Any]]:
+    """Active #16 (2026-05-17): pull the `lineage` block off an
+    artifact JSON if present. Used by promote.py to forward the
+    source artifact's build-time lineage onto the audit row.
+
+    Best-effort: a missing file, malformed JSON, or absent lineage
+    block all return None. We must never let a missing lineage
+    field block a real promotion.
+    """
+    if not artifact_path.exists():
+        return None
+    try:
+        payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    lineage = payload.get("lineage")
+    if isinstance(lineage, dict):
+        return lineage
+    return None
+
+
+def _compute_promotion_lineage() -> Dict[str, Any]:
+    """Active #16 helper: stamp a fresh `promotion_lineage` block at
+    promotion time (current git_sha + timestamp). Forwarded onto the
+    audit row alongside `source_artifact_lineage`. Returns a minimal
+    dict on import failure so the audit row never lacks the field
+    entirely."""
+    try:
+        from scripts.analysis.artifact_lineage import promotion_lineage as _pl
+    except ImportError:
+        try:
+            from artifact_lineage import promotion_lineage as _pl  # type: ignore[no-redef]
+        except ImportError:
+            return {"schema_version": 1, "promoted_at_utc": _now_iso()}
+    return _pl(project_root=PROJECT_DIR)
 
 
 def _backup_path(prod_path: Path) -> Path:
@@ -975,12 +1028,40 @@ def cmd_status(args: argparse.Namespace) -> int:
         print()
         print("  No recent promotions to evaluate (all four levers: no_promotion_to_demote).")
     else:
+        # Index the audit log by lever so we can pull the full
+        # promotion event (including lineage) for each lever shown.
+        lever_audit = {
+            "stage2": latest_promotion_event_for_lever(events, "stage2"),
+            "stage3-v2": latest_promotion_event_for_lever(events, "stage3_v2"),
+            "stake-scaling": latest_promotion_event_for_lever(events, "stake_scaling"),
+            "gate-threshold": latest_promotion_event_for_lever(events, "gate_threshold"),
+        }
         for name, v in relevant:
             print()
             print(f"[{name}] windowed demote verdict: {v['verdict']}")
             pe = v.get("promotion_event") or {}
             if pe.get("generated_at_utc"):
                 _print_block("promoted at", pe["generated_at_utc"])
+            # Active #16: surface lineage of the artifact that's in
+            # production so fast_demote investigations have an immediate
+            # answer to "which artifact + which git_sha?"
+            audit_row = lever_audit.get(name) or {}
+            src_lineage = audit_row.get("source_artifact_lineage") or {}
+            promo_lineage = audit_row.get("promotion_lineage") or {}
+            if src_lineage.get("git_sha") or src_lineage.get("builder_path"):
+                dirty = " (dirty)" if src_lineage.get("git_dirty") else ""
+                _print_block(
+                    "artifact lineage",
+                    f"built_at={src_lineage.get('built_at_utc') or '?'} "
+                    f"by={src_lineage.get('builder_path') or '?'} "
+                    f"git_sha={src_lineage.get('git_sha') or '?'}{dirty}",
+                )
+            if promo_lineage.get("git_sha"):
+                _print_block(
+                    "promoted from",
+                    f"git_sha={promo_lineage['git_sha']} "
+                    f"branch={promo_lineage.get('git_branch') or '?'}",
+                )
             pre = v.get("pre_window") or {}
             post = v.get("post_window") or {}
             if pre and pre.get("n_filled"):
@@ -1151,6 +1232,11 @@ def cmd_stage2(args: argparse.Namespace) -> int:
             from_state={"production_brier": prod_brier},
             to_state={"staging_brier": stg_brier},
             backup_path=str(backup) if backup else None,
+            # Active #16: source lineage from the staging artifact +
+            # fresh promotion-time lineage. Lets fast_demote investigations
+            # answer "which Stage-2 was promoted, from which git_sha?"
+            source_artifact_lineage=_capture_artifact_lineage(args.stage2_staging_path),
+            promotion_lineage=_compute_promotion_lineage(),
         ),
         log_path=args.event_log_path,
     )
@@ -1332,6 +1418,8 @@ def cmd_stage3_v2(args: argparse.Namespace) -> int:
             to_state={"research_betas": research_betas},
             subprocess_returncode=proc.returncode,
             backup_path=str(backup) if backup else None,
+            source_artifact_lineage=_capture_artifact_lineage(args.stage3_v2_research_fit_path),
+            promotion_lineage=_compute_promotion_lineage(),
         ),
         log_path=args.event_log_path,
     )
@@ -1461,6 +1549,8 @@ def cmd_stake_scaling(args: argparse.Namespace) -> int:
                 "overrides_path": str(args.live_overrides_path),
             },
             backup_path=str(backup_path) if backup_path else None,
+            source_artifact_lineage=_capture_artifact_lineage(args.stake_scaling_report_path),
+            promotion_lineage=_compute_promotion_lineage(),
             notes="overrides file mutated; restart live engine to pick up",
         ),
         log_path=args.event_log_path,
@@ -1660,6 +1750,8 @@ def cmd_gate_threshold(args: argparse.Namespace) -> int:
                 "overrides_path": str(args.live_overrides_path),
             },
             backup_path=str(backup_path) if backup_path else None,
+            source_artifact_lineage=_capture_artifact_lineage(args.walk_forward_cert_path),
+            promotion_lineage=_compute_promotion_lineage(),
             notes="overrides file mutated; restart live engine to pick up",
         ),
         log_path=args.event_log_path,

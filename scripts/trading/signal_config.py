@@ -67,7 +67,13 @@ DEFAULT_INN6_RN_MAX              = 2.5    # [TR9] inning 6 setup-reliever dead z
 # while our model says 0.98-1.0.  Session data (2026-04-21): STL@MIA O8.5
 # base_fv=1.0, market ask=0.58, filled, lost -$31.24.
 DEFAULT_MAX_BASE_FV            = 0.99   # [TR12â†’TR13] raised 0.98â†’0.99: 0.9814 fill was a WIN, only 1.0 is true saturation
-DEFAULT_FV_ASK_GAP_MAX         = 0.28   # [TR12â†’TR13] lowered 0.30â†’0.28: PIT@TEX edge=0.294 inn=7 LOSS
+DEFAULT_FV_ASK_GAP_MAX         = 0.26   # [TR12->TR13] lowered 0.30->0.28: PIT@TEX edge=0.294 inn=7 LOSS
+# [2026-05-17] Lowered 0.28 -> 0.26: matches the operator's runtime
+# setting. Risk-reducing direction (blocks MORE late-game phantom-
+# score patterns where fair_value - decision_ask exceeds the cap in
+# inning >= 7). Active #1 walk-forward should re-certify on the
+# day-30 trigger; the change is more conservative so it CAN ONLY
+# REDUCE exposure, never increase it.
 DEFAULT_FV_ASK_GAP_MIN_INNING  = 7      # [TR12] â€¦but only in inning >= this (late-game phantom risk)
 
 # [TR17, 2026-05-01] Extreme-edge phantom-run protection -- PROMOTED FROM SHADOW
@@ -165,9 +171,19 @@ DEFAULT_SHADOW_NO_SCORE_DRIFT_MIN_EMP_EDGE = 0.08
 # Book capture: high-freq snapshots taken after every signal fires.
 # Used to calibrate limit-order pricing (buying_model_1.txt).
 # [TR9] Extended from 10s to 30s â€” 10s was too short for limit-order fill analysis.
-DEFAULT_CAPTURE_DURATION  = 30.0   # [TR9] seconds to poll after signal (was 10.0)
+DEFAULT_CAPTURE_DURATION  = 120.0  # seconds to poll after signal
+# (2026-05-17) Bumped 30.0 -> 120.0. The post-signal book-capture
+# analysis (`scripts/analysis/analyze_book_captures.py`) uses
+# `max_elapsed=60.0` for fill-window simulation, so the previous 30s
+# default truncated that analysis silently. 120s covers all current
+# analysis + leaves headroom for Phase D queue-position research
+# without needing a recapture campaign.
 DEFAULT_CAPTURE_INTERVAL  = 1.0    # seconds between snapshots
-DEFAULT_CAPTURE_DEPTH     = 3      # top-N bid/ask levels stored per snapshot
+DEFAULT_CAPTURE_DEPTH     = 5      # top-N bid/ask levels stored per snapshot
+# (2026-05-17) Bumped 3 -> 5. No current analysis traverses past
+# top-of-book, but Phase D market-maker work needs queue-position
+# data (requires multi-level depth). Cost is 2 extra rows per
+# snapshot -- trivial vs the data-utility upside.
 
 # Shadow relaxed-gate diagnostics (metrics only; never change trade decisions).
 DEFAULT_SHADOW_RELAXED_ENABLED = True

@@ -49,13 +49,16 @@ def parse_args() -> argparse.Namespace:
                    help=f"Path to pitcher ERA cache JSON. "
                         f"Auto-rebuilt from MLB Stats API if missing or older than "
                         f"{PITCHER_CACHE_MAX_AGE_HOURS}h. (default: {DEFAULT_PITCHER_CACHE_PATH})")
-    p.add_argument("--performance-mode", action="store_true", default=False,
-                   help="Pin process to P-cores and set HIGH process priority (requires psutil). "
+    p.set_defaults(performance_mode=True)
+    p.add_argument("--performance-mode", dest="performance_mode", action="store_true",
+                   help="Pin process to P-cores and set HIGH process priority (default on; requires psutil). "
                         "Auto-detects i7-12700K layout (20 logical CPUs, P-cores=0-15). "
                         "Use --p-core-affinity for other hardware.")
+    p.add_argument("--no-performance-mode", dest="performance_mode", action="store_false",
+                   help="Disable CPU affinity / HIGH-priority process tuning.")
     p.add_argument("--p-core-affinity", type=str, default="",
                    help="Comma-separated logical CPU IDs to pin to (e.g. '0,1,2,3,4,5,6,7'). "
-                        "Overrides auto-detection. Only used when --performance-mode is set.")
+                        "Overrides auto-detection. Only used when performance mode is enabled.")
     args = p.parse_args()
     if args.book_failure_retire_streak < 1:
         p.error("--book-failure-retire-streak must be >= 1")

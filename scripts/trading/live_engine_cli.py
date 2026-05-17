@@ -45,7 +45,11 @@ DEFAULT_EV_WIN_MODEL_PATH        = PROJECT_DIR / "data" / "analysis_output" / "e
 DEFAULT_EV_FILL_MODEL_PATH       = PROJECT_DIR / "data" / "analysis_output" / "ev_policy" / "ev_execution_fill_runtime_model.json"
 DEFAULT_LIVE_STAKE               = 25.0    # dollars per bet when stake_mode=flat
 DEFAULT_DAILY_BUDGET             = 125.0   # max total spend per session; resets each run
-DEFAULT_PER_GAME_BUDGET_FRACTION = 0.35    # max same-game exposure as fraction of daily budget
+DEFAULT_PER_GAME_BUDGET_FRACTION = 0.40    # max same-game exposure as fraction of daily budget
+# (2026-05-17) Bumped 0.35 -> 0.40 to match the operator's actual
+# runtime setting and align with the Phase C C2 inventory cap
+# (max_inventory_per_game = 50 shares ~= $50 at typical ask, vs
+# $100 daily budget = 50% ceiling; 40% leaves clean headroom).
 
 # Correlated-line exposure cap (Active #6, shipped 2026-05-12). Over 7.5 and
 # Over 8.5 on the same game are highly correlated outcomes -- placing both
@@ -311,10 +315,20 @@ def parse_live_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace, 
     p.add_argument("--ev-policy-report-path", type=Path, default=DEFAULT_EV_POLICY_REPORT_PATH)
     p.add_argument("--ev-policy-win-model-path", type=Path, default=DEFAULT_EV_WIN_MODEL_PATH)
     p.add_argument("--ev-policy-fill-model-path", type=Path, default=DEFAULT_EV_FILL_MODEL_PATH)
-    p.add_argument("--wait-for-clob", action="store_true", default=False,
+    # (2026-05-17) Default flipped False -> True. The wait-for-clob
+    # path is pure operational robustness -- survives scheduled CLOB
+    # downtime windows during startup with no impact on trading
+    # behavior. The original False default existed for debug
+    # iteration speed; that's a niche case worth requiring an
+    # explicit --no-wait-for-clob to opt out of.
+    p.add_argument("--wait-for-clob",
+                   action=argparse.BooleanOptionalAction,
+                   default=True,
                    help="Wait for CLOB API to become available before starting the session. "
                         "Useful during scheduled maintenance windows (e.g. deposit wallet rollout). "
-                        "Polls every 15s, times out after --wait-for-clob-timeout-secs.")
+                        "Polls every 15s, times out after --wait-for-clob-timeout-secs. "
+                        "Pass --no-wait-for-clob to fail-fast at startup if CLOB isn't ready "
+                        "(debug / iteration only).")
     p.add_argument("--wait-for-clob-timeout-secs", type=float,
                    default=DEFAULT_WAIT_FOR_CLOB_TIMEOUT_SECS,
                    help=f"Max seconds to wait for CLOB availability with --wait-for-clob. "

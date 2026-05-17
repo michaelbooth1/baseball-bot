@@ -552,8 +552,8 @@ python scripts/trading/live_engine.py --daily-budget 300 --kelly-fraction 0.30
 # Adjust FV-decay cancel threshold
 python scripts/trading/live_engine.py --fv-cancel-min-edge 0.08
 
-# Enable hardware performance mode (requires psutil, auto-detects i7-12700K P-cores)
-python scripts/trading/live_engine.py --performance-mode
+# Disable default hardware performance mode for debugging/unusual hardware
+python scripts/trading/live_engine.py --no-performance-mode
 ```
 
 ### Startup artifact refresh (canonical daily refresh)
@@ -663,7 +663,7 @@ python scripts/trading/real_trader.py \
   --capture-duration 120 --capture-interval 1 --capture-depth 5 \
   --ev-policy-mode shadow --shadow-relaxed-enabled \
   --pitcher-cache-path cache/pitcher_cache.json \
-  --performance-mode --log-level INFO
+  --log-level INFO
 ```
 
 The 2026-04-22 P0 cancel-discipline values (`--fv-cancel-min-edge 0.03`,
@@ -685,6 +685,8 @@ Differences from the default flags table below:
 - `--capture-duration 120 --capture-depth 5` (longer window, deeper book than
   defaults, to feed fill-model + execution-replay research).
 - Shadow diagnostics on: `--shadow-relaxed-enabled`, `--ev-policy-mode shadow`.
+- Performance mode is now default-on; use `--no-performance-mode` only for
+  debugging or unusual CPU-affinity issues.
 
 ### Live trading defaults
 
@@ -707,7 +709,7 @@ Differences from the default flags table below:
 | `--order-timeout-secs` | 10800 | Safety-net timeout (3 hours) |
 | `--max-open-orders` | 5 | Max simultaneous open orders |
 | `--dry-run` | off | Logs orders without posting to CLOB |
-| `--performance-mode` | off | Pin process to P-cores, set HIGH priority (requires psutil) |
+| `--performance-mode` / `--no-performance-mode` | on | Pin process to P-cores, set HIGH priority (requires psutil); opt out with `--no-performance-mode` |
 | `--pitcher-cache-path` | â€” | Path to pitcher ERA cache for Stage-4 gate (from build_pitcher_cache.py) |
 | `--wait-for-clob` | off | Wait for CLOB API to become available before starting (for maintenance windows) |
 | `--wait-for-clob-timeout-secs` | 1800 | Max wait time for `--wait-for-clob` (30 min) |

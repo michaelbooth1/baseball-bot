@@ -15,11 +15,16 @@ transition objective. It is split into five sections:
   quoting. Strategic, not a one-week task; phases A-E.
 - **Operational guidance** -- standing rules for day-to-day session work.
 
-Last roadmap review: **2026-05-17** (Active #13 fast Wilson-UB
-demotion shipped: parallel demote check fires in 5-6 days vs the
-14d windowed check; 95% one-sided confidence on Wilson UB <
-breakeven; daemon bypasses standard cooldown for `fast_demote`
-actions. Phase C v2 safety prerequisite met. Earlier same day:
+Last roadmap review: **2026-05-17** (Active #16 model lineage
+tracking shipped: both calibration artifacts + all four
+promote.py audit rows now carry build-time + promotion-time
+lineage [git_sha, builder_path, input_hashes]. Completes Phase
+C v2 safety triangle: #12 detect / #13 react / #16 explain.
+Earlier same day: Active #13 fast Wilson-UB demotion shipped:
+parallel demote check fires in 5-6 days vs the 14d windowed
+check; 95% one-sided confidence on Wilson UB < breakeven;
+daemon bypasses standard cooldown for `fast_demote` actions.
+Earlier same day:
 Active #12 settlement-truth verification shipped: cross-checks
 every settled bet against MLB ground truth with 7 result codes +
 daily-review block + tiered alerts; motivated by Phase C C2 inventory tracker's stale-settlement
@@ -48,6 +53,141 @@ state-value report, UNDER walk-forward + certification all live with
 first production data.
 
 ## Recently completed
+
+- **CLI default convergence** *(2026-05-17)* -- five `real_trader.py`
+  defaults bumped to match values the operator has been running
+  explicitly for weeks, removing the need to pass them on every
+  invocation. Each change is supported by either evidence in the
+  code path or by alignment with newer subsystems (Phase C C2
+  inventory cap, Phase D queue-position research, settlement-
+  lifecycle robustness).
+  - `DEFAULT_PER_GAME_BUDGET_FRACTION`: **0.35 -> 0.40**. Aligns
+    with the Phase C C2 inventory cap (max 50 shares/game ~= $50
+    at typical ask vs $100 daily budget = 50% ceiling); 40%
+    leaves clean headroom.
+  - `DEFAULT_FV_ASK_GAP_MAX`: **0.28 -> 0.26**. Risk-reducing
+    direction (blocks more late-game phantom-score patterns where
+    fair_value - decision_ask exceeds the cap in inning >= 7).
+    TR13 already lowered 0.30 -> 0.28 after a PIT@TEX loss;
+    0.26 is the next conservative step. Active #1 walk-forward
+    should re-certify at day-30 trigger; the change can only
+    REDUCE exposure, never increase it.
+  - `DEFAULT_CAPTURE_DURATION`: **30.0s -> 120.0s**. The
+    post-signal book-capture analysis
+    (`scripts/analysis/analyze_book_captures.py`) uses
+    `max_elapsed=60.0` for fill-window simulation, so the
+    previous 30s default truncated that analysis silently.
+    120s covers all current analysis + headroom for Phase D
+    queue-position research without recapture.
+  - `DEFAULT_CAPTURE_DEPTH`: **3 -> 5**. No current analysis
+    traverses past top-of-book, but Phase D market-maker work
+    needs queue-position data (multi-level depth). Cost: 2
+    extra rows per snapshot -- trivial vs data-utility upside.
+  - `--wait-for-clob`: **False -> True** (via
+    `argparse.BooleanOptionalAction` so `--no-wait-for-clob`
+    becomes the explicit opt-out). Pure operational
+    robustness; survives scheduled CLOB downtime windows
+    during startup with no impact on trading behavior. False
+    was a debug-iteration convenience; True is the production-
+    correct default.
+
+  After this change, the operator's invocation collapses from:
+  ```
+  python scripts/trading/real_trader.py \
+     --stake-mode flat --stake 10 --daily-budget 100 \
+     --per-game-budget-fraction 0.40 --max-open-orders 7 \
+     --fv-ask-gap-max 0.26 --capture-duration 120 \
+     --capture-depth 5 --ev-policy-mode shadow \
+     --wait-for-clob --performance-mode
+  ```
+  to:
+  ```
+  python scripts/trading/real_trader.py \
+     --stake-mode flat --stake 10 --daily-budget 100 \
+     --max-open-orders 7 --ev-policy-mode shadow \
+     --performance-mode
+  ```
+  All 977 tests + 41 subtests pass (no test broke; the one
+  characterization fixture that pins `fv_ask_gap_max=0.28`
+  remains intentional for golden testing).
+
+- **Active #16: model lineage tracking** *(2026-05-17)* --
+  completes the Phase C v2 safety triangle alongside #12 (detect)
+  and #13 (react). When a fast Wilson-UB demote fires on a
+  failing promotion, the operator's first question is "which
+  artifact + which git_sha?" Without lineage, that needs git-log
+  archaeology against approximate timestamps. With lineage, the
+  artifact carries its own answer.
+
+  **Core module** `scripts/analysis/artifact_lineage.py`:
+  - `compute_lineage(builder_path, input_paths, input_dir_paths,
+    project_root, extra)` returns:
+    ```
+    {
+      schema_version, built_at_utc, builder_path,
+      git_sha, git_branch, git_dirty,
+      input_hashes: {path: sha256:...},      # files small enough to hash
+      input_dir_summaries: {path: {n_files, max_mtime, min_mtime}},
+      python_version,
+      <extras>
+    }
+    ```
+  - `promotion_lineage()` returns a trimmed dict stamped at
+    promote time (current git_sha + timestamp) so the audit row
+    knows both "what was built" and "when/where it was promoted."
+  - Hashes are sha256 truncated to 16 hex chars (64 bits of
+    entropy, more than enough for change detection); audit rows
+    stay compact.
+  - Best-effort throughout: missing git, unreadable files, or
+    non-existent paths all return None. The lineage stamp must
+    NEVER block an artifact build.
+
+  **Build-time stamping** (`calibrate_signal_probabilities.py`):
+  both OVER and UNDER calibration artifacts now carry
+  `lineage` at the top level of the JSON. Real production run
+  on 2026-05-17 produced both with same git_sha (`0840bb7c1cac`),
+  different `cli_args_summary.side` discriminator, full input
+  file hashes.
+
+  **Promote-time stamping** (`promote.py`):
+  - `PromotionEvent` dataclass gains `source_artifact_lineage`
+    + `promotion_lineage` (both default None for back-compat
+    reads of legacy audit rows).
+  - All four success-path PromotionEvent constructors
+    (stage2 / stage3-v2 / stake-scaling / gate-threshold)
+    populate both fields via `_capture_artifact_lineage()` +
+    `_compute_promotion_lineage()` helpers.
+  - `promote.py status` surfaces lineage per lever:
+    `artifact lineage: built_at=... by=... git_sha=abc123(dirty)`
+    `promoted from: git_sha=xyz789 branch=main`
+
+  **Defer to v2** (clearly documented, same `compute_lineage`
+  pattern for each):
+  - Stage-2 cache builder (`cache/build_mlb_stage2_run_env.py`)
+  - Stage-3 v2 weights (`promote_team_offense_v2.py`)
+  - EV-policy artifacts (`backtest_ev_policy.py`)
+  - Walk-forward summaries
+  - Live-engine startup-time lineage logging
+  - Backfilling historic artifacts is impossible -- they were
+    built before lineage existed and the sha/dataset state is
+    gone. From today forward, every NEW promotion is traceable.
+
+  **Real value scenario**: when fast_demote fires on stake-scaling
+  tomorrow, the operator runs `promote.py status` and sees:
+  `artifact lineage: built_at=2026-05-17T15:30Z by=analyze_stake_scaling_promotion.py git_sha=0840bb7c1cac`
+  `promoted from: git_sha=abc789ef branch=main`
+  Instantly answers "what was built, when, by what code, from
+  what working tree." No git-blame required.
+
+  **Files**: new `scripts/analysis/artifact_lineage.py` (~265 LOC),
+  `scripts/analysis/promote.py` (lineage capture helpers + 2
+  new `PromotionEvent` fields + status surface + threaded into
+  4 success-path event writes),
+  `scripts/analysis/calibrate_signal_probabilities.py` (stamps
+  lineage on both OVER + UNDER artifacts).
+  2 new test classes (`test_artifact_lineage.py` 22 tests +
+  `PromotionLineageWiringTests` 1 end-to-end). 974 tests +
+  41 subtests pass.
 
 - **Active #13: fast Wilson-UB demotion path** *(2026-05-17)* --
   parallel demote check that fires within 5-6 days vs the existing
@@ -1694,21 +1834,20 @@ ledger rows), but the code exists.
       `build_daily_human_review_report.py` (new
       `promotion_lag_health` block).
 
-16. **Model lineage tracking.** Every promoted artifact today
-    records `created_at`, but not "git sha of the builder that
-    produced this" or "hash of the input dataset." When a
-    regression surfaces and the team asks "what changed between
-    the model that worked and the one that doesn't?", we have to
-    grep git log against approximate timestamps. Add
-    `lineage: {git_sha, dataset_hash, builder_path}` to the
-    promote audit row and to the artifact JSON itself; surface in
-    `promote.py status`. Cheap to add, expensive to backfill
-    later.
-    - Files: `scripts/analysis/promote.py` (lineage capture),
-      `cache/build_mlb_stage2_run_env.py` +
-      `promote_team_offense_v2.py` (write lineage into artifact),
-      `live_engine_setup.py` (log loaded artifact lineage at
-      startup).
+16. **Model lineage tracking.** *Shipped 2026-05-17.* See the
+    Recently Completed "Active #16: model lineage tracking" entry
+    for full details. Both calibration artifacts (OVER + UNDER)
+    now carry build-time `lineage: {git_sha, git_branch,
+    git_dirty, builder_path, input_hashes, input_dir_summaries,
+    built_at_utc, python_version}`. The four `promote.py`
+    handlers stamp BOTH `source_artifact_lineage` (pulled from
+    the artifact's own lineage block) AND `promotion_lineage`
+    (fresh git sha at promotion time) on every success-path
+    audit row. Surfaced in `promote.py status` so operators can
+    answer "which artifact + which git_sha?" without git
+    archaeology when fast_demote (#13) fires. Follow-up:
+    extend to Stage-2/Stage-3 cache builders + EV-policy
+    artifacts (~30 min each, same `compute_lineage` pattern).
 
 ## Bidirectional trading -> market-making (long-horizon)
 
