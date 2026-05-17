@@ -1,0 +1,205 @@
+Team Offense V2 -- Phase 3+4 Findings
+=======================================
+
+Date: 2026-05-07
+Plan: model_improvements/team_offense_v2_plan_2026_05_07.txt
+Phase 1 findings: model_improvements/team_offense_v2_phase1_findings_2026_05_07.txt
+Status: Phase 4 complete, recommend proceeding to Phase 5 (dollar test)
+
+
+ARTIFACTS
+---------
+Builders + reports:
+  scripts/analysis/build_team_offense_calibration_table.py
+  scripts/analysis/build_team_offense_features.py
+  scripts/analysis/report_team_offense_residuals.py
+  scripts/analysis/report_team_offense_mle_deltas.py
+  scripts/analysis/report_team_offense_features.py
+  scripts/analysis/calibrate_team_offense_v2.py
+Outputs in data/analysis_output/team_offense_calibration/:
+  training_table.jsonl                    1,129,081 rows
+  team_features.jsonl                     23,980 (team,date) rows
+  phase1_residual_report.json
+  phase1_mle_deltas.json
+  phase2_feature_report.json
+  phase4_models.json
+
+
+SPLIT
+-----
+  Train      2021-2024  (654,173 calibration rows)
+  Validation 2025       (202,729 rows; the workhorse for inference)
+  Test       2026       (2,932 rows; small holdout, dollar-test only)
+
+
+SHRINKAGE PARAMETERS (estimated on training years only)
+-------------------------------------------------------
+  sigma_within^2 = 10.001    (single-game runs variance around team's
+                              long-run RPG -- ~3.16-run sigma)
+
+  Per-window tau^2 (across-team variance) and shrinkage k (= sigma^2/tau^2):
+
+  window                  tau^2    shrinkage_k (equivalent prior games)
+  rolling_rpg_50          0.179    55.7
+  season_rpg_to_date      0.237    42.1
+  prior_season_rpg        0.171    58.4
+  momentum_rpg_10         0.198    50.5
+
+  Interpretation: even rolling_rpg_50 should be pulled halfway toward
+  mu_league. The current production hard-clamp [0.55*mu, 1.55*mu]
+  doesn't pull anything that's INSIDE the clamp, so it under-shrinks
+  most teams. EB shrinkage corrects this.
+
+
+HEADLINE 1: Model 1 (refit constant) confirms Phase 1's directional finding
+============================================================================
+Same shape as production v1 -- 50-game raw RPG, hard clamp, linear inning
+weight -- but with `beta_diff` fit on 2021-2024 instead of held at 0.20:
+
+  beta_diff (Model 1) = +0.1125
+  current production  = +0.2000
+  ratio                = 0.56x
+
+The current model is ~80% too aggressive even when keeping its own shape.
+This is consistent with Phase 1's MLE per-run slope of +0.062 (the
+inning-weight ramp dilutes the effective slope, accounting for the
+difference in ratio between 0.31x in Phase 1 and 0.56x here).
+
+
+HEADLINE 2: Model 3 (blend) is the structural winner
+======================================================
+The cleanest decomposition of Stage-3 is a blend of three EB-shrunk
+windows applied to the (away+home) sum:
+
+  delta = (b_prior * d_prior + b_season * d_season + b_momentum * d_momentum) * w_linear
+
+where:
+  d_X         = (away_X_shrunk + home_X_shrunk - 2 * mu_league)
+  b_prior     = -0.1514     <-- NEGATIVE
+  b_season    = +0.1407
+  b_momentum  = +0.1503     (momentum_rpg_10 with EB shrinkage)
+  w_linear    = max(0, (9 - inning) / 8)  (kept linear; see Headline 4)
+
+The negative coefficient on prior-season is the most counter-intuitive
+finding and it's stable: once you condition on current-season pace and
+recent momentum, last year's offense is a correction term, not an
+additive prior. A team that was elite last year but average this year
+is regressing -- the model should NOT double-count last year's data.
+
+When all three windows agree (a team is +1 run on every measure of
+offense), the effective per-run logit slope is approximately
+b_prior + b_season + b_momentum = +0.140 vs. v1's effective ~0.20. With
+the EB shrinkage compression factor (~0.5 for typical rolling_50
+deviations), this corresponds to roughly +0.07 logit per RAW-RPG run --
+matching Phase 1's +0.062 MLE slope. Internal consistency check passes.
+
+
+HEADLINE 3: Per-inning weights don't generalize as well as the linear ramp
+============================================================================
+Model 4 fits one multiplicative scalar per inning [1, 2, ..., 9, 10+]
+in addition to the blend coefficients:
+
+  fitted weights: [1.000, 0.903, 0.776, 0.794, 0.580, 0.494, 0.312,
+                   0.112, 0.236, 0.669]
+  v1 linear ramp: [1.000, 0.875, 0.750, 0.625, 0.500, 0.375, 0.250,
+                   0.125, 0.000, 0.000]
+
+Innings 1-8 fit roughly the linear ramp shape. Innings 9 and 10+ do NOT
+collapse to zero -- the model wants weight ~0.7 there. Likely picks up
+extras / walk-off scenarios where score variance is high.
+
+But on the validation set, Model 4 essentially ties Model 3
+(0.171198 vs 0.171204 Brier). The per-inning structure overfits in
+training and provides ~zero generalization benefit -- not worth
+shipping the additional 9 parameters.
+
+
+HEADLINE 4: Brier improvements are real but small
+====================================================
+
+  model                       VAL_brier    delta vs base_B    paired_significance
+  baseline_A_no_stage3        0.171341     +0.000068          n/a
+  baseline_B_v1               0.171409     0.000000           n/a
+  model_1_refit_const         0.171240    -0.000169           ~17 sigma
+  model_2_eb_shrunk           0.171240    -0.000169           ~17 sigma
+  model_3_blend               0.171204    -0.000205           ~20 sigma
+  model_4_blend_per_inn       0.171198    -0.000211           ~21 sigma
+
+  Relative Brier improvement (Model 3 vs Baseline B): 0.12%
+
+(The "paired_significance" is approximate -- per-row Brier diffs have
+small mean and small variance, so 200k rows yields high effective n
+even though absolute Brier difference is small.)
+
+On the test set (2,932 rows), Model 3 beats Baseline B by 0.88% Brier
+and Baseline A by 0.95%. Test-set sample size is too small to be
+reliable on its own, but the directional consistency with validation is
+encouraging.
+
+
+SECONDARY: Baseline B beats Baseline A by 0.069% Brier on test
+================================================================
+Stage-3 v1, despite being too aggressive, IS slightly better than no
+Stage-3 at all. The current model is correcting a real bias (Phase 1
+confirmed this) but with the wrong magnitude. Model 3 captures more of
+that bias correctly.
+
+This means: removing Stage-3 entirely is worse than keeping v1, which
+is worse than Model 3.
+
+
+WHAT THIS DOESN'T YET ANSWER
+-----------------------------
+1. Dollar-test impact on 2026 live betting. Brier improvement of 0.12%
+   may or may not translate into meaningful realized P&L under our gate
+   stack. The Phase 5 dollar test is needed before promoting.
+
+2. Stability of the negative prior-season coefficient over time. We
+   should refit on rolling windows to confirm it's not a single-period
+   artifact.
+
+3. Whether asymmetric (piecewise) per-run slopes (Phase 1 finding 2)
+   add anything on top of Model 3. Could be an extension of Model 3.
+
+
+PHASE 7 PROMOTION CRITERIA STATUS
+----------------------------------
+  1. Brier improves >= 0.5% relative on test:   PASS on test (0.88%),
+                                                FAIL on val (0.12%)
+  2. No subgroup degrades >= 2% relative:       NOT YET CHECKED
+  3. Replayed live-engine P&L neutral or better: NOT YET (Phase 5)
+  4. Avg |stage3_delta| not larger at any inning: NOT YET CHECKED
+
+  -> Cannot promote yet. Need Phase 5 dollar test + per-inning delta
+     audit before the GO/NO-GO call.
+
+
+RECOMMENDATIONS
+---------------
+1. Build `cache/team_offense_model_v2.py` implementing Model 3
+   predictions, gated behind a `--use-team-offense-v2` CLI flag in
+   the live engine. Default OFF -- shadow comparison only.
+
+2. Replay 2026 live candidate stream through the v2 model in shadow
+   mode (Phase 5 dollar test). Compare:
+     - candidate edges with v1 vs v2 stage3
+     - which candidates would have been blocked by gates with each
+     - hypothetical P&L for any v2-only or v1-only trades
+     The dollar test answers the practical question.
+
+3. Per-inning weights NOT recommended for production. Model 3's linear
+   inning weight is good enough; complexity isn't justified.
+
+4. Negative prior-season coefficient deserves a sanity check before
+   shipping. Run a simple rolling-window stability fit to confirm the
+   sign is stable across 2021-2024 sub-windows.
+
+
+NEXT (Phase 5)
+--------------
+- Build team_offense_model_v2.py runtime module (Model 3 only)
+- Build a shadow-replay script that scores 2026 candidate_universe
+  rows with v1 and v2 stage3, reports candidate-edge / gate-block /
+  P&L-replay differences
+- Per-subgroup Brier audit (criteria #2)
+- Per-inning |stage3_delta| audit (criteria #4)

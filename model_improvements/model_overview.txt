@@ -1,0 +1,92 @@
+﻿## Model Goal (Current Implementation)
+
+Trade Polymarket MLB totals by buying the OVER when live order-book behavior implies the market is underpricing post-scoring fair value.
+
+The live engine is paper trading only (no real order execution).
+
+---
+
+## What Is Implemented Right Now
+
+1. Historical data ingestion
+- `scripts/scraping/scrape_mlb_history.py`
+- Pulls MLB schedule windows and full game feeds from StatsAPI.
+- Stores raw game JSON, monthly manifests, and run manifests for reproducibility.
+
+2. Live market monitor
+- `scripts/monitor/monitor_mlb_polymarket_ou.py`
+- Pulls schedule for a date, maps games to Polymarket events, discovers O/U lines, and records per-token books.
+- Writes JSONL snapshots per game/line/side under `data/polymarket/mlb_ou/<date>/...`.
+
+3. Overreaction analyzer
+- `scripts/analysis/analyze_polymarket_overreactions.py`
+- Detects scoring events from tick score changes.
+- Compares fair-value delta (cache) vs observed market delta.
+- Labels `FADE_UNDER` (buy over) or `FADE_OVER` opportunities.
+
+4. Paper trading engine
+- `scripts/trading/paper_trader.py`
+- Subclasses monitor and evaluates one over-side signal stream per game+line.
+- Places paper bets on OVER and settles on official MLB final scores.
+- Writes append-only ledger plus per-session summary.
+
+---
+
+## Current Paper-Trading Signal Logic (TR4 defaults in code)
+
+For each active game+line, the engine tracks OVER ask quotes and only bets after all gates pass:
+
+1. Baseline formation
+- Ask-only baseline (not mid).
+- Baseline commits after 35 stable ticks within plus/minus 0.02.
+
+2. Jump detection
+- Ask jump is measured over 5 ticks.
+- Requires jump >= 0.06 and 3-tick confirmation.
+
+3. Trade gates
+- Inning gate:
+  - line < 8.5: inning >= 4
+  - line >= 8.5: inning >= 5
+- `inning_state` cannot be `End` or `Middle`.
+- `ask >= 0.55`.
+- Spread gate: `ask - bid <= 0.20` (when bid exists).
+- Current total gate: `away_score + home_score >= 4`.
+- Runs-pace gate: `(current_total / inning) * 9 >= line - 1.5`.
+- Edge gate: inferred fair value minus ask >= 0.10.
+- Event dedup gate: 60-second same-game suppression unless new edge is better.
+- Cross-inning dedup gate: per `(game_pk, line)` with minimum inning gap of 2 and edge-improvement override (+0.05).
+
+4. Inference and pricing
+- Batting side inferred from inning half.
+- Candidate states assume 1, 2, or 3 runs scored by batting team.
+- Cache lookup picks candidate whose fair value is closest to current ask.
+- Bet side is always OVER.
+
+5. Settlement
+- Settle only when game is Final in MLB schedule feed.
+- Win if `final_total > line`.
+- Payout model: `stake / entry_ask` on win, else 0.
+
+---
+
+## What Is Working
+
+- Full end-to-end pipeline exists: scrape -> monitor -> analyze -> trade -> settle.
+- Signal quality improved materially after TR2/TR3 filters (noise reduction).
+- Data outputs are audit-friendly (raw ticks, market maps, sessions, master ledger).
+
+---
+
+## Known Constraints
+
+- Sample size is still small; performance variance is high.
+- Strategy currently only acts on OVER buys (no live FADE_OVER shorting workflow).
+- Execution is simulated; no fill model, slippage model, or live order management yet.
+- Some CLI/runtime behavior is still rough (see `codex_thoughts.txt` for bug list and upgrade priorities).
+
+---
+
+## Current Priority
+
+Increase statistically meaningful sample size while fixing logic bugs and improving game-context filtering so edge converts to stable long-run profitability.

@@ -1,0 +1,384 @@
+================================================================================
+CLAUDE THESIS REVIEW — 2026-04-27
+Are we on a path to long-term profitability?
+================================================================================
+
+SCOPE
+-----
+Reviewed: README.md core thesis, gate evolution (TR1–TR13), evidence snapshot
+through 2026-04-22, current live performance through ~2026-04-25, and recent
+infrastructure work (refactor, shadow metrics, EV policy scaffold, P0 fixes).
+
+Goal: an honest evaluation of whether the model — as currently designed — has
+a credible path to long-term profitability. Realistic, not optimistic.
+
+
+================================================================================
+PART 1 — IS THE CORE THESIS LOGICALLY SOUND?
+================================================================================
+
+THE THESIS, RESTATED
+--------------------
+"Don't try to win the speed race. Model EV of the next game-state evolution,
+combine it with execution probability (p_fill), trade only when expected
+realized EV is positive after fill risk and microstructure effects."
+
+This thesis is logically defensible for our position in the market.
+
+WHY IT IS DEFENSIBLE
+--------------------
+1. Honest about competitive position. We are not co-located with Polygon,
+   we are not running an FPGA pipeline against the StatsAPI websocket, and
+   we have no reason to believe we can beat informed reaction-traders to a
+   scoring event. Refusing to compete on a dimension where we lose is
+   correct. Many retail strategies fail because they enter the speed race
+   they cannot win.
+
+2. Selection over reaction. The bot is structured as a selective predicate
+   ("only bet when X conditions hold AND model EV > threshold"), not a
+   reactive one ("bet whenever ask jumps"). Selection is the right battle
+   for a slow participant.
+
+3. Two-stage probability decomposition. Splitting the decision into
+   p_win_if_filled and p_fill, then optimizing the product, is the correct
+   framework for a market with adverse selection. Most amateur sports
+   models stop at p_win and ignore that the trades they get filled on are
+   a non-random subset of the trades they tried to place.
+
+WHERE THE THESIS HAS HIDDEN ASSUMPTIONS
+---------------------------------------
+1. We assume the historical Poisson cache (Stage-1) generalizes. It is built
+   on 5 years of MLB. If 2026 has a different run environment, ball, strike
+   zone, or reliever usage pattern, the cache decays. We have not yet built
+   automated drift detection.
+
+2. We assume park/weather (Stage-2) and team offense (Stage-3) corrections
+   are unbiased. A logistic residual fit on the same training distribution
+   can produce well-calibrated marginal predictions but biased conditional
+   ones. Our gates partly compensate (e.g., S2 extreme suppression) but the
+   compensation is hand-tuned, not learned.
+
+3. We assume Polymarket O/U markets are "beatable in selective regimes" —
+   i.e., that there exist subsets of game states where market price is
+   slower or noisier than our model. The data (counterfactual win rate
+   = 80%) suggests this is true on signal generation. But the data also
+   shows the orders we get FILLED on have a 54.5% win rate, which means
+   the market is selectively filling us on its informed side. This is the
+   single most important empirical finding in the project so far.
+
+
+================================================================================
+PART 2 — GAME-THEORETIC EVALUATION
+================================================================================
+
+WHO IS ON THE OTHER SIDE OF OUR TRADES?
+---------------------------------------
+On Polymarket MLB O/U markets, the counterparties placing the asks we lift
+are some mix of:
+
+  (a) Market makers quoting both sides for spread capture.
+  (b) Informed traders who saw the same StatsAPI update we did, faster.
+  (c) Other models with similar but not identical FV estimates.
+  (d) Hedgers offloading correlated positions.
+  (e) Noise traders / casual bettors.
+
+Our profitability requires that, on average, we are trading against
+(a), (c), (d), and (e) — and NOT (b).
+
+THE WINNER'S-CURSE FINGERPRINT IS ALREADY IN OUR DATA
+-----------------------------------------------------
+From the evidence snapshot:
+
+   Filled win rate:                        54.5%  (6W / 5L)
+   Cancelled-bet counterfactual win rate:  94.7%  (18W / 1L)
+   Gap:                                    40.2 percentage points
+
+This 40-point gap is not random. It is the textbook fingerprint of adverse
+selection. The orders that get filled are disproportionately the ones the
+market wanted to sell us (because the market was right). The orders that
+get cancelled are disproportionately the ones nobody wanted to sell at our
+price (because we were right and the market knew it too).
+
+In game-theoretic terms: when we post a limit BUY at price p, we are
+offering a put option to anyone with information about the next 5 seconds
+of game state. Informed sellers exercise that option (sell to us) only
+when they expect price to move down — i.e., when our bet is more likely
+to lose. Uninformed sellers exercise it whenever it crosses their book.
+The mix of informed-vs-uninformed sellers determines our edge.
+
+This is why "edge > 0.25" filled bets are 0W/5L: a 25-point gap between
+our model and the market is a near-certain signal that the market knows
+something our cache does not (typically a phantom-run case where we
+inferred a score that did not happen, or a regime our Poisson cache does
+not represent). The market correctly fills those orders because we are
+the uninformed counterparty.
+
+The TR12/TR13 gates (FV saturation, large FV/ask gap, blowout-adjacent,
+S2 extreme suppression) are not arbitrary risk filters. They are
+gate-level acknowledgements of adverse selection in specific regimes.
+
+GAME-THEORETIC IMPLICATIONS FOR THE THESIS
+------------------------------------------
+1. Our alpha is bounded by what informed sellers do not know. As any
+   informed counterparty's model improves, our edge in that regime
+   compresses. We are competing against a moving target.
+
+2. Cancel rate is informative, not just operational. A high cancel rate
+   in a given regime where the cancelled-counterfactual win rate is high
+   means we are correctly avoiding adverse selection. Counterintuitively,
+   higher fill rates would be BAD if they came from filling more in the
+   regimes the market knows we're wrong in.
+
+3. The right metric is not fill rate. It is the win-rate gap between
+   filled and cancelled. If we can shrink that gap from 40pp toward 0pp
+   while keeping signal quality up, we have moved up the food chain.
+
+4. Execution policy IS the alpha. Not the FV model. The FV model
+   identifies candidate regimes; the execution policy decides whether
+   we can trade them without being adversely selected. Roadmap item #6
+   (learned execution policy) is the most leveraged work item in the
+   project.
+
+
+================================================================================
+PART 3 — STATISTICAL EVALUATION OF PROFITABILITY PATH
+================================================================================
+
+CURRENT EMPIRICAL POSITION
+--------------------------
+Through 2026-04-22 (per README evidence snapshot):
+   Live signals:                31
+   Settled fills:                11    (54.5% fill rate)
+   Filled W-L:                  6W-5L  (54.5% win rate)
+   Counterfactual W-L (all):    24/30  (80.0% on signals)
+   Realized P&L:               -$70.72
+
+Edge-bucket split (the most actionable finding):
+   edge ≤ 0.25 filled:    6W / 1L   (85.7% WR, +20.5% ROI)
+   edge >  0.25 filled:   0W / 5L   (   0% WR, -100% ROI)
+
+Plus the most recent live session (post-P0 fixes): ~3W / 2L (60% WR).
+
+BREAK-EVEN MATH
+---------------
+Average filled limit ≈ 0.65 (typical "ask floor 0.55, gate up to ~0.75").
+At limit 0.65, payout if won = 1 / 0.65 = 1.538x stake. Break-even
+win rate = 0.65 = 65%.
+
+Therefore:
+   54.5% filled WR → unprofitable by ~10pp.
+   60.0% recent WR → still unprofitable by ~5pp.
+   85.7% edge≤0.25 WR → profitable by ~20pp (consistent with +20.5% ROI).
+
+The edge≤0.25 bucket is the only subset of our data that clears
+break-even. Whether that subset is real or noise is the central
+statistical question.
+
+SAMPLE-SIZE REALITY CHECK
+-------------------------
+Standard error on a binomial proportion at n=7, p=0.857 is:
+   SE = sqrt(0.857 * 0.143 / 7) ≈ 13.2%
+   95% CI ≈ [0.60, 1.00]  (one-tailed Wilson)
+
+Translation: the "85.7% edge≤0.25 win rate" is consistent with anything
+from "barely break-even" to "obvious money printer". We literally do not
+have enough data yet to distinguish those hypotheses.
+
+For 95% CI half-width of ±5pp on the edge≤0.25 subset at p=0.80, we need
+roughly n ≈ 246 fills in that bucket. At ~1 such fill per session, that
+is ~250 sessions = ~1.5 MLB seasons.
+
+For ±10pp half-width: ~62 fills. ~2 months at current pace.
+
+The minimum credible validation point is around 30 fills in the
+edge≤0.25 bucket — enough to push the lower bound of the win-rate CI
+above the ~65% break-even line. We are at 7. We need ~23 more.
+
+VARIANCE / DRAWDOWN UNDER CURRENT SIZING
+----------------------------------------
+At quarter-Kelly with edge≤0.25 cap, daily-budget $125, max single bet
+fraction 0.33 (~$41):
+   Per-bet variance is dominated by the limit price, not the stake.
+   At ~$13 avg stake, single-bet downside ≈ $13, upside ≈ $7.
+   Worst plausible weekly drawdown at ~5 bets/week and 50% WR:
+     -5 * $13 = -$65, ~3% of a $2,000 bankroll.
+
+Sizing is appropriately defensive. We will not blow up. We will also not
+generate enough P&L to be statistically significant for several months.
+This is by design and it is the correct posture given the sample size.
+
+
+================================================================================
+PART 4 — IS THERE A PATH TO LONG-TERM PROFITABILITY?
+================================================================================
+
+HONEST ANSWER: PROBABLY YES, BUT NOT YET PROVEN.
+
+The strong points:
+  + The thesis is logically defensible and game-theoretically aware.
+  + The infrastructure is now mature: refactored modules, shadow
+    metrics, EV policy scaffold, candidate-universe data capture.
+  + The single most credible profitability signal in the data
+    (edge≤0.25 → 85.7% WR / +20.5% ROI) is consistent with a real
+    edge in the regime where our model and market roughly agree
+    but our gates filter out the adversely-selected fills.
+  + Gate evolution (TR1–TR13) shows disciplined, evidence-driven
+    iteration. The current gate stack reflects a real understanding
+    of failure modes, not curve-fitting.
+  + Conservative sizing means we can survive a long validation phase
+    without bankroll-ending drawdowns.
+
+The honest concerns:
+  - Filled win rate (54.5%) is below break-even. The strategy is
+    losing money in aggregate today.
+  - The "edge≤0.25 is profitable" finding is built on n=7. Statistically
+    this is a hint, not a confirmation.
+  - The 40pp Winner's-Curse gap is a structural problem, not a tuning
+    problem. It requires execution policy changes (Roadmap #6), not
+    just gate changes.
+  - We have no automated drift detection on Stage-1/2/3. A regime
+    change in MLB run environment (e.g., a mid-season ball change)
+    would silently invalidate the cache.
+  - Polymarket counterparty quality is unknown. As the venue grows,
+    the share of informed counterparties will rise, compressing edge.
+
+NET ASSESSMENT
+--------------
+The model is in a "promising but unvalidated" state. The thesis is right.
+The implementation is competent. The data is too thin to claim
+profitability with confidence. The most likely outcome of the next ~60
+sessions is:
+
+   Scenario A (~55% likely): edge≤0.25 holds at 70-80% WR. The model
+     is profitable at small scale (~$100-300/month at current sizing).
+     Validation is achieved around 30-50 fills. Sizing can then ramp.
+
+   Scenario B (~30% likely): edge≤0.25 regresses to 60-65% WR as
+     sample grows. The model is roughly break-even. Either execution
+     policy improvements (Roadmap #6) push it back into profit, or
+     the project ends as a sophisticated learning exercise.
+
+   Scenario C (~15% likely): something we have not measured (e.g.,
+     informed-counterparty share growing on Polymarket, or a Stage-1
+     cache regime change) erodes edge faster than we can adapt. The
+     model becomes consistently unprofitable and we conclude the
+     market is no longer beatable from our position.
+
+This is roughly the realistic distribution. None of them is "obvious
+money machine"; none of them is "definitely doomed".
+
+
+================================================================================
+PART 5 — NEXT STEPS, IN PRIORITY ORDER
+================================================================================
+
+TIER 1 — VALIDATION (do these now; no model changes required)
+-------------------------------------------------------------
+1. KEEP CURRENT GATE/THRESHOLD STACK STABLE FOR ~30 MORE FILLS.
+   Do not tune gates based on individual session outcomes. The gates
+   were set on a thesis; they need a sample to test against. Changing
+   them mid-stream destroys the only validation experiment we have
+   running.
+
+2. TRACK EDGE-BUCKET WIN RATE SEPARATELY IN EVERY SESSION REPORT.
+   The edge≤0.25 vs edge>0.25 split is the primary thesis-test. Every
+   session report should explicitly report the running tally and the
+   one-sided lower-bound CI on edge≤0.25 win rate. We are testing one
+   hypothesis; the metric should be in our face every day.
+
+3. CONTINUE SHADOW METRICS AND CANDIDATE-UNIVERSE LOGGING.
+   These produce the data we need for Tier 2. No changes; just keep
+   the pipeline running cleanly.
+
+TIER 2 — EXECUTION POLICY (the actual alpha lever)
+--------------------------------------------------
+4. SHIP THE EV POLICY IN SHADOW MODE.
+   The LogisticJsonScorer + backtest_ev_policy infrastructure is in
+   place. Run it in shadow alongside the current rule for ~30 sessions.
+   Compare: would EV policy have shifted any borderline trades from
+   trade→no-trade or vice versa, and would those shifts have improved
+   realized PnL? This is roadmap item #5/#10 and is currently the
+   highest-leverage active work item.
+
+5. BUILD A FILL-MODEL FEATURE: queue position proxy.
+   The Winner's-Curse gap is execution-side. The single most useful
+   new feature would be a proxy for "how aggressive would we need to
+   be to actually fill this order in the next N seconds vs how much
+   does that aggression cost us in terms of being filled by informed
+   sellers". Even a coarse proxy (ask velocity, depth at touch,
+   recent fill density) would help.
+
+6. EXPERIMENT WITH LIMIT PRICING POLICY IN A CONTROLLED A/B.
+   Once shadow EV is stable, the next experiment is varying
+   spread_factor (currently 0.65) by regime. The hypothesis: in
+   regimes where cancelled counterfactual win rate is highest, we
+   should be more aggressive (push limit toward ask). In regimes
+   where filled win rate is closest to cancelled, we are already
+   pricing efficiently. Start small: two values, run 20 sessions.
+
+TIER 3 — DRIFT AND RISK INFRASTRUCTURE
+--------------------------------------
+7. ADD STAGE-1 CACHE DRIFT MONITORING.
+   Compare 2026-to-date scoring distribution by inning vs the
+   2021-2025 cache base. A simple KS-test or chi-square per
+   inning_state cell, run weekly. Alert when drift exceeds threshold.
+   Without this, we cannot tell when a structural cache update is
+   needed.
+
+8. ADD CALIBRATION RELIABILITY DIAGRAMS PER EDGE BUCKET.
+   We claim p_win_if_filled is well-calibrated. Verify it. Reliability
+   diagrams (predicted bucket vs realized win rate) are the standard
+   tool. Run monthly once we have ≥30 fills.
+
+9. DOCUMENT A KILL-SWITCH TRIGGER POLICY.
+   At what realized cumulative loss do we stop live trading and
+   re-evaluate? A pre-committed rule (e.g., -$300 cumulative loss
+   triggers a 1-week pause + full diagnostic review) prevents
+   plan-revision under emotional pressure. Write it down before we
+   need it.
+
+TIER 4 — DEFER UNTIL VALIDATED
+------------------------------
+10. SCALE STAKE. Not now. Quarter-Kelly + caps is correct for the
+    current sample size. Revisit only after edge≤0.25 win rate has
+    a one-sided 95% lower bound above ~70% with n≥30.
+
+11. MULTI-LINE / CORRELATED EXPOSURE OPTIMIZATION. Currently capped
+    by per-game-budget-fraction. That is sufficient until validated.
+
+12. REPLACING THE 3-STAGE FV MODEL WITH A LEARNED END-TO-END MODEL.
+    Tempting but premature. The current model is interpretable and
+    debuggable. A learned model would obscure the failure modes that
+    the gates currently address. Wait until we have 200+ fills and
+    can tell the new model apart from the old one statistically.
+
+
+================================================================================
+SUMMARY
+================================================================================
+
+The thesis ("model selection over reaction speed; trade only when realized
+EV after fill risk is positive") is correct for our competitive position.
+The infrastructure to test it is now built. The data so far hints that the
+thesis is real in the edge≤0.25 regime but does not yet prove it.
+
+The most important things we can do in the next 4-8 weeks are:
+
+  1. Stop tuning. Let the current configuration generate a sample.
+  2. Get the EV policy running in shadow.
+  3. Track edge-bucket performance every session.
+  4. Address the Winner's-Curse gap via execution-policy work, not
+     more gates.
+
+If edge≤0.25 win rate holds above 70% across the next 30 fills, we are
+on a real path to long-term profitability. If it regresses below 65%,
+the project becomes a research exercise unless execution policy changes
+recover the gap.
+
+We are at the validation stage of a serious project. We are not yet at
+the "it works" stage. The next 60 sessions will tell us which one we are
+heading toward.
+
+================================================================================
+END
+================================================================================

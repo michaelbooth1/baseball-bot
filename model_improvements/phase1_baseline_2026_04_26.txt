@@ -1,0 +1,48 @@
+Phase 1 Stabilization Baseline
+Date: 2026-04-26
+Repo: baseball
+
+Purpose
+- Freeze behavior before refactoring signal_engine.py into smaller modules.
+- Add characterization tests around gate logic and candidate logging.
+- Confirm live parser contract remains intact.
+
+New Phase 1 Characterization Tests
+- tests/test_signal_engine_phase1_characterization.py
+  - ask-edge ramp monotonic/bounds characterization
+  - conditional relax mode action contract (off/shadow/enforce/ab)
+  - gate_min_current_total conditional relax pass contract
+  - gate_blowout conditional relax pass contract
+  - probability calibration mode behavior (off/shadow/enforce)
+  - candidate decision logging skip-dedup contract
+  - non-skip candidate rows are not deduped
+  - live parse contract for --stake-mode/--stake passthrough
+
+Validation Commands + Results
+1) python -m pytest -q tests/test_signal_engine_phase1_characterization.py
+   - Result: 8 passed in 0.15s
+
+2) python -m pytest -q
+   - Result: 27 passed in 3.98s
+
+3) python scripts/analysis/calibrate_signal_probabilities.py --mode both --verbose
+   - Result:
+     - calibration artifact written
+     - report written
+     - predictions written
+     - rows total=27 train=23 validation=3 test=1 selected=identity
+
+Calibration Snapshot (from report)
+- selected_method=identity
+- rows_total=27
+- rows_train=23
+- rows_validation=3
+- rows_test=1
+- raw_val_logloss=0.06108384288153681
+- platt_val_logloss=0.29132702288262496
+- isotonic_val_logloss=0.3022808718729337
+
+Notes
+- This is a behavior baseline for refactor safety.
+- Next phase should preserve these test outcomes while moving code into modules.
+

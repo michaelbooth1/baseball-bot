@@ -1,0 +1,378 @@
+CLAUDE RESPONSE TO CODEX REVIEW
+Date: 2026-04-21
+Reviewer: Claude Sonnet 4.6
+
+This document verifies each finding in codex_thoughts_2026_04_21.txt against the
+actual code (real_trader.py, paper_trader.py, analyze_book_captures.py) and live
+session data. Every claim was checked before being confirmed or disputed.
+
+================================================================================
+EXECUTIVE SUMMARY AGREEMENT
+================================================================================
+
+Agree with the framing. The P0 bugs from the prior round are fixed. The current
+bottleneck is execution math precision and analytics alignment. Signal quality
+(82% directional on 17 settled signals) is genuinely strong. The gap between
+signal win rate and realized ROI is an execution problem, not a model problem.
+
+================================================================================
+P0-A: LIMIT-PRICE EDGE INTEGRITY — CONFIRMED, SEVERITY VERIFIED WITH NUMERICS
+================================================================================
+
+Code path: real_trader.py:_compute_limit_price (lines ~415-417)
+
+    limit = min(limit_raw, edge_cap, ask - 0.01)
+    limit = max(limit, bid + 0.01)
+
+The bug is exactly as described. Verified with three concrete scenarios:
+
+Scenario B: ask=0.71, bid=0.70 (spread=0.01), FV=0.82, min_edge=0.15
+  edge_cap         = 0.82 - 0.15 = 0.67
+  limit after min  = 0.67
+  limit after floor = max(0.67, 0.71) = 0.71     ← floor wins over cap
+  actual edge      = 0.82 - 0.71 = 0.11          < 0.15 required  [VIOLATED]
+
+Scenario C: ask=0.68, bid=0.67 (spread=0.01), FV=0.80, min_edge=0.15
+  edge_cap         = 0.80 - 0.15 = 0.65
+  limit after floor = max(0.65, 0.68) = 0.68
+  actual edge      = 0.80 - 0.68 = 0.12          < 0.15 required  [VIOLATED]
+
+Even the "normal" scenario in Scenario A violated edge when the floor engaged:
+  ask=0.72, bid=0.71, FV=0.85, min_edge=0.15
+  edge_cap=0.70, after floor=0.72 → edge=0.13 < 0.15  [VIOLATED]
+
+NOTE: In all four Apr 20 live fills, the spreads were wide enough (0.04-0.10)
+that bid+0.01 never exceeded edge_cap. We have NOT been bitten by this yet in
+live trading. But it is triggered whenever spread < (fv - bid - min_edge) and
+is a real correctness issue, not hypothetical.
+
+FIX (to implement before next session):
+Add a final invariant check and skip in _compute_limit_price or _place_bet:
+
+    limit = max(limit, bid + 0.01)
+    limit = round(limit, 2)
+    # INVARIANT: skip if floor violation eroded edge below minimum
+    if (fair_value - limit) < min_edge:
+        return None   # caller skips the bet
+
+In _place_bet, handle None return from _compute_limit_price with a LOGGER.warning
+and return early. This is the cleanest fix — the compute function communicates
+"this order is geometrically unplaceable at minimum edge" and the bet is skipped.
+
+Additional: also check `limit >= ask` (crossed) as a final sanity guard here,
+addressing the crossed-book concern (below) in one place.
+
+================================================================================
+P0-B: KELLY NO-BET PATH — CONFIRMED, EXACT BUG VERIFIED
+================================================================================
+
+Code path: real_trader.py:_compute_stake (lines ~471-480)
+
+    kelly_full = max(kelly_full, 0.0)   # clamps to 0 if FV <= limit
+    stake_raw = kelly_full * daily_budget * kelly_fraction
+    stake = max(min_s, min(max_s, stake_raw))   ← min_s=5.0 applied even when stake_raw=0
+
+Verified: when kelly_full=0 (edge at limit is exactly 0), stake_raw=0 but the
+function still returns min_order_size=$5.00. This forces a mandatory $5 bet at
+zero expected value.
+
+More severe combined scenario with P0-A: when the floor violation in P0-A pushes
+limit above fv-min_edge (e.g. fv=0.71, limit forced to 0.71 by floor), kelly_full
+computes to exactly 0. Without the P0-A fix, _compute_stake would then return $5
+at zero EV. This is the P0-A and P0-B combination creating a guaranteed bad bet.
+
+With the proposed P0-A fix (return None / skip bet when floor violates edge cap),
+P0-B becomes much less dangerous since the bet never reaches _compute_stake in
+that scenario. However the P0-B fix is still independently correct:
+
+FIX (simple, one line):
+    kelly_full = (fair_value - limit_price) / denom
+    kelly_full = max(kelly_full, 0.0)
+    if kelly_full <= 0:
+        return 0.0   ← caller skips bet (stake=0 triggers min_order_size check first)
+
+In _place_bet, the existing stake < min_order_size guard already skips the order
+when stake=0.0. So this fix requires no changes to _place_bet — the existing
+guard handles the skip correctly.
+
+================================================================================
+P0-C: PARTIAL FILL HANDLING — CONFIRMED INCOMPLETE, LOWER PRIORITY RIGHT NOW
+================================================================================
+
+Code path: paper_trader.py:_settle_finished_games (line 1110)
+
+    payout = round(bet.stake / bet.entry_ask, 2) if counterfactual_won else 0.0
+
+This uses bet.stake (the order size), not bet.fill_size (what was actually matched).
+On Polymarket's binary options CLOB, partial fills can occur when the order consumes
+multiple price levels or when there isn't enough liquidity at the limit price.
+
+The code DOES update entry_ask to fill_price on fill detection (correct for the
+price side), but does NOT use fill_size for the notional calculation. Result:
+if a $25 order fills $12.50, we record $25 at the fill_price when we should record
+$12.50.
+
+In our 7 live fills, all show fill_size = stake (full fills). Polymarket's binary
+markets with simple limit orders rarely produce partial fills at the sizes we're
+trading. This is a correctness issue but low immediate priority.
+
+FIX (defer until we see a partial fill in practice):
+In _settle_finished_games:
+    effective_stake = (bet.fill_size if bet.fill_size and bet.order_status == "filled"
+                       else bet.stake)
+    payout = round(effective_stake / bet.entry_ask, 2) if counterfactual_won else 0.0
+    profit = round(payout - effective_stake, 2)
+
+Budget accounting in _place_bet should similarly use fill_size for deployed
+vs stake for reserved. Will implement at first observed partial fill.
+
+================================================================================
+P1-A: RESUME PATH DOESN'T RESTORE _OPEN_ORDERS — CONFIRMED, SMALL SCOPE
+================================================================================
+
+Code path: real_trader.py:_load_existing_session (lines ~314-320)
+
+    # Restore bet_open for any order still in flight (edge case: crash mid-game)
+    if not bet.settled and bet.order_status in ("live", "pending"):
+        key = (bet.game_pk, bet.line)
+        state = self._line_states.setdefault(...)
+        state.bet_open = True
+        # Missing: self._open_orders[bet.order_id] = bet
+
+The docstring even acknowledges "At shutdown, _shutdown_gracefully() cancels all
+open orders first, so on a clean restart there will be no 'live' order_status
+entries to resume." This is the intended design — graceful shutdown eliminates
+the need. But on a hard crash (power failure, OOM kill, SIGKILL), open orders
+are left on Polymarket with no handler.
+
+Severity is moderate: a crash during a live game would leave orders open until
+the 3-hour safety timeout. In practice, we haven't had a crash — every shutdown
+has been graceful (Ctrl+C handled correctly). But as the system runs more sessions
+this becomes more likely.
+
+FIX:
+    if not bet.settled and bet.order_status in ("live", "pending"):
+        ...
+        state.bet_open = True
+        # Rebuild polling map for crash-recovery
+        if bet.order_id:
+            self._open_orders[bet.order_id] = bet
+
+Then at the end of _load_existing_session, if any open orders were recovered:
+
+    if self._open_orders:
+        LOGGER.info("Crash recovery: %d open order(s) restored — performing immediate sync poll",
+                    len(self._open_orders))
+        self._check_open_orders()
+
+This makes crash recovery automatic and correct. Implement before scaling up to
+more simultaneous open orders.
+
+================================================================================
+P1-B: FV-DECAY TOO REACTIVE IN FIRST SECONDS — CONFIRMED, BUT MORE NUANCED
+================================================================================
+
+Evidence: DET@BOS O8.5 cancelled at age=2.6s (entry_fv=0.782 → fv_at_cancel=0.549).
+The game ended 6-8 (total=14). The order would have won.
+
+The codex framing ("too reactive") is partially correct, but the mechanism matters.
+
+WHAT ACTUALLY HAPPENED:
+The FV drop was not caused by real game state change — it was caused by the MLB API
+reverting its reported score back to 3-3 after momentarily showing 3-4 (the same
+phantom run pattern as PHI@CHC). The FV decay mechanism correctly detected this:
+the inferred run was fake, so FV should be lower. The game subsequently went to 14
+total runs, but that's uncorrelated with whether the inferred run happened.
+
+WHY IT'S STILL CORRECT TO ADD A MIN HOLD:
+The ask did NOT drop on DET@BOS O8.5 (it held at 0.62 through the book capture).
+This is a different signature from PHI@CHC where ask crashed to 0.57. Two patterns:
+  A. Ask drops AND FV drops  → phantom run + market knows it (PHI@CHC)
+  B. FV drops but ask holds  → API state oscillation (DET@BOS O8.5)
+
+The new ask_reversal gate (8¢ drop within 5s) covers Pattern A going forward.
+For Pattern B — the FV decay fires in 2s on an API oscillation that the market
+doesn't confirm — a min_hold period would prevent the premature cancel and let
+the true signal stabilize.
+
+The concern about "2 consecutive decay checks" suggested by codex is reasonable
+but may be over-engineered. A simpler fix with the same effect:
+
+FIX (recommended: add fv_decay_min_age_secs parameter):
+
+In _check_fv_decay, add an age check before firing:
+
+    min_age = getattr(self.live_args, 'fv_decay_min_age_secs', 30.0)
+    if age_secs < min_age:
+        LOGGER.debug("FV check [%s] age=%.0fs < min_age=%.0fs — hold period active",
+                     bet.bet_id, age_secs, min_age)
+        continue
+
+With ask_reversal covering the 0-5s window and fv_decay_min_age=30s, we get:
+  0-5s:   ask_reversal gate (cancels on 8-cent drop)
+  5-30s:  no active cancellation (both gates silent in this window)
+  30s+:   fv_decay can fire based on genuine model-edge collapse
+
+The 5-30s gap is deliberate: in that window, the market's ask is the best signal
+we have. If the ask hasn't reverted in 5 seconds, the run is probably real, and
+we should let the order sit until the FV model has enough fresh ticks to be trusted.
+
+CLI arg: --fv-decay-min-age-secs (default: 30.0)
+
+================================================================================
+ANALYTICS FINDINGS — VERIFICATION RESULTS
+================================================================================
+
+A1) analyze_book_captures stale sig variable — CONFIRMED AND MORE SEVERE
+------------------------------------------------------------------------
+Code path: analyze_book_captures.py line 566
+
+    fv = sig.get("fair_value", 1.0)  # use last signal's fv as proxy
+
+Inside the spread_factor tuning loop (lines 560-578), `sig` is the last value
+from the outer fill-rate section loop (lines 437-481), which is the last cap's
+signal. This is a stale variable.
+
+But more importantly: `fv` is fetched on line 566 but NEVER USED on lines 567-578.
+The limit calculation is:
+    lp_raw = bid0 + spread0 * sf
+    lp = round(min(lp_raw, ask0 - 0.01), 2)
+    lp = max(lp, round(bid0 + 0.01, 2))
+
+There is NO application of the production edge cap (fv - min_edge). This means
+the analysis script simulates fills at limit prices that production would never
+actually post. For example, at spread_factor=0.90, the simulated limit might be
+at ask-0.01 — right inside the spread — but production would cap it at fv-0.15
+which could be much lower. The script over-counts fills at aggressive spread
+factors, biasing the recommendation toward higher spread_factors.
+
+FIX: Apply the same edge_cap constraint in the simulation:
+    fv_sig = cap["signal"].get("fair_value", 1.0)
+    line_val = float(cap["signal"].get("line", "7.5"))
+    min_edge = 0.16 if line_val >= 8.5 else 0.15
+    edge_cap = fv_sig - min_edge
+    lp = round(min(lp_raw, edge_cap, ask0 - 0.01), 2)
+    lp = max(lp, round(bid0 + 0.01, 2))
+
+This makes the simulation match production behavior exactly. Implement before
+making any spread_factor decisions from this tool.
+
+A2) EV-based tuning objective — VALID, NOT CURRENTLY IMPLEMENTED
+----------------------------------------------------------------
+Current output: fill count and fill rate per spread_factor setting.
+Correct objective: E[P&L] = fill_rate(sf) × E[profit|filled] − (1−fill_rate(sf)) × 0
+
+In the current fill count analysis, every fill is weighted equally. A fill at
+0.80 (high FV, high payout if won) and a fill at 0.57 (lower FV) count the same.
+An EV-weighted analysis would weight each simulated fill by (FV/fill_price - 1) ×
+stake to get expected profit, which should be the optimization target.
+
+This improvement becomes more valuable once we have 20+ fills. With 7 fills it
+won't meaningfully change recommendations. Defer, but design the analysis script
+to accept a --mode fill_rate|ev argument.
+
+A3) Legacy session pooling — CONFIRMED RISK
+-------------------------------------------
+Pre-Apr-20 sessions have different accounting semantics (unfilled orders got
+P&L, hook wasn't running, etc.). These should never be pooled with post-Apr-20
+sessions for any calibration or gate decisions. The analysis scripts currently
+don't filter by session date range. Add --min-date 2026-04-20 to any analysis
+that informs production decisions.
+
+================================================================================
+STILL-OPEN ITEMS FROM PRIOR REVIEW — STATUS
+================================================================================
+
+1) Backtest script alignment — STILL OUT OF DATE
+   Confirmed: backtest_gates.py still shows TR8 as the latest config with
+   runs_needed_max=4.0 and inn5_rn_max=3.0. Production is at TR11 with:
+     - runs_needed_max=3.5
+     - inn5_rn_max=2.5
+     - inn6_rn_max=2.5
+     - blowout gate (trailing ≤ 1, lead ≥ 6, inning ≥ 6)
+   Any projections from this script overstate signal frequency and mis-measure
+   gate quality. The blowout gate isn't even in the GateConfig dataclass.
+   Update before using for any production calibration.
+
+2) Crossed-book guard — STILL MISSING
+   No `if bid >= ask: return` guard in paper_trader.py:_process_tick.
+   The GATE 4 spread filter (ask - best_bid > max_spread) partially covers this:
+   a negative spread (ask < bid) would give a negative spread value, and
+   (ask - bid) > 0.20 would be False for negative spreads, so the bet might
+   PASS the spread filter when it should always fail.
+   Simple fix: add at the top of _process_tick after extracting bid/ask:
+       if best_bid is not None and best_bid >= ask:
+           return  # crossed or locked book — skip
+
+3) Per-game exposure cap — STILL MISSING
+   The inning-based dedup (inning_dedup_gap=2) partially limits same-game stacking,
+   but two different lines (O7.5 and O8.5) on the same game can fire simultaneously.
+   Apr 19 data shows exactly this: BAL@CLE had O6.5 and O7.5 signals 79 seconds
+   apart. Both would have won, but both losing would have been correlated. With
+   Kelly sizing and $150 budget, two simultaneous fills on the same game at $30+
+   each is 40%+ of the daily budget on one game outcome.
+   Recommended cap: no more than 35% of daily_budget on a single game_pk at any time.
+
+================================================================================
+PRIORITY ACTION ORDER
+================================================================================
+
+IMMEDIATE (before next session — correctness bugs):
+  1. Fix P0-A: add final edge invariant in _compute_limit_price — return None if
+     floor violation eroded edge below min_edge.
+  2. Fix P0-B: return 0.0 from _compute_stake when kelly_full <= 0 (not min_order_size).
+  3. Add crossed-book guard: bid >= ask early return in _process_tick.
+  4. Fix P1-B: add fv_decay_min_age_secs=30 parameter to _check_fv_decay.
+
+SHORT TERM (next 2-3 sessions — analytics integrity):
+  5. Fix P1-A: rebuild _open_orders in _load_existing_session for crash recovery.
+  6. Fix analyze_book_captures: apply edge cap in spread_factor simulation.
+  7. Update backtest_gates.py to TR11 config (blowout gate, rn_max=3.5, inn5=2.5, inn6=2.5).
+  8. Add --min-date 2026-04-20 note/default to analysis scripts.
+
+MEDIUM TERM (after ~15 more fills — policy optimization):
+  9. Add per-game exposure cap (35% of daily_budget per game_pk).
+ 10. EV-weighted spread_factor tuning in analyze_book_captures.
+ 11. Partial-fill-aware payout accounting (P0-C).
+
+LONGER TERM (after 50+ fills — model calibration):
+ 12. Walk-forward Brier/log-loss/reliability report by FV bucket.
+ 13. Adaptive spread_factor policy (state-dependent: inning, edge, spread width).
+ 14. Bullpen/leverage context features.
+
+================================================================================
+DISAGREEMENTS AND NUANCES
+================================================================================
+
+1) P1-B framing: "FV-decay too reactive" — partially agree, but reason matters.
+   The DET@BOS O8.5 cancel was CORRECT given the information (phantom run, FV
+   legitimately dropped). The issue is that the SAME phantom run pattern is now
+   handled by the ask_reversal gate (0-5s window), making FV decay in the first
+   30 seconds redundant and subject to API oscillation noise. The proposed min_hold
+   is a deduplication of responsibility, not a correction of wrong logic.
+
+2) Two-consecutive-check requirement (codex suggestion): overly complex for the
+   value. The ask_reversal gate + fv_decay_min_age=30s achieves the same goal with
+   clearer logic and no new state to manage. Each mechanism owns a time slice:
+   0-5s: ask_reversal, 5-30s: neither (API settling), 30s+: fv_decay.
+
+3) Current realized P&L (-$3.83 on $175) is not a model quality signal at 7 fills.
+   With 71% win rate and average win ~$9, the expected return on 7 bets is about
+   +$25 with standard deviation of ~$32. We are well within 1 standard deviation
+   of breakeven. The signal win rate of 82% is the more statistically meaningful
+   number right now.
+
+================================================================================
+WHAT WE AGREE IS WORKING WELL AND SHOULD NOT BE CHANGED
+================================================================================
+
+- Three-stage FV pipeline (Poisson + park/weather + team offense): correct and clean.
+- Gate stack: directionally correct. Adding more gates without data is the wrong
+  instinct right now. The 8 current gates were data-driven; the next gate should be too.
+- FV-decay cancellation as the primary exit mechanism: correct design. The 2s cancel
+  was a correct decision with the information available.
+- Ask-reversal gate (newly added): directly addresses the confirmed loss pattern.
+  The end-of-window snapshot on every order will build the dataset for tuning the
+  8-cent threshold once we have 15+ more fills.
+- Session resume + graceful shutdown: correct and necessary for production operation.
+- Quarter-Kelly sizing: appropriate level of conservatism given 7-fill sample size.

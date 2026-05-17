@@ -1,0 +1,10 @@
+requests>=2.31.0
+
+# Polymarket CLOB V2 SDK (cutover 2026-04-28 ~11:00 UTC).
+# V1 package py-clob-client is no longer functional after cutover —
+# uninstall before installing V2 to avoid stale-module risk.
+py-clob-client-v2==1.0.0
+
+# Wallet + signing (transitive but pinned for clarity)
+python-dotenv>=1.0.0
+eth-account>=0.13.0

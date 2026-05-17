@@ -1,0 +1,434 @@
+================================================================================
+CP-1 FINDINGS — py-clob-client-v2 SDK INSPECTION
+Date: 2026-04-27  •  SDK version: py-clob-client-v2 1.0.0
+Venv: c:/tmp/clob_v2_venv  (isolated from running bot)
+================================================================================
+
+EXECUTIVE SUMMARY
+-----------------
+The V2 SDK migration is significantly LESS painful than the migration doc
+suggested. The Python SDK kept far more backward compatibility than the
+TypeScript SDK examples implied:
+
+  - ClobClient constructor: nearly identical, accepts same kwargs we use
+  - chain_id stays as chain_id (NOT renamed to chain like in TS)
+  - signature_type values are the same (0=EOA, 2=POLY_GNOSIS_SAFE)
+  - ApiCreds, TradeParams: byte-for-byte identical
+  - Side constants: 'BUY'/'SELL' string still works
+  - get_trades, get_order: identical signatures and return shapes
+
+The only real changes affecting our code:
+
+  1. Import path: py_clob_client -> py_clob_client_v2
+  2. Order args class: OrderArgs -> OrderArgsV2 (4 required fields identical)
+  3. Cancel API: cancel(order_id_str) -> cancel_order(OrderPayload(orderID=str))
+  4. BUY constant import path: order_builder.constants -> order_builder
+
+Estimated CP-2 (rewrite polymarket_client.py) effort: ~30 minutes, mechanical.
+
+R2 RISK RESOLVED: cancellation is still per-order via cancel_order(). The
+"operator-controlled pauseUser/unpauseUser" wording in the migration doc
+refers to backend semantics, not the client API surface. Our FV-decay
+cancel logic continues to work with a one-line wrapper change.
+
+
+================================================================================
+SECTION 1 — PACKAGE & IMPORTS
+================================================================================
+
+Install:
+   pip install py-clob-client-v2==1.0.0
+
+Import name change:
+   V1: import py_clob_client
+   V2: import py_clob_client_v2
+
+Top-level exports (for reference):
+   ApiCreds                       # IDENTICAL to V1
+   AssetType
+   BalanceAllowanceParams
+   BanStatus
+   BookParams
+   BuilderApiKey                  # NEW — for builder attribution
+   BuilderApiKeyResponse
+   BuilderConfig                  # NEW — passed to ClobClient ctor
+   BuilderTradeParams
+   ClobClient                     # CONSTRUCTOR mostly compatible
+   ClobToken
+   CreateOrderOptions
+   DropNotificationParams
+   EarningsParams
+   FeeDetails
+   MarketDetails
+   MarketOrderArgs                # alias to MarketOrderArgsV1 (legacy)
+   MarketOrderArgsV1              # legacy variant
+   MarketOrderArgsV2              # V2 — what create_market_order takes
+   OpenOrderParams
+   OrderArgs                      # alias to OrderArgsV1 (legacy)
+   OrderArgsV1                    # legacy variant
+   OrderArgsV2                    # V2 — what create_order takes
+   OrderMarketCancelParams
+   OrderPayload                   # NEW — what cancel_order takes
+   OrderScoring
+   OrderScoringParams
+   OrderType                      # enum: GTC/FOK/FAK/...
+   OrdersScoringParams
+   PartialCreateOrderOptions      # NEW optional arg for create_order
+   PostOrdersArgs
+   PostOrdersV1Args
+   PostOrdersV2Args
+   PriceHistoryInterval
+   PricesHistoryParams
+   RewardsMarketsParams
+   Side                           # enum: BUY=0, SELL=1
+   SignatureTypeV2                # enum: EOA=0, POLY_PROXY=1, POLY_GNOSIS_SAFE=2, POLY_1271=3
+   TickSize
+   TradeParams                    # IDENTICAL to V1
+
+Submodule paths:
+   V1: from py_clob_client.order_builder.constants import BUY
+   V2: from py_clob_client_v2.order_builder import BUY     # constants merged up
+   V2 also has: from py_clob_client_v2 import Side; Side.BUY  # enum form
+
+The SDK keeps OrderArgsV1 / OrderArgsV2 BOTH AVAILABLE — so the SDK can
+talk to both protocol versions during the transition. This is why our
+migration is mostly an import-rename exercise.
+
+
+================================================================================
+SECTION 2 — ClobClient CONSTRUCTOR
+================================================================================
+
+V2 signature:
+   ClobClient.__init__(
+       self,
+       host: str,
+       chain_id: int,
+       key: str = None,
+       creds: ApiCreds = None,
+       signature_type: int = None,
+       funder: str = None,
+       builder_config: BuilderConfig = None,    # NEW (optional)
+       use_server_time: bool = False,           # was in V1
+       retry_on_error: bool = False,            # was in V1
+   )
+
+Removed from V1: tickSizeTtlMs, geoBlockToken, throwOnError
+   (none of these were in our code — no impact)
+
+Added in V2: builder_config (BuilderConfig)
+   We do not use builder attribution. Skip.
+
+Our V1 call site (polymarket_client.py:147-153 and :165-172):
+   ClobClient(
+       host=self._host,
+       chain_id=self._chain_id,
+       key=self._private_key,
+       signature_type=sig_type,
+       funder=self._funder,
+   )
+Migration: NO CHANGE NEEDED. Same kwargs work in V2.
+
+Verified working with placeholder key — both EOA path (sig_type=0) and
+proxy path (sig_type=2) construct successfully.
+
+
+================================================================================
+SECTION 3 — METHODS WE USE — V1 vs V2 SIDE-BY-SIDE
+================================================================================
+
+3.1  derive_api_key
+-----
+V1:  derive_api_key()                     -> ApiCreds
+V2:  derive_api_key(nonce: int = None)    -> ApiCreds
+
+Migration: NO CHANGE. We call without args; V2 default still works.
+
+3.2  ApiCreds construction
+-----
+V1 and V2 both:
+   ApiCreds(api_key='...', api_secret='...', api_passphrase='...')
+Migration: NO CHANGE.
+
+3.3  create_order
+-----
+V1:  create_order(order_args: OrderArgs)
+V2:  create_order(order_args: OrderArgsV2,
+                  options: PartialCreateOrderOptions = None)
+
+OrderArgs (V1) fields used by us:
+   token_id, price, size, side
+OrderArgsV2 fields:
+   token_id, price, size, side  (same 4 required fields)
+   expiration: int = 0           (optional, leave default)
+   builder_code: str = '0x000…'  (optional, leave default = no builder)
+   metadata: str = '0x000…'      (optional, leave default)
+
+Migration:
+   from py_clob_client.clob_types       import OrderArgs
+   ->
+   from py_clob_client_v2               import OrderArgsV2
+
+   args = OrderArgs(token_id=..., price=..., size=..., side=BUY)
+   ->
+   args = OrderArgsV2(token_id=..., price=..., size=..., side=BUY)
+
+Note: V2 create_order ALSO takes optional PartialCreateOrderOptions
+(tick_size + neg_risk). If we don't pass it, the SDK auto-resolves both
+via internal __resolve_tick_size and get_neg_risk(token_id). No change
+needed for us.
+
+3.4  post_order
+-----
+V1:  post_order(signed)                                                 -> dict
+V2:  post_order(signed,
+                order_type: OrderType = OrderType.GTC,
+                post_only: bool = False,
+                defer_exec: bool = False)                                -> dict
+
+Migration: NO CHANGE for our use case. We want GTC (the default), no
+post-only, no defer-exec. V2's defaults match what we want.
+
+Return shape: still a dict — verified in source. We extract orderID and
+status the same way.
+
+3.5  cancel  ->  cancel_order  (METHOD RENAME + SIGNATURE CHANGE)
+-----
+V1:  cancel(order_id: str)                       -> dict
+V2:  cancel_order(payload: OrderPayload)         -> dict
+        where OrderPayload(orderID='...')
+
+Source confirmed:
+   def cancel_order(self, payload: OrderPayload):
+       self.assert_level_2_auth()
+       body = {"orderID": payload.orderID}
+       ...
+
+Migration:
+   self._client.cancel(order_id)
+   ->
+   from py_clob_client_v2 import OrderPayload
+   self._client.cancel_order(OrderPayload(orderID=order_id))
+
+Bonus: V2 also has cancel_orders(list_of_hashes) for bulk and cancel_all()
+for nuke. Not needed for our use case but available.
+
+3.6  get_order
+-----
+V1:  get_order(order_id: str)                    -> dict
+V2:  get_order(order_id: str)                    -> dict
+
+Migration: NO CHANGE.
+
+Return shape verified to be raw dict from REST — we read .get('status'),
+.get('size_matched'), .get('price') the same as V1. Defensive .get()
+calls in our existing code absorb any V2 schema shifts (e.g. dropped
+nonce/expiration/feeRateBps fields).
+
+3.7  get_trades  (used by get_trades_for_order fallback)
+-----
+V1:  get_trades(params: TradeParams)             -> list
+V2:  get_trades(params: TradeParams = None,
+                only_first_page: bool = False,
+                next_cursor: str = None)         -> list
+
+Migration: NO CHANGE for our call site — we pass only `params=`.
+
+TradeParams fields: V1 had (maker_address, market, after); V2 adds
+optional (id, asset_id, before). Backward compatible.
+
+V2 source iterates pagination internally and returns the flat list of
+trade dicts — same shape as V1.
+
+
+================================================================================
+SECTION 4 — CONSTANTS & ENUMS
+================================================================================
+
+4.1  BUY / SELL
+-----
+V1:  from py_clob_client.order_builder.constants import BUY, SELL
+V2:  from py_clob_client_v2.order_builder import BUY, SELL
+       (Note: no .constants submodule path; constants merged up)
+
+Both V2 forms work for OrderArgsV2(side=…):
+   side='BUY'                  # plain string
+   side=BUY                    # constant from order_builder, still string
+   side=Side.BUY               # enum (resolves to enum member)
+
+Recommendation: import BUY from order_builder for the smallest diff.
+
+4.2  signature_type values
+-----
+V1 used integers: 0=EOA, 2=POLY_PROXY (or gnosis-safe-style proxy)
+V2 enum SignatureTypeV2:
+   EOA              = 0
+   POLY_PROXY       = 1
+   POLY_GNOSIS_SAFE = 2
+   POLY_1271        = 3
+
+Our V1 code passes signature_type=2 when funder differs from EOA. This
+maps to POLY_GNOSIS_SAFE in V2. Existing integer value works as-is —
+constructor accepts `signature_type: int`.
+
+(Pre-existing config concern, NOT a V2 migration concern: if our funder
+is actually a POLY_PROXY-type wallet rather than gnosis-safe, the
+"correct" V2 value is 1. This is the same potential issue as in V1; not
+addressed by migration.)
+
+4.3  Useful new constants
+-----
+V2 exposes:
+   from py_clob_client_v2.constants import BYTES32_ZERO
+       = '0x0000000000000000000000000000000000000000000000000000000000000000'
+   This is the default for OrderArgsV2.builder_code and .metadata.
+   We don't need to set them; defaults already use this.
+
+
+================================================================================
+SECTION 5 — VERIFIED LIVE CONSTRUCTION
+================================================================================
+
+The following V2 construction patterns were verified to instantiate
+without error in the venv (placeholder private key, no network call):
+
+   from py_clob_client_v2 import (
+       ClobClient, ApiCreds, OrderArgsV2,
+       OrderPayload, TradeParams,
+   )
+   from py_clob_client_v2.order_builder import BUY
+
+   # 1. Constructor — both EOA and proxy forms succeed
+   c1 = ClobClient(host='https://clob.polymarket.com', chain_id=137,
+                   key=PRIV, signature_type=0, funder=None)
+   c2 = ClobClient(host='https://clob.polymarket.com', chain_id=137,
+                   key=PRIV, signature_type=2, funder='0x1234...')
+
+   # 2. ApiCreds
+   creds = ApiCreds(api_key='k', api_secret='s', api_passphrase='p')
+
+   # 3. OrderArgsV2 — three side-form variants all work
+   args = OrderArgsV2(token_id='abc', price=0.5, size=100.0, side=BUY)
+   args = OrderArgsV2(token_id='abc', price=0.5, size=100.0, side='BUY')
+
+   # 4. TradeParams
+   tp = TradeParams(maker_address='0xabc', market='token123', after=1745812345)
+
+   # 5. OrderPayload (cancel input)
+   p = OrderPayload(orderID='cancel_me_id')
+
+All five succeeded with no warnings.
+
+
+================================================================================
+SECTION 6 — IMPACT ON OUR FILE polymarket_client.py
+================================================================================
+
+Diff scope (planned for CP-2):
+
+   IMPORT BLOCK (3 lines change):
+     - from py_clob_client.client import ClobClient
+     + from py_clob_client_v2 import ClobClient
+
+     - from py_clob_client.clob_types import ApiCreds
+     + from py_clob_client_v2 import ApiCreds
+
+     - from py_clob_client.clob_types import OrderArgs
+     + from py_clob_client_v2 import OrderArgsV2 as OrderArgs   # alias to minimize site changes
+
+     - from py_clob_client.order_builder.constants import BUY
+     + from py_clob_client_v2.order_builder import BUY
+
+     - from py_clob_client.clob_types import TradeParams
+     + from py_clob_client_v2 import TradeParams
+
+   place_limit_buy() — line 226:
+     - from py_clob_client.clob_types import OrderArgs
+     - from py_clob_client.order_builder.constants import BUY
+     +  (move imports to top of file — see above)
+
+     - order_args = OrderArgs(token_id=..., price=..., size=..., side=BUY)
+     +  (no change at call site if we alias OrderArgsV2 as OrderArgs)
+
+   cancel_order() — line 302:
+     - resp = self._client.cancel(order_id)
+     + from py_clob_client_v2 import OrderPayload  (or import at top)
+     + resp = self._client.cancel_order(OrderPayload(orderID=order_id))
+
+   get_trades_for_order() — line 376:
+     - from py_clob_client.clob_types import TradeParams
+     +  (move to top imports — see above)
+     (no other change at call site)
+
+Total expected diff: ~10 lines changed, 0 lines added beyond imports,
+0 logic restructure.
+
+
+================================================================================
+SECTION 7 — STATUS OF THE PRE-CUTOVER URL
+================================================================================
+
+The migration doc mentions:
+   Pre-cutover testing: https://clob-v2.polymarket.com
+   Post-cutover production: https://clob.polymarket.com (V2 takes over)
+
+For CP-4 (dry-run pre-cutover validation), we should temporarily set
+   CLOB_HOST = "https://clob-v2.polymarket.com"
+to hit the V2 backend before the cutover. After 11:00 UTC Apr 28, this
+must revert to "https://clob.polymarket.com" (the doc explicitly says
+V2 takes over the production URL).
+
+The simplest pattern: add an env var POLY_CLOB_HOST that overrides the
+default, default to "https://clob.polymarket.com". Use the override
+during CP-4 testing, leave unset for production.
+
+
+================================================================================
+SECTION 8 — STILL-OPEN QUESTIONS (NOT BLOCKING CP-2)
+================================================================================
+
+Q1. Tick-size handling.
+    V2 create_order optionally takes PartialCreateOrderOptions(tick_size,
+    neg_risk). If not provided, SDK auto-resolves via API call.
+    For our use case (BUY at limit price L on standard MLB markets,
+    typically tick_size 0.01), the auto-resolve should be correct.
+    No action; observe in CP-4 dry-run.
+
+Q2. Fee handling at match time.
+    V2 doc: "fees determined by the protocol at match time, not embedded
+    in your signed order."
+    V2 SDK exposes get_fee_rate_bps(token_id) for inspection. Our code
+    computes payout from realized fill_price and stake; we don't model
+    fees explicitly. If V2 charges differently, our P&L calculation may
+    be off by a small constant. Verify after first V2 fill.
+
+Q3. Pre-migration orders endpoint.
+    V2 has get_pre_migration_orders() — explicitly designed to read V1
+    orders post-cutover. We may not need this if we cleanly cancel
+    everything before T-30 minutes per the migration plan, but it's
+    available as a fallback if any V1 orders linger.
+
+Q4. order_to_json_v2 vs order_to_json_v1.
+    Source code shows post_order auto-detects via _is_v2_order(order)
+    and routes to the right serializer. So even if we accidentally pass
+    an OrderArgsV1 to a V2 create_order, the SDK still serializes it
+    correctly. Defensive belt-and-suspenders.
+
+
+================================================================================
+CP-1 OUTCOME
+================================================================================
+
+Migration scope downgraded from "high effort, high risk" to "low effort,
+low risk." Estimated CP-2 work: 30 minutes mechanical edit. R1 (SDK
+signature unknowns) and R2 (cancel API uncertainty) are both RESOLVED.
+
+R3 (pUSD wrap on funder wallet) remains a wallet-side operation
+unaffected by SDK inspection — still mandatory before first V2 trade.
+
+Recommendation: proceed to CP-2 (rewrite polymarket_client.py per
+Section 6 diff) immediately.
+
+================================================================================
+END
+================================================================================

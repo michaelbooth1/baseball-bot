@@ -1,0 +1,62 @@
+Phase 4 Baseline (Per-Tick Pipeline Extraction)
+Date: 2026-04-26
+Repo: baseball
+
+Objective
+- Extract the large per-tick decision logic from SignalEngine into a dedicated
+  pipeline module while preserving behavior.
+
+Changes
+1) Added:
+   - scripts/trading/signal_pipeline.py
+   - Contains extracted per-tick logic:
+     - process_tick(self, game, market, payload, book, ask, line_state_cls)
+   - Keeps per-tick gate/inference/decision flow unchanged.
+
+2) Updated:
+   - scripts/trading/signal_engine.py
+   - Imports pipeline implementation:
+     - from signal_pipeline import process_tick as _process_tick_impl
+   - Replaced _process_tick body with thin wrapper that delegates to pipeline:
+     - passes self/game/market/payload/book/ask
+     - passes line_state_cls=LineState to preserve state object type/behavior
+
+3) Added characterization guardrail:
+   - tests/test_signal_engine_phase1_characterization.py
+   - New test:
+     - SignalPipelineDelegationCharacterizationTests.test_process_tick_delegates_to_pipeline_impl
+   - Asserts wrapper forwards expected args and LineState class.
+
+Validation Commands + Results
+1) python -m py_compile scripts/trading/signal_config.py scripts/trading/signal_gates.py scripts/trading/signal_pipeline.py scripts/trading/signal_engine.py scripts/trading/live_engine.py
+   - Result: pass
+
+2) python -m pytest -q tests/test_signal_engine_phase1_characterization.py
+   - Result: 9 passed in 0.26s
+
+3) python -m pytest -q
+   - Result: 28 passed in 5.30s
+
+4) python scripts/analysis/calibrate_signal_probabilities.py --mode both --verbose
+   - Result:
+     - calibration artifact written
+     - report written
+     - predictions written
+     - rows total=27 train=23 validation=3 test=1 selected=identity
+
+Calibration Snapshot
+- selected_method=identity
+- rows_total=27
+- rows_train=23
+- rows_validation=3
+- rows_test=1
+- raw_val_logloss=0.06108384288153681
+- platt_val_logloss=0.29132702288262496
+- isotonic_val_logloss=0.3022808718729337
+
+Size Snapshot
+- scripts/trading/signal_engine.py: 1401 lines
+- scripts/trading/signal_config.py: 409 lines
+- scripts/trading/signal_gates.py: 451 lines
+- scripts/trading/signal_pipeline.py: 1127 lines
+

@@ -1,0 +1,1673 @@
+2026-05-17 10:42:09,957 INFO live_engine Log file: C:\Users\micha\Desktop\github\NHL-BOT\baseball\logs\real-logs\2026-05-17.log
+2026-05-17 10:42:09,968 INFO daily_refresh Startup refresh plan: active_date=2026-05-17 max_refresh_date=2026-05-16 steps=59 strict=False
+2026-05-17 10:42:09,968 INFO daily_refresh Startup refresh step started: preflight_env_secrets
+2026-05-17 10:42:09,974 INFO daily_refresh Startup refresh step ok: preflight_env_secrets (0.0s)
+2026-05-17 10:42:09,974 DEBUG daily_refresh Startup refresh output tail for preflight_env_secrets:
+env_path=C:\Users\micha\Desktop\github\NHL-BOT\baseball\.env
+POLY_PRIVATE_KEY present (length=66)
+2026-05-17 10:42:09,974 INFO daily_refresh Startup refresh step started: scrape_recent_games
+2026-05-17 10:42:10,333 INFO daily_refresh Startup refresh step ok: scrape_recent_games (0.4s)
+2026-05-17 10:42:10,334 DEBUG daily_refresh Startup refresh output tail for scrape_recent_games:
+========================================================================
+MLB Historical Scrape
+========================================================================
+Date range:      2026-05-10 -> 2026-05-16
+Game types:      R
+Sport ID:        1
+Max workers:     8
+Overwrite:       False
+Dry run:         False
+Output root:     C:\Users\micha\Desktop\github\NHL-BOT\baseball\data
+========================================================================
+
+[2026-05] Fetching schedule 2026-05-10 -> 2026-05-16 ...
+  games=92 — downloading feeds ...
+  complete: downloaded=0 skipped=92 failed=0
+
+========================================================================
+SCRAPE SUMMARY
+========================================================================
+Months processed:   1
+Games discovered:   92
+Downloaded:         0
+Skipped existing:   92
+Failed:             0
+Run manifest:       C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\manifests\runs\run_20260517T144210Z.json
+========================================================================
+2026-05-17 10:42:10,334 INFO daily_refresh Startup refresh step started: stage1_ou_cache
+2026-05-17 10:48:13,532 INFO daily_refresh Startup refresh step ok: stage1_ou_cache (361.1s)
+2026-05-17 10:48:13,533 DEBUG daily_refresh Startup refresh output tail for stage1_ou_cache:
+Found 12400 files under C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\games\regular (from 23965 total after history filters). Parsing pass 1...
+  pass1 0/12400 files ...
+  pass1 1000/12400 files ...
+  pass1 2000/12400 files ...
+  pass1 3000/12400 files ...
+  pass1 4000/12400 files ...
+  pass1 5000/12400 files ...
+  pass1 6000/12400 files ...
+  pass1 7000/12400 files ...
+  pass1 8000/12400 files ...
+  pass1 9000/12400 files ...
+  pass1 10000/12400 files ...
+  pass1 11000/12400 files ...
+  pass1 12000/12400 files ...
+Parsing pass 2 for fallback calibration ...
+  pass2 0/12400 files ...
+  pass2 1000/12400 files ...
+  pass2 2000/12400 files ...
+  pass2 3000/12400 files ...
+  pass2 4000/12400 files ...
+  pass2 5000/12400 files ...
+  pass2 6000/12400 files ...
+  pass2 7000/12400 files ...
+  pass2 8000/12400 files ...
+  pass2 9000/12400 files ...
+  pass2 10000/12400 files ...
+  pass2 11000/12400 files ...
+  pass2 12000/12400 files ...
+Building cache cells ...
+
+Cache build complete:
+  Games loaded: 12148
+  Seasons: 2021, 2022, 2023, 2024, 2025
+  History window: 2021-04-01 -> 2025-09-28
+  Duplicate game files skipped: 250
+  Samples recorded: 915426
+  Valid cells: 4298
+  Skipped low games: 36343
+  Skipped high score cells: 1871
+  Calibration keys: 3179 (prior_n=80, min_n=20, samples=245100)
+
+Sample cells:
+  0_0_1_T_0_0        n=12148 n_samples= 12148 lam=8.92 label=Top1  0 out  bases=---
+  0_0_1_B_0_0        n=8910 n_samples=  8910 lam=8.46 label=Bot1  0 out  bases=---
+  1_0_5_T_1_3        n=  76 n_samples=    76 lam=5.41 label=Top5  1 out  bases=12-
+
+Saved cache -> C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\mlb_ou_cache.staging.json
+2026-05-17 10:48:13,533 INFO daily_refresh Startup refresh step started: stage1_cache_promote
+2026-05-17 10:48:13,575 INFO daily_refresh Startup refresh step ok: stage1_cache_promote (0.0s)
+2026-05-17 10:48:13,575 DEBUG daily_refresh Startup refresh output tail for stage1_cache_promote:
+ok Stage-1 promoted: mlb_ou_cache.staging.json -> mlb_ou_cache.json. sanity guard passed: staging 12148 games >= 99% of production 12148.
+2026-05-17 10:48:13,575 INFO daily_refresh Startup refresh step started: scrape_active_schedule
+2026-05-17 10:48:14,174 INFO daily_refresh Startup refresh step ok: scrape_active_schedule (0.6s)
+2026-05-17 10:48:14,175 DEBUG daily_refresh Startup refresh output tail for scrape_active_schedule:
+========================================================================
+MLB Historical Scrape
+========================================================================
+Date range:      2026-04-01 -> 2026-05-31
+Game types:      R
+Sport ID:        1
+Max workers:     8
+Overwrite:       False
+Dry run:         True
+Output root:     C:\Users\micha\Desktop\github\NHL-BOT\baseball\data
+========================================================================
+
+[2026-04] Fetching schedule 2026-04-01 -> 2026-04-30 ...
+  games=398 (dry-run, no game feed downloads)
+
+[2026-05] Fetching schedule 2026-05-01 -> 2026-05-31 ...
+  games=424 (dry-run, no game feed downloads)
+
+========================================================================
+SCRAPE SUMMARY
+========================================================================
+Months processed:   2
+Games discovered:   822
+Downloaded:         0
+Skipped existing:   0
+Failed:             0
+Run manifest:       C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\manifests\runs\run_20260517T144814Z.json
+========================================================================
+2026-05-17 10:48:14,175 INFO daily_refresh Startup refresh step started: game_weather_cache
+2026-05-17 10:48:16,633 INFO daily_refresh Startup refresh step ok: game_weather_cache (2.5s)
+2026-05-17 10:48:16,633 DEBUG daily_refresh Startup refresh output tail for game_weather_cache:
+2026-05-17 10:48:16,617 INFO refresh_game_weather Weather cache refreshed: date=2026-05-17 provider=open-meteo games=15 provider_ok=15 output=C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\weather\game_weather_2026-05-17.json
+{
+  "coverage": {
+    "fixed_roof_default": 1,
+    "metadata_matched": 15,
+    "missing_metadata": 0,
+    "provider_disabled": 0,
+    "provider_missing": 0,
+    "provider_ok": 15,
+    "retractable_roof_default": 2,
+    "scheduled_games": 15
+  },
+  "date": "2026-05-17",
+  "output_path": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\cache\\weather\\game_weather_2026-05-17.json",
+  "warnings": []
+}
+2026-05-17 10:48:16,633 INFO daily_refresh Startup refresh step started: pitcher_cache
+2026-05-17 10:48:16,933 INFO daily_refresh Startup refresh step ok: pitcher_cache (0.3s)
+2026-05-17 10:48:16,933 DEBUG daily_refresh Startup refresh output tail for pitcher_cache:
+2026-05-17 10:48:16,762 INFO Fetching pitching stats offset=0 limit=500 ...
+2026-05-17 10:48:16,918 INFO Total pitcher splits fetched: 74
+2026-05-17 10:48:16,918 INFO Pitchers in cache: 74  (skipped low_ip=0  no_era=0)
+2026-05-17 10:48:16,918 INFO Computed avg ERA across 74 pitchers: 3.48 (MLB_AVG constant: 4.20)
+2026-05-17 10:48:16,920 INFO Pitcher cache written to C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\pitcher_cache.json  (74 pitchers)
+2026-05-17 10:48:16,933 INFO daily_refresh Startup refresh step started: team_game_log
+2026-05-17 10:50:06,491 INFO daily_refresh Startup refresh step ok: team_game_log (109.6s)
+2026-05-17 10:50:06,492 DEBUG daily_refresh Startup refresh output tail for team_game_log:
+2026-05-17 10:48:16,985 INFO Scanning game feeds under C:\Users\micha\Desktop\github\NHL-BOT\baseball\data for seasons ['2021', '2022', '2023', '2024', '2025', '2026'] ...
+2026-05-17 10:48:17,005 INFO   Year 2021: 2512 files
+2026-05-17 10:48:36,564 INFO     -> 2511 valid final games
+2026-05-17 10:48:36,585 INFO   Year 2022: 2479 files
+2026-05-17 10:48:56,350 INFO     -> 2479 valid final games
+2026-05-17 10:48:56,371 INFO   Year 2023: 2476 files
+2026-05-17 10:49:16,277 INFO     -> 2476 valid final games
+2026-05-17 10:49:16,297 INFO   Year 2024: 2469 files
+2026-05-17 10:49:36,046 INFO     -> 2468 valid final games
+2026-05-17 10:49:36,067 INFO   Year 2025: 2464 files
+2026-05-17 10:49:56,580 INFO     -> 2464 valid final games
+2026-05-17 10:49:56,600 INFO   Year 2026: 708 files
+2026-05-17 10:50:06,432 INFO     -> 660 valid final games
+2026-05-17 10:50:06,434 INFO Total: 13058 games loaded, 2 files skipped
+2026-05-17 10:50:06,483 INFO Wrote 13058 games to C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\team_game_log.json (109.5s)  MLB avg RPG=4.448  avg total=8.895
+2026-05-17 10:50:06,492 INFO daily_refresh Startup refresh step started: park_hr_factors
+2026-05-17 10:51:51,681 INFO daily_refresh Startup refresh step ok: park_hr_factors (105.2s)
+2026-05-17 10:51:51,681 DEBUG daily_refresh Startup refresh output tail for park_hr_factors:
+2026-05-17 10:50:06,573 INFO build_park_hr_factors Year 2021: 2512 files
+2026-05-17 10:50:26,791 INFO build_park_hr_factors Year 2022: 2479 files
+2026-05-17 10:50:46,541 INFO build_park_hr_factors Year 2023: 2476 files
+2026-05-17 10:51:06,361 INFO build_park_hr_factors Year 2024: 2469 files
+2026-05-17 10:51:26,048 INFO build_park_hr_factors Year 2025: 2464 files
+2026-05-17 10:51:46,177 INFO build_park_hr_factors Year 2026: 708 files
+2026-05-17 10:51:51,671 INFO build_park_hr_factors Scanned 13108 files (13060 Final games used, 48 skipped).
+2026-05-17 10:51:51,675 INFO build_park_hr_factors League HR/game by year: {'2021': 2.4347, '2022': 2.1444, '2023': 2.4148, '2024': 2.2414, '2025': 2.3312, '2026': 2.1182}
+2026-05-17 10:51:51,675 INFO build_park_hr_factors Wrote 47 parks x up to 6 years -> C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\park_hr_factors.json
+2026-05-17 10:51:51,675 INFO build_park_hr_factors Top 5 HR-friendly (2026, shrunk_factor):
+2026-05-17 10:51:51,675 INFO build_park_hr_factors   Great American Ball Park        1.216  (n=23 games)
+2026-05-17 10:51:51,675 INFO build_park_hr_factors   Daikin Park                     1.185  (n=24 games)
+2026-05-17 10:51:51,675 INFO build_park_hr_factors   Yankee Stadium                  1.171  (n=19 games)
+2026-05-17 10:51:51,675 INFO build_park_hr_factors   Nationals Park                  1.157  (n=20 games)
+2026-05-17 10:51:51,675 INFO build_park_hr_factors   Sutter Health Park              1.133  (n=19 games)
+2026-05-17 10:51:51,675 INFO build_park_hr_factors Bottom 5 HR-friendly (2026, shrunk_factor):
+2026-05-17 10:51:51,675 INFO build_park_hr_factors   Oracle Park                     0.894  (n=21 games)
+2026-05-17 10:51:51,675 INFO build_park_hr_factors   Angel Stadium                   0.892  (n=19 games)
+2026-05-17 10:51:51,675 INFO build_park_hr_factors   Comerica Park                   0.882  (n=19 games)
+2026-05-17 10:51:51,675 INFO build_park_hr_factors   loanDepot park                  0.839  (n=26 games)
+2026-05-17 10:51:51,675 INFO build_park_hr_factors   Fenway Park                     0.827  (n=20 games)
+2026-05-17 10:51:51,681 INFO daily_refresh Startup refresh step started: preflight_artifacts
+2026-05-17 10:51:51,737 INFO daily_refresh Startup refresh step ok: preflight_artifacts (0.1s)
+2026-05-17 10:51:51,737 DEBUG daily_refresh Startup refresh output tail for preflight_artifacts:
+ok Stage-1 (mlb_ou_cache.json) loaded
+ok Stage-1 production coverage: seasons 2021-2025, total_games=12148, history=2021-04-01->2025-09-28, duplicate_files_skipped=250
+ok Stage-2 (mlb_stage2_run_env.json) loaded
+ok Stage-3: team_game_log: 31 teams, 30 with 2026 games (avg 44/team)
+ok Pitcher cache (74 entries)
+ok Park HR factors: 47 parks, 31 with 2026 entries
+2026-05-17 10:51:51,737 INFO daily_refresh Startup refresh step started: settlement_truth_verification
+2026-05-17 10:51:52,596 INFO daily_refresh Startup refresh step ok: settlement_truth_verification (0.8s)
+2026-05-17 10:51:52,596 DEBUG daily_refresh Startup refresh output tail for settlement_truth_verification:
+2026-05-17 10:51:52,589 INFO     verify_settlement_truth Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\settlement_truth\settlement_truth_report.json (counts={'total_bets_seen': 179, 'filled_or_settled_total': 89, 'not_filled': 90, 'ok': 81, 'game_not_final_yet': 7, 'stale_filled': 1}, oldest_stale=25)
+2026-05-17 10:51:52,596 INFO daily_refresh Startup refresh step started: daily_human_review:2026-05-16
+2026-05-17 10:51:54,017 INFO daily_refresh Startup refresh step ok: daily_human_review:2026-05-16 (1.4s)
+2026-05-17 10:51:54,018 DEBUG daily_refresh Startup refresh output tail for daily_human_review:2026-05-16:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\daily_human_review\2026-05-16_human_review.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\daily_human_review\2026-05-16_human_review.md
+2026-05-17 10:51:54,018 INFO daily_refresh Startup refresh step started: analysis_safe_trade_table
+2026-05-17 10:51:54,181 INFO daily_refresh Startup refresh step ok: analysis_safe_trade_table (0.2s)
+2026-05-17 10:51:54,181 DEBUG daily_refresh Startup refresh output tail for analysis_safe_trade_table:
+analysis-safe trades: rows=117 filled=89 live_filled=85 paper_fallback_filled=4 excluded={'order_status_error': 62, 'ledger_only_bet_id': 3}
+P&L: live=$-110.07 paper_fallback=$-20.44 all_filled=$-130.51
+wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\analysis_safe_trades\analysis_safe_trades.jsonl
+wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\analysis_safe_trades\analysis_safe_trades.csv
+wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\analysis_safe_trades\analysis_safe_trades_summary.json
+2026-05-17 10:51:54,181 INFO daily_refresh Startup refresh step started: candidate_universe_table
+2026-05-17 10:52:48,152 INFO daily_refresh Startup refresh step ok: candidate_universe_table (54.0s)
+2026-05-17 10:52:48,153 DEBUG daily_refresh Startup refresh output tail for candidate_universe_table:
+2026-05-17 10:52:46,098 INFO     build_candidate_universe_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\candidate_universe\candidates_master.jsonl
+2026-05-17 10:52:46,101 INFO     build_candidate_universe_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\candidate_universe\candidates_master.csv
+2026-05-17 10:52:46,101 INFO     build_candidate_universe_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\candidate_universe\build_manifest.json
+2026-05-17 10:52:46,198 INFO     build_candidate_universe_table Rows: source=392255 output=392255 labels=0
+2026-05-17 10:52:48,153 INFO daily_refresh Startup refresh step started: calibration_opportunity_training
+2026-05-17 10:52:49,779 INFO daily_refresh Startup refresh step ok: calibration_opportunity_training (1.6s)
+2026-05-17 10:52:49,779 DEBUG daily_refresh Startup refresh output tail for calibration_opportunity_training:
+2026-05-17 10:52:49,728 INFO     build_calibration_opportunity_training_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_opportunity_training\calibration_opportunity_training_table.jsonl
+2026-05-17 10:52:49,728 INFO     build_calibration_opportunity_training_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_opportunity_training\calibration_opportunity_training_table.csv
+2026-05-17 10:52:49,728 INFO     build_calibration_opportunity_training_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_opportunity_training\calibration_opportunity_training_table_manifest.json
+2026-05-17 10:52:49,728 INFO     build_calibration_opportunity_training_table Rows: source=5079 output=1350 final_labels=1347 score_confirmations=743 selected_inferred_rows=2826 current_support_backfill_rows=2059 score_event_repeat_policy=dedupe collapsed=3729
+2026-05-17 10:52:49,779 INFO daily_refresh Startup refresh step started: calibrate_signal_probabilities
+2026-05-17 10:52:53,007 INFO daily_refresh Startup refresh step ok: calibrate_signal_probabilities (3.2s)
+2026-05-17 10:52:53,007 DEBUG daily_refresh Startup refresh output tail for calibrate_signal_probabilities:
+2026-05-17 10:52:51,207 WARNING  calibrate_signal_probabilities Calibration stability gate fired for no_score_drift: today's pick was 'platt' but trailing 7-day modal is 'isotonic' (history=['isotonic', 'isotonic', 'isotonic', 'platt', 'isotonic', 'platt', 'platt']). Overriding to 'isotonic' to avoid daily flip-flop on small validation samples.
+2026-05-17 10:52:51,207 WARNING  calibrate_signal_probabilities Input-drift flag set for no_score_drift: 3 continuous features at PSI >= 0.25 (threshold trigger 2). Top: stage2_run_env_delta PSI 2.53, team_offense_delta PSI 2.52, base_fair_value PSI 1.83. Today's calibration method (isotonic) was selected on materially-shifted inputs.
+2026-05-17 10:52:52,970 WARNING  calibrate_signal_probabilities Input-drift flag set for score_event_transition: 3 continuous features at PSI >= 0.25 (threshold trigger 2). Top: stage2_run_env_delta PSI 2.53, team_offense_delta PSI 2.52, base_fair_value PSI 1.83. Today's calibration method (platt) was selected on materially-shifted inputs.
+2026-05-17 10:52:52,988 INFO     calibrate_signal_probabilities Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration\signal_win_calibration.json
+2026-05-17 10:52:52,988 INFO     calibrate_signal_probabilities Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration\signal_win_calibration_report.json
+2026-05-17 10:52:52,988 INFO     calibrate_signal_probabilities Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration\signal_win_calibration_predictions.jsonl
+2026-05-17 10:52:52,988 INFO     calibrate_signal_probabilities Calibration rows: total=1347 family_mode=separate families={'no_score_drift': 604, 'score_event_transition': 743} selected=platt
+2026-05-17 10:52:53,007 INFO daily_refresh Startup refresh step started: calibrate_signal_probabilities_under
+2026-05-17 10:52:56,184 INFO daily_refresh Startup refresh step ok: calibrate_signal_probabilities_under (3.2s)
+2026-05-17 10:52:56,184 DEBUG daily_refresh Startup refresh output tail for calibrate_signal_probabilities_under:
+2026-05-17 10:52:54,396 WARNING  calibrate_signal_probabilities Input-drift flag set for no_score_drift: 3 continuous features at PSI >= 0.25 (threshold trigger 2). Top: stage2_run_env_delta PSI 2.53, team_offense_delta PSI 2.52, base_fair_value PSI 1.83. Today's calibration method (platt) was selected on materially-shifted inputs.
+2026-05-17 10:52:56,146 WARNING  calibrate_signal_probabilities Input-drift flag set for score_event_transition: 3 continuous features at PSI >= 0.25 (threshold trigger 2). Top: stage2_run_env_delta PSI 2.53, team_offense_delta PSI 2.52, base_fair_value PSI 1.83. Today's calibration method (platt) was selected on materially-shifted inputs.
+2026-05-17 10:52:56,164 INFO     calibrate_signal_probabilities Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration\signal_win_calibration_under.json
+2026-05-17 10:52:56,164 INFO     calibrate_signal_probabilities Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration\signal_win_calibration_under_report.json
+2026-05-17 10:52:56,164 INFO     calibrate_signal_probabilities Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration\signal_win_calibration_under_predictions.jsonl
+2026-05-17 10:52:56,164 INFO     calibrate_signal_probabilities Calibration rows: total=1347 family_mode=separate families={'no_score_drift': 604, 'score_event_transition': 743} selected=platt
+2026-05-17 10:52:56,184 INFO daily_refresh Startup refresh step started: model_maturity_report
+2026-05-17 10:52:56,422 INFO daily_refresh Startup refresh step ok: model_maturity_report (0.2s)
+2026-05-17 10:52:56,422 DEBUG daily_refresh Startup refresh output tail for model_maturity_report:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\model_maturity\model_maturity_report.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\model_maturity\model_maturity_report.md
+2026-05-17 10:52:56,422 INFO daily_refresh Startup refresh step started: fair_value_stage_ablation
+2026-05-17 10:52:57,054 INFO daily_refresh Startup refresh step ok: fair_value_stage_ablation (0.6s)
+2026-05-17 10:52:57,054 DEBUG daily_refresh Startup refresh output tail for fair_value_stage_ablation:
+{
+  "paths": {
+    "dated_json": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\data\\analysis_output\\fair_value_stage_ablation\\2026-05-16_fair_value_stage_ablation_report.json",
+    "dated_markdown": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\data\\analysis_output\\fair_value_stage_ablation\\2026-05-16_fair_value_stage_ablation_report.md",
+    "json": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\data\\analysis_output\\fair_value_stage_ablation\\fair_value_stage_ablation_report.json",
+    "markdown": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\data\\analysis_output\\fair_value_stage_ablation\\fair_value_stage_ablation_report.md"
+  },
+  "row_counts": {
+    "families": {
+      "__all__": 1347,
+      "no_score_drift": 604,
+      "score_event_transition": 743
+    },
+    "filtered_rows": 1350,
+    "input_rows": 1350,
+    "labeled_rows": 1347
+  }
+}
+2026-05-17 10:52:57,054 INFO daily_refresh Startup refresh step started: fv_gap_decomposition
+2026-05-17 10:52:57,476 INFO daily_refresh Startup refresh step ok: fv_gap_decomposition (0.4s)
+2026-05-17 10:52:57,476 DEBUG daily_refresh Startup refresh output tail for fv_gap_decomposition:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_gap_decomposition\fv_gap_decomposition_report.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_gap_decomposition\fv_gap_decomposition_report.md
+2026-05-17 10:52:57,476 INFO daily_refresh Startup refresh step started: fv_trust_shrinkage
+2026-05-17 10:52:58,833 INFO daily_refresh Startup refresh step ok: fv_trust_shrinkage (1.4s)
+2026-05-17 10:52:58,833 DEBUG daily_refresh Startup refresh output tail for fv_trust_shrinkage:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_trust_shrinkage\fv_trust_shrinkage_report.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_trust_shrinkage\fv_trust_shrinkage_report.md
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_trust_shrinkage\fv_trust_shrinkage_predictions.jsonl
+2026-05-17 10:52:58,833 INFO daily_refresh Startup refresh step started: calibration_market_anchored_alpha
+2026-05-17 10:53:02,533 INFO daily_refresh Startup refresh step ok: calibration_market_anchored_alpha (3.7s)
+2026-05-17 10:53:02,533 DEBUG daily_refresh Startup refresh output tail for calibration_market_anchored_alpha:
+2026-05-17 10:53:02,513 INFO     train_calibration_market_anchored_alpha Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_market_anchored_alpha\calibration_market_anchored_alpha_report.json
+2026-05-17 10:53:02,514 INFO     train_calibration_market_anchored_alpha Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_market_anchored_alpha\calibration_market_anchored_alpha_report.md
+2026-05-17 10:53:02,514 INFO     train_calibration_market_anchored_alpha Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_market_anchored_alpha\calibration_market_anchored_alpha_predictions.jsonl
+2026-05-17 10:53:02,533 INFO daily_refresh Startup refresh step started: stage1_inferred_empirical_audit
+2026-05-17 10:53:07,674 INFO daily_refresh Startup refresh step ok: stage1_inferred_empirical_audit (5.1s)
+2026-05-17 10:53:07,674 DEBUG daily_refresh Startup refresh output tail for stage1_inferred_empirical_audit:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\stage1_inferred_empirical_audit\stage1_inferred_empirical_audit.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\stage1_inferred_empirical_audit\stage1_inferred_empirical_audit.md
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\stage1_inferred_empirical_audit\stage1_inferred_empirical_audit_rows.jsonl
+2026-05-17 10:53:07,675 INFO daily_refresh Startup refresh step started: unified_signals
+2026-05-17 10:53:12,115 INFO daily_refresh Startup refresh step ok: unified_signals (4.4s)
+2026-05-17 10:53:12,115 DEBUG daily_refresh Startup refresh output tail for unified_signals:
+2026-05-17 10:53:07,822 INFO     build_unified_signal_table Building mode=live
+2026-05-17 10:53:11,996 INFO     build_unified_signal_table mode=live rows: master=182 events=480 snapshots=11654
+2026-05-17 10:53:12,094 INFO     build_unified_signal_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\unified_signals\signals_master.jsonl
+2026-05-17 10:53:12,094 INFO     build_unified_signal_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\unified_signals\signals_master.csv
+2026-05-17 10:53:12,094 INFO     build_unified_signal_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\unified_signals\signal_order_events.jsonl
+2026-05-17 10:53:12,094 INFO     build_unified_signal_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\unified_signals\signal_book_snapshots.jsonl
+2026-05-17 10:53:12,094 INFO     build_unified_signal_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\unified_signals\build_manifest.json
+2026-05-17 10:53:12,094 INFO     build_unified_signal_table Warnings: 0  Hard errors: 0
+2026-05-17 10:53:12,115 INFO daily_refresh Startup refresh step started: concept_drift_report
+2026-05-17 10:53:12,201 INFO daily_refresh Startup refresh step ok: concept_drift_report (0.1s)
+2026-05-17 10:53:12,202 DEBUG daily_refresh Startup refresh output tail for concept_drift_report:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\concept_drift\concept_drift_report.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\concept_drift\concept_drift_report.md
+Alerts: 3
+2026-05-17 10:53:12,202 INFO daily_refresh Startup refresh step started: drift_in_drift_report
+2026-05-17 10:53:12,259 INFO daily_refresh Startup refresh step ok: drift_in_drift_report (0.1s)
+2026-05-17 10:53:12,259 DEBUG daily_refresh Startup refresh output tail for drift_in_drift_report:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\concept_drift\drift_in_drift_report.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\concept_drift\drift_in_drift_report.md
+Alerts: 0, features evaluated: 3
+2026-05-17 10:53:12,259 INFO daily_refresh Startup refresh step started: signal_training_table
+2026-05-17 10:53:12,475 INFO daily_refresh Startup refresh step ok: signal_training_table (0.2s)
+2026-05-17 10:53:12,475 DEBUG daily_refresh Startup refresh output tail for signal_training_table:
+2026-05-17 10:53:12,459 INFO     build_signal_training_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\training_tables\signal_training_table.jsonl
+2026-05-17 10:53:12,459 INFO     build_signal_training_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\training_tables\signal_training_table.csv
+2026-05-17 10:53:12,459 INFO     build_signal_training_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\training_tables\signal_training_table_manifest.json
+2026-05-17 10:53:12,459 INFO     build_signal_training_table Rows: source=182 filtered=182 training=182
+2026-05-17 10:53:12,475 INFO daily_refresh Startup refresh step started: clv_report
+2026-05-17 10:53:12,816 INFO daily_refresh Startup refresh step ok: clv_report (0.3s)
+2026-05-17 10:53:12,816 DEBUG daily_refresh Startup refresh output tail for clv_report:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\clv\clv_summary.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\clv\clv_rows.jsonl
+2026-05-17 10:53:12,816 INFO daily_refresh Startup refresh step started: fv_disagreement_quality
+2026-05-17 10:53:13,261 INFO daily_refresh Startup refresh step ok: fv_disagreement_quality (0.4s)
+2026-05-17 10:53:13,261 DEBUG daily_refresh Startup refresh output tail for fv_disagreement_quality:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_disagreement_quality\fv_disagreement_quality_summary.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_disagreement_quality\fv_disagreement_quality_rows.jsonl
+2026-05-17 10:53:13,261 INFO daily_refresh Startup refresh step started: train_baseline_models
+2026-05-17 10:53:45,404 INFO daily_refresh Startup refresh step ok: train_baseline_models (32.1s)
+2026-05-17 10:53:45,404 DEBUG daily_refresh Startup refresh output tail for train_baseline_models:
+2026-05-17 10:53:28,618 INFO     train_baseline_models Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\model_baselines\signal_win_model.json
+2026-05-17 10:53:28,618 INFO     train_baseline_models Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\model_baselines\signal_win_predictions.jsonl
+2026-05-17 10:53:45,395 INFO     train_baseline_models Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\model_baselines\execution_fill_model.json
+2026-05-17 10:53:45,395 INFO     train_baseline_models Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\model_baselines\execution_fill_predictions.jsonl
+2026-05-17 10:53:45,396 INFO     train_baseline_models Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\model_baselines\baseline_model_report.json
+2026-05-17 10:53:45,404 INFO daily_refresh Startup refresh step started: ev_policy_backtest
+2026-05-17 10:54:40,697 INFO daily_refresh Startup refresh step ok: ev_policy_backtest (55.3s)
+2026-05-17 10:54:40,697 DEBUG daily_refresh Startup refresh output tail for ev_policy_backtest:
+2026-05-17 10:54:40,688 INFO     backtest_ev_policy Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\ev_policy\ev_policy_report.json
+2026-05-17 10:54:40,688 INFO     backtest_ev_policy Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\ev_policy\ev_scored_rows.jsonl
+2026-05-17 10:54:40,688 INFO     backtest_ev_policy Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\ev_policy\ev_policy_validation_trades.jsonl
+2026-05-17 10:54:40,688 INFO     backtest_ev_policy Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\ev_policy\ev_policy_test_trades.jsonl
+2026-05-17 10:54:40,688 INFO     backtest_ev_policy Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\ev_policy\ev_signal_win_if_filled_model.json
+2026-05-17 10:54:40,688 INFO     backtest_ev_policy Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\ev_policy\ev_execution_fill_runtime_model.json
+2026-05-17 10:54:40,688 INFO     backtest_ev_policy Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\ev_policy\ev_execution_fill_strict_model.json
+2026-05-17 10:54:40,697 INFO daily_refresh Startup refresh step started: stage2_run_env_retrain_staging
+2026-05-17 11:09:49,403 INFO daily_refresh Startup refresh step ok: stage2_run_env_retrain_staging (906.9s)
+2026-05-17 11:09:49,403 DEBUG daily_refresh Startup refresh output tail for stage2_run_env_retrain_staging:
+Lines: 6.5, 7.5, 8.5, 9.5, 10.5, 11.5
+Train <= 2024, validation >= 2025
+  parsing 0/23965 files ...
+  parsing 1000/23965 files ...
+  parsing 2000/23965 files ...
+  parsing 3000/23965 files ...
+  parsing 4000/23965 files ...
+  parsing 5000/23965 files ...
+  parsing 6000/23965 files ...
+  parsing 7000/23965 files ...
+  parsing 8000/23965 files ...
+  parsing 9000/23965 files ...
+  parsing 10000/23965 files ...
+  parsing 11000/23965 files ...
+  parsing 12000/23965 files ...
+  parsing 13000/23965 files ...
+  parsing 14000/23965 files ...
+  parsing 15000/23965 files ...
+  parsing 16000/23965 files ...
+  parsing 17000/23965 files ...
+  parsing 18000/23965 files ...
+  parsing 19000/23965 files ...
+  parsing 20000/23965 files ...
+  parsing 21000/23965 files ...
+  parsing 22000/23965 files ...
+  parsing 23000/23965 files ...
+Loaded games=23905, samples=1810220, with_stage1=1307433, val_rows=172755
+
+Validation summary:
+  O6.5: brier 0.168926 -> 0.16857 (gain=0.000356, 0.2108%) weights={'park': 0.0, 'temp': 0.25, 'wind': 0.0, 'park_wind': 0.0, 'density_alt': 0.5, 'hr_factor': 0.5}
+  O7.5: brier 0.182226 -> 0.18155 (gain=0.000676, 0.3712%) weights={'park': 0.5, 'temp': 0.0, 'wind': 0.0, 'park_wind': 0.2, 'density_alt': 0.5, 'hr_factor': 0.5}
+  O8.5: brier 0.180216 -> 0.179414 (gain=0.000802, 0.4449%) weights={'park': 0.5, 'temp': 0.0, 'wind': 0.0, 'park_wind': 0.2, 'density_alt': 0.5, 'hr_factor': 0.5}
+  O9.5: brier 0.169228 -> 0.168301 (gain=0.000926, 0.5474%) weights={'park': 0.5, 'temp': 0.25, 'wind': 0.0, 'park_wind': 0.2, 'density_alt': 0.5, 'hr_factor': 0.5}
+  O10.5: brier 0.156175 -> 0.155399 (gain=0.000775, 0.4965%) weights={'park': 0.5, 'temp': 0.25, 'wind': 0.5, 'park_wind': 0.2, 'density_alt': 0.5, 'hr_factor': 0.5}
+  O11.5: brier 0.130568 -> 0.130012 (gain=0.000555, 0.4254%) weights={'park': 0.5, 'temp': 0.25, 'wind': 0.0, 'park_wind': 0.0, 'density_alt': 0.25, 'hr_factor': 0.5}
+
+Saved Stage-2 model -> C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\mlb_stage2_run_env.staging.json
+2026-05-17 11:09:49,403 INFO daily_refresh Startup refresh step started: stage3_team_offense_features
+2026-05-17 11:09:51,794 INFO daily_refresh Startup refresh step ok: stage3_team_offense_features (2.4s)
+2026-05-17 11:09:51,795 DEBUG daily_refresh Startup refresh output tail for stage3_team_offense_features:
+2026-05-17 11:09:49,475 INFO build_team_offense_features Loading history from C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\team_game_log.json
+2026-05-17 11:09:49,487 INFO build_team_offense_features   31 teams, mlb_avg_rpg=4.448
+2026-05-17 11:09:51,787 INFO build_team_offense_features Wrote 25158 rows in 2.3s
+2026-05-17 11:09:51,787 INFO build_team_offense_features Feature coverage:
+2026-05-17 11:09:51,787 INFO build_team_offense_features   n_games_in_season      100.00%
+2026-05-17 11:09:51,787 INFO build_team_offense_features   season_rpg_to_date     96.47%
+2026-05-17 11:09:51,787 INFO build_team_offense_features   prior_season_rpg       80.52%
+2026-05-17 11:09:51,787 INFO build_team_offense_features   momentum_rpg_5         99.64%
+2026-05-17 11:09:51,787 INFO build_team_offense_features   momentum_rpg_10        99.40%
+2026-05-17 11:09:51,787 INFO build_team_offense_features   momentum_rpg_20        98.81%
+2026-05-17 11:09:51,787 INFO build_team_offense_features   rolling_rpg_50         98.81%
+2026-05-17 11:09:51,787 INFO build_team_offense_features   decay_weighted_rpg     98.81%
+2026-05-17 11:09:51,787 INFO build_team_offense_features   home_rpg_30            98.05%
+2026-05-17 11:09:51,787 INFO build_team_offense_features   road_rpg_30            98.05%
+2026-05-17 11:09:51,787 INFO build_team_offense_features   momentum_minus_season  96.47%
+2026-05-17 11:09:51,787 INFO build_team_offense_features   season_minus_prior     77.59%
+2026-05-17 11:09:51,787 INFO build_team_offense_features Manifest: C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\team_offense_calibration\team_features_manifest.json
+2026-05-17 11:09:51,795 INFO daily_refresh Startup refresh step started: stage3_team_offense_calibration_table
+2026-05-17 11:11:50,469 INFO daily_refresh Startup refresh step ok: stage3_team_offense_calibration_table (118.7s)
+2026-05-17 11:11:50,469 DEBUG daily_refresh Startup refresh output tail for stage3_team_offense_calibration_table:
+2026-05-17 11:09:51,862 INFO build_team_offense_calibration_table Loading Stage-1 cache from C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\mlb_ou_cache.json
+2026-05-17 11:09:51,877 INFO build_team_offense_calibration_table   4298 cells, extras_bucket=10
+2026-05-17 11:09:51,877 INFO build_team_offense_calibration_table Loading Stage-2 model from C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\mlb_stage2_run_env.json
+2026-05-17 11:09:51,881 INFO build_team_offense_calibration_table Writing rows to C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\team_offense_calibration\training_table.jsonl
+2026-05-17 11:10:00,740 INFO build_team_offense_calibration_table   progress: 1000 games seen, 1000 used, 89694 rows, 9s
+2026-05-17 11:10:09,695 INFO build_team_offense_calibration_table   progress: 2000 games seen, 2000 used, 178493 rows, 18s
+2026-05-17 11:10:18,770 INFO build_team_offense_calibration_table   progress: 3000 games seen, 2999 used, 269392 rows, 27s
+2026-05-17 11:10:27,758 INFO build_team_offense_calibration_table   progress: 4000 games seen, 3999 used, 360375 rows, 36s
+2026-05-17 11:10:36,749 INFO build_team_offense_calibration_table   progress: 5000 games seen, 4999 used, 453616 rows, 45s
+2026-05-17 11:10:45,728 INFO build_team_offense_calibration_table   progress: 6000 games seen, 5999 used, 542966 rows, 54s
+2026-05-17 11:10:54,746 INFO build_team_offense_calibration_table   progress: 7000 games seen, 6999 used, 631923 rows, 63s
+2026-05-17 11:11:03,847 INFO build_team_offense_calibration_table   progress: 8000 games seen, 7999 used, 722715 rows, 72s
+2026-05-17 11:11:12,797 INFO build_team_offense_calibration_table   progress: 9000 games seen, 8999 used, 814440 rows, 81s
+2026-05-17 11:11:21,886 INFO build_team_offense_calibration_table   progress: 10000 games seen, 9998 used, 905343 rows, 90s
+2026-05-17 11:11:31,107 INFO build_team_offense_calibration_table   progress: 11000 games seen, 10998 used, 997058 rows, 99s
+2026-05-17 11:11:40,392 INFO build_team_offense_calibration_table   progress: 12000 games seen, 11998 used, 1086457 rows, 109s
+2026-05-17 11:11:49,689 INFO build_team_offense_calibration_table   progress: 13000 games seen, 12979 used, 1176328 rows, 118s
+2026-05-17 11:11:50,460 INFO build_team_offense_calibration_table Done: 1183854 rows written in 118.6s (9984 rows/s)
+2026-05-17 11:11:50,460 INFO build_team_offense_calibration_table Manifest: C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\team_offense_calibration\manifest.json
+2026-05-17 11:11:50,469 INFO daily_refresh Startup refresh step started: stage3_team_offense_v2_fit
+2026-05-17 11:12:38,753 INFO daily_refresh Startup refresh step ok: stage3_team_offense_v2_fit (48.3s)
+2026-05-17 11:12:38,753 DEBUG daily_refresh Startup refresh output tail for stage3_team_offense_v2_fit:
+calibrate_team_offense_v2   scan: 400000 rows seen, 168751 kept
+2026-05-17 11:11:54,891 INFO calibrate_team_offense_v2   scan: 600000 rows seen, 362106 kept
+2026-05-17 11:11:56,266 INFO calibrate_team_offense_v2   scan: 800000 rows seen, 554572 kept
+2026-05-17 11:11:58,909 INFO calibrate_team_offense_v2 Joined: 910319 kept of 1183854 total (76.9%)
+2026-05-17 11:11:59,290 INFO calibrate_team_offense_v2   joined rows: 910319
+2026-05-17 11:11:59,291 INFO calibrate_team_offense_v2 Estimating sigma_within^2 (single-game variance) on training years
+2026-05-17 11:11:59,308 INFO calibrate_team_offense_v2   sigma_within^2 = 10.000 (sigma = 3.162)
+2026-05-17 11:11:59,308 INFO calibrate_team_offense_v2 Estimating tau^2 per window on training years
+2026-05-17 11:11:59,312 INFO calibrate_team_offense_v2   rolling_rpg_50         tau^2=0.176  shrinkage_k(equivalent prior games)=56.7
+2026-05-17 11:11:59,316 INFO calibrate_team_offense_v2   season_rpg_to_date     tau^2=0.238  shrinkage_k(equivalent prior games)=41.9
+2026-05-17 11:11:59,321 INFO calibrate_team_offense_v2   prior_season_rpg       tau^2=0.169  shrinkage_k(equivalent prior games)=59.2
+2026-05-17 11:11:59,325 INFO calibrate_team_offense_v2   momentum_rpg_10        tau^2=0.202  shrinkage_k(equivalent prior games)=49.4
+2026-05-17 11:11:59,459 INFO calibrate_team_offense_v2 Splits: train=653987 val=202646 test=53686
+2026-05-17 11:11:59,459 INFO calibrate_team_offense_v2 Fitting Model 1 (refit constant on v1 shape)
+2026-05-17 11:11:59,808 INFO calibrate_team_offense_v2   beta_diff = 0.1129 (vs v1 = 0.2000)
+2026-05-17 11:11:59,808 INFO calibrate_team_offense_v2 Fitting Model 2 (EB-shrunk rolling_50, no clamp)
+2026-05-17 11:12:00,109 INFO calibrate_team_offense_v2   beta_diff = 0.2407
+2026-05-17 11:12:00,109 INFO calibrate_team_offense_v2 Fitting Model 3 (blend prior/season/momentum, EB-shrunk)
+2026-05-17 11:12:00,654 INFO calibrate_team_offense_v2   beta_prior=-0.1578 beta_season=0.1410 beta_momentum=0.1544
+2026-05-17 11:12:00,654 INFO calibrate_team_offense_v2 Fitting Model 4 (Model 3 + per-inning weights)
+2026-05-17 11:12:38,595 INFO calibrate_team_offense_v2   betas: prior=-0.1522 season=0.1302 momentum=0.1386
+2026-05-17 11:12:38,595 INFO calibrate_team_offense_v2   inning weights: [1.0, 0.903, 0.783, 0.798, 0.594, 0.507, 0.335, 0.136, 0.255, 0.666]
+2026-05-17 11:12:38,665 INFO calibrate_team_offense_v2 Brier on VAL  (baseline_A=0.171487, baseline_B=0.171544)
+2026-05-17 11:12:38,665 INFO calibrate_team_offense_v2 Brier on TEST (baseline_A=0.173381, baseline_B=0.174441)
+2026-05-17 11:12:38,687 INFO calibrate_team_offense_v2 Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\team_offense_calibration\phase4_models.json
+
+=== MODEL FITS (training years 2021-2024) ===
+  baseline B (v1):                 logit_delta_per_run = 0.2000
+  model 1 (refit constant):        beta_diff = +0.1129  (ratio to v1: 0.56x)
+  model 2 (EB-shrunk rolling_50):  beta_diff = +0.2407
+  model 3 (blend):                 b_prior=-0.1578  b_season=+0.1410  b_momentum=+0.1544
+  model 4 (blend + per-inn):       b_prior=-0.1522  b_season=+0.1302  b_momentum=+0.1386
+      inning weights: [1.0, 0.903, 0.783, 0.798, 0.594, 0.507, 0.335, 0.136, 0.255, 0.666]
+
+=== SCORES (Brier  /  log-loss) ===
+  model                       VAL_brier VAL_logloss    TEST_brier TEST_logloss    TEST vs A  TEST vs B
+  baseline_A_no_stage3         0.171487    0.510732      0.173381     0.519293      +0.000%    +0.608%
+  baseline_B_v1                0.171544    0.510797      0.174441     0.521895      -0.611%    +0.000%
+  model_1_refit_const          0.171380    0.510446      0.173903     0.520585      -0.301%    +0.308%
+  model_2_eb_shrunk            0.171380    0.510445      0.173902     0.520583      -0.300%    +0.309%
+  model_3_blend                0.171350    0.510348      0.173153     0.518750      +0.132%    +0.738%
+  model_4_blend_per_inn        0.171344    0.510321      0.173122     0.518698      +0.149%    +0.756%
+2026-05-17 11:12:38,753 INFO daily_refresh Startup refresh step started: model_freshness_health
+2026-05-17 11:12:38,775 INFO daily_refresh Startup refresh step ok: model_freshness_health (0.0s)
+2026-05-17 11:12:38,775 DEBUG daily_refresh Startup refresh output tail for model_freshness_health:
+ALERT Stage-2 staging REGRESSES validation Brier by 0.0014 (0.1639 vs 0.1625). Promote with: copy mlb_stage2_run_env.staging.json -> mlb_stage2_run_env.json.
+ok Stage-2 promotion stability gate: building history (1/5 distinct prior dates).
+ok Stage-2 production cache: 8.6d old
+ok Stage-1 OU cache: 0.0d old
+ok EV-policy report: 0.0d old
+ok EV-policy win model: 0.0d old
+ok EV-policy fill model: 0.0d old
+ok Calibration artifact: 0.0d old
+ok Learned execution policy report: 0.8d old
+ok Stage-3 v2 fit (phase4_models.json): 0.0d old
+2026-05-17 11:12:38,775 INFO daily_refresh Startup refresh step started: stage3_v2_promotion_check
+2026-05-17 11:12:38,787 INFO daily_refresh Startup refresh step ok: stage3_v2_promotion_check (0.0s)
+2026-05-17 11:12:38,787 DEBUG daily_refresh Startup refresh output tail for stage3_v2_promotion_check:
+Stage-3 v2: research vs compiled_defaults max|delta|=0.0064 (prior -0.1578 vs -0.1514, season +0.1410 vs +0.1407, momentum +0.1544 vs +0.1503).
+ok Stage-3 v2 promotion stability gate: building history (1/5 distinct prior dates).
+note Stage-3 v2 production weights file missing -- runtime is using compiled-in defaults. Drift is measured against those defaults until promote_team_offense_v2.py runs at least once.
+2026-05-17 11:12:38,787 INFO daily_refresh Startup refresh step started: execution_diagnostics
+2026-05-17 11:12:38,944 INFO daily_refresh Startup refresh step ok: execution_diagnostics (0.2s)
+2026-05-17 11:12:38,944 DEBUG daily_refresh Startup refresh output tail for execution_diagnostics:
+2026-05-17 11:12:38,933 INFO     build_execution_diagnostics_report Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\execution_diagnostics\execution_diagnostics_master.jsonl
+2026-05-17 11:12:38,934 INFO     build_execution_diagnostics_report Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\execution_diagnostics\execution_diagnostics_master.csv
+2026-05-17 11:12:38,934 INFO     build_execution_diagnostics_report Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\execution_diagnostics\execution_diagnostics_summary.json
+2026-05-17 11:12:38,934 INFO     build_execution_diagnostics_report rows=182  warnings=0  hard_errors=0
+2026-05-17 11:12:38,945 INFO daily_refresh Startup refresh step started: queue_aware_execution_replay
+2026-05-17 11:12:39,143 INFO daily_refresh Startup refresh step ok: queue_aware_execution_replay (0.2s)
+2026-05-17 11:12:39,143 DEBUG daily_refresh Startup refresh output tail for queue_aware_execution_replay:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\execution_replay\queue_aware_execution_replay_summary.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\execution_replay\queue_aware_execution_replay_rows.jsonl
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\execution_replay\queue_aware_execution_replay_rows.csv
+
+Queue-aware execution replay
+Policy                Fill model       Filled  Fill%    Profit     ROI    dProfit
+current_limit         touch               74  41.6%     +6.64    0.6%     +0.00
+current_limit         queue_adjusted      68  38.2%    -32.19   -3.5%     +0.00
+limit_p1c             touch              118  66.3%    -30.09   -2.0%    -36.73
+limit_p1c             queue_adjusted     110  61.8%    -69.50   -4.9%    -37.30
+limit_p2c             touch              147  82.6%    +34.37    1.8%    +27.73
+limit_p2c             queue_adjusted     143  80.3%     +6.32    0.3%    +38.51
+taker_like            touch              178 100.0%    +17.42    0.8%    +10.78
+taker_like            queue_adjusted     178 100.0%    +17.42    0.8%    +49.61
+2026-05-17 11:12:39,143 INFO daily_refresh Startup refresh step started: learn_execution_policy
+2026-05-17 11:12:39,288 INFO daily_refresh Startup refresh step ok: learn_execution_policy (0.1s)
+2026-05-17 11:12:39,289 DEBUG daily_refresh Startup refresh output tail for learn_execution_policy:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\execution_policy_prototype\learned_execution_policy_report.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\execution_policy_prototype\learned_execution_policy_report.md
+2026-05-17 11:12:39,289 INFO daily_refresh Startup refresh step started: state_value_transition_report
+2026-05-17 11:12:45,010 INFO daily_refresh Startup refresh step ok: state_value_transition_report (5.7s)
+2026-05-17 11:12:45,010 DEBUG daily_refresh Startup refresh output tail for state_value_transition_report:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\state_value_transition\state_value_transition_report.json
+2026-05-17 11:12:45,010 INFO daily_refresh Startup refresh step started: under_state_value_transition_report
+2026-05-17 11:12:50,542 INFO daily_refresh Startup refresh step ok: under_state_value_transition_report (5.5s)
+2026-05-17 11:12:50,542 DEBUG daily_refresh Startup refresh output tail for under_state_value_transition_report:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\under_state_value_transition\under_state_value_transition_report.json
+2026-05-17 11:12:50,543 INFO daily_refresh Startup refresh step started: under_candidate_universe
+2026-05-17 11:12:57,674 INFO daily_refresh Startup refresh step ok: under_candidate_universe (7.1s)
+2026-05-17 11:12:57,675 DEBUG daily_refresh Startup refresh output tail for under_candidate_universe:
+2026-05-17 11:12:57,666 INFO     build_under_candidate_universe Synthesized 3159 UNDER rows from 392255 OVER rows (rate=0.0081); manifest at C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\under_candidate_universe\manifest.json
+2026-05-17 11:12:57,675 INFO daily_refresh Startup refresh step started: no_score_drift_policy
+2026-05-17 11:13:03,399 INFO daily_refresh Startup refresh step ok: no_score_drift_policy (5.7s)
+2026-05-17 11:13:03,400 DEBUG daily_refresh Startup refresh output tail for no_score_drift_policy:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_policy\no_score_drift_policy_summary.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_policy\no_score_drift_policy_rows.jsonl
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_policy\no_score_drift_policy_rows.csv
+No-score drift policy rows: 717 (collapsed 334 duplicate candidate rows)
+  empirical_only_support: rows=86 win_rate=0.488095 profit_units=7.342103
+  poisson_and_empirical_support: rows=106 win_rate=0.580952 profit_units=8.344285
+  poisson_only_support: rows=525 win_rate=0.551923 profit_units=-79.165879
+2026-05-17 11:13:03,400 INFO daily_refresh Startup refresh step started: no_score_drift_paper_ledger
+2026-05-17 11:13:09,564 INFO daily_refresh Startup refresh step ok: no_score_drift_paper_ledger (6.2s)
+2026-05-17 11:13:09,564 DEBUG daily_refresh Startup refresh output tail for no_score_drift_paper_ledger:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_paper_ledger\no_score_drift_paper_ledger_summary.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_paper_ledger\no_score_drift_paper_ledger_rows.jsonl
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_paper_ledger\no_score_drift_paper_ledger_rows.csv
+No-score drift paper ledger: rows=717 submitted=158 filled=158 skipped=559 profit=$-196.09 roi=-0.124108
+2026-05-17 11:13:09,564 INFO daily_refresh Startup refresh step started: walk_forward_score_event
+2026-05-17 11:17:46,053 INFO daily_refresh Startup refresh step ok: walk_forward_score_event (276.5s)
+2026-05-17 11:17:46,053 DEBUG daily_refresh Startup refresh output tail for walk_forward_score_event:
+7..2026-05-07  train=2026-04-20..2026-05-03  val=2026-05-04..2026-05-06
+2026-05-17 11:14:30,327 INFO     walk_forward_runner   completed: n_train=43 n_test=2 placed=2 filled=2 won=2 baseline_profit=10.46 model_selected=0 model_profit=0.00 signal_win.test_brier=0.343239141472236
+2026-05-17 11:14:30,327 INFO     walk_forward_runner [6/14] test=2026-05-08..2026-05-08  train=2026-04-21..2026-05-04  val=2026-05-05..2026-05-07
+2026-05-17 11:14:48,206 INFO     walk_forward_runner   completed: n_train=41 n_test=3 placed=3 filled=2 won=2 baseline_profit=6.33 model_selected=0 model_profit=0.00 signal_win.test_brier=0.16460925945679727
+2026-05-17 11:14:48,206 INFO     walk_forward_runner [7/14] test=2026-05-09..2026-05-09  train=2026-04-22..2026-05-05  val=2026-05-06..2026-05-08
+2026-05-17 11:14:48,206 INFO     walk_forward_runner   skipped: no_test_data
+2026-05-17 11:14:48,206 INFO     walk_forward_runner [8/14] test=2026-05-10..2026-05-10  train=2026-04-23..2026-05-06  val=2026-05-07..2026-05-09
+2026-05-17 11:15:05,430 INFO     walk_forward_runner   completed: n_train=36 n_test=1 placed=1 filled=0 won=0 baseline_profit=0.00 model_selected=0 model_profit=0.00 signal_win.test_brier=0.5889525648104944
+2026-05-17 11:15:05,430 INFO     walk_forward_runner [9/14] test=2026-05-11..2026-05-11  train=2026-04-24..2026-05-07  val=2026-05-08..2026-05-10
+2026-05-17 11:15:24,650 INFO     walk_forward_runner   completed: n_train=37 n_test=1 placed=1 filled=1 won=1 baseline_profit=6.66 model_selected=0 model_profit=0.00 signal_win.test_brier=0.29896175936978175
+2026-05-17 11:15:24,650 INFO     walk_forward_runner [10/14] test=2026-05-12..2026-05-12  train=2026-04-25..2026-05-08  val=2026-05-09..2026-05-11
+2026-05-17 11:15:46,524 INFO     walk_forward_runner   completed: n_train=39 n_test=70 placed=70 filled=8 won=6 baseline_profit=3.22 model_selected=3 model_profit=11.03 signal_win.test_brier=0.3516840490646324
+2026-05-17 11:15:46,524 INFO     walk_forward_runner [11/14] test=2026-05-13..2026-05-13  train=2026-04-26..2026-05-09  val=2026-05-10..2026-05-12
+2026-05-17 11:16:05,004 INFO     walk_forward_runner   completed: n_train=34 n_test=10 placed=10 filled=10 won=6 baseline_profit=-11.16 model_selected=3 model_profit=-12.40 signal_win.test_brier=0.2902799037885015
+2026-05-17 11:16:05,004 INFO     walk_forward_runner [12/14] test=2026-05-14..2026-05-14  train=2026-04-27..2026-05-10  val=2026-05-11..2026-05-13
+2026-05-17 11:16:23,288 INFO     walk_forward_runner   completed: n_train=35 n_test=7 placed=7 filled=6 won=4 baseline_profit=-2.72 model_selected=1 model_profit=-7.99 signal_win.test_brier=0.3558712948139597
+2026-05-17 11:16:23,288 INFO     walk_forward_runner [13/14] test=2026-05-15..2026-05-15  train=2026-04-28..2026-05-11  val=2026-05-12..2026-05-14
+2026-05-17 11:16:42,634 INFO     walk_forward_runner   completed: n_train=36 n_test=9 placed=9 filled=9 won=6 baseline_profit=-5.90 model_selected=5 model_profit=7.93 signal_win.test_brier=0.2371793115878306
+2026-05-17 11:16:42,634 INFO     walk_forward_runner [14/14] test=2026-05-16..2026-05-16  train=2026-04-29..2026-05-12  val=2026-05-13..2026-05-15
+2026-05-17 11:17:46,029 INFO     walk_forward_runner   completed: n_train=103 n_test=10 placed=10 filled=10 won=8 baseline_profit=11.81 model_selected=1 model_profit=6.13 signal_win.test_brier=0.29620628825885287
+2026-05-17 11:17:46,034 INFO     walk_forward_runner Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\walk_forward\summary.json
+2026-05-17 11:17:46,034 INFO     walk_forward_runner Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\walk_forward\per_window_results.jsonl
+2026-05-17 11:17:46,034 INFO     walk_forward_runner Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\walk_forward\calibration_drift.csv (26 rows)
+2026-05-17 11:17:46,034 INFO     walk_forward_runner Walk-forward complete: 13/14 windows completed, baseline_cumulative_profit=-23.77, baseline_max_dd=-42.47
+2026-05-17 11:17:46,053 INFO daily_refresh Startup refresh step started: walk_forward_no_score_drift
+2026-05-17 11:18:34,234 INFO daily_refresh Startup refresh step ok: walk_forward_no_score_drift (48.2s)
+2026-05-17 11:18:34,234 DEBUG daily_refresh Startup refresh output tail for walk_forward_no_score_drift:
+2026-05-17 11:17:46,215 INFO     no_score_drift_walk_forward Loading no-score drift source rows
+2026-05-17 11:18:33,536 INFO     no_score_drift_walk_forward Window 2026-05-16 completed=True error=None
+2026-05-17 11:18:33,587 INFO     no_score_drift_walk_forward Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_walk_forward\no_score_drift_training_rows.jsonl
+2026-05-17 11:18:33,587 INFO     no_score_drift_walk_forward Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_walk_forward\summary.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_walk_forward\summary.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_walk_forward\no_score_drift_training_rows.jsonl
+2026-05-17 11:18:34,234 INFO daily_refresh Startup refresh step started: walk_forward_market_anchored_alpha
+2026-05-17 11:18:38,603 INFO daily_refresh Startup refresh step ok: walk_forward_market_anchored_alpha (4.4s)
+2026-05-17 11:18:38,604 DEBUG daily_refresh Startup refresh output tail for walk_forward_market_anchored_alpha:
+2026-05-17 11:18:34,661 INFO     calibration_market_anchored_alpha_walk_forward Window family=score_event_transition anchor=ask test=2026-05-14 completed=True error=None
+2026-05-17 11:18:35,359 INFO     calibration_market_anchored_alpha_walk_forward Window family=score_event_transition anchor=ask test=2026-05-15 completed=True error=None
+2026-05-17 11:18:36,755 INFO     calibration_market_anchored_alpha_walk_forward Window family=score_event_transition anchor=ask test=2026-05-16 completed=True error=None
+2026-05-17 11:18:37,049 INFO     calibration_market_anchored_alpha_walk_forward Window family=no_score_drift anchor=ask test=2026-05-14 completed=True error=None
+2026-05-17 11:18:37,570 INFO     calibration_market_anchored_alpha_walk_forward Window family=no_score_drift anchor=ask test=2026-05-15 completed=True error=None
+2026-05-17 11:18:38,310 INFO     calibration_market_anchored_alpha_walk_forward Window family=no_score_drift anchor=ask test=2026-05-16 completed=True error=None
+2026-05-17 11:18:38,583 INFO     calibration_market_anchored_alpha_walk_forward Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_market_anchored_alpha_walk_forward\summary.json
+2026-05-17 11:18:38,583 INFO     calibration_market_anchored_alpha_walk_forward Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_market_anchored_alpha_walk_forward\summary.md
+2026-05-17 11:18:38,583 INFO     calibration_market_anchored_alpha_walk_forward Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_market_anchored_alpha_walk_forward\per_window_results.jsonl
+2026-05-17 11:18:38,583 INFO     calibration_market_anchored_alpha_walk_forward Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_market_anchored_alpha_walk_forward\predictions.jsonl
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_market_anchored_alpha_walk_forward\summary.json
+2026-05-17 11:18:38,604 INFO daily_refresh Startup refresh step started: under_walk_forward
+2026-05-17 11:20:28,765 INFO daily_refresh Startup refresh step ok: under_walk_forward (110.2s)
+2026-05-17 11:20:28,765 DEBUG daily_refresh Startup refresh output tail for under_walk_forward:
+:18:38,767 INFO     under_walk_forward_runner Planned 14 UNDER windows (train=14d, val=3d, test=1d) over 28 dates [2026-04-16..2026-05-16]
+2026-05-17 11:18:38,767 INFO     under_walk_forward_runner [1/14] test=2026-05-03..2026-05-03
+2026-05-17 11:18:43,613 INFO     under_walk_forward_runner   completed: n_train=45 n_test=4 under_signal_win.test_brier=0.3767799290480083
+2026-05-17 11:18:43,613 INFO     under_walk_forward_runner [2/14] test=2026-05-04..2026-05-04
+2026-05-17 11:18:50,322 INFO     under_walk_forward_runner   completed: n_train=42 n_test=3 under_signal_win.test_brier=0.013605304457662839
+2026-05-17 11:18:50,322 INFO     under_walk_forward_runner [3/14] test=2026-05-05..2026-05-05
+2026-05-17 11:18:55,956 INFO     under_walk_forward_runner   completed: n_train=44 n_test=2 under_signal_win.test_brier=0.25336763843258014
+2026-05-17 11:18:55,957 INFO     under_walk_forward_runner [4/14] test=2026-05-06..2026-05-06
+2026-05-17 11:19:02,102 INFO     under_walk_forward_runner   completed: n_train=44 n_test=3 under_signal_win.test_brier=0.2262308966999607
+2026-05-17 11:19:02,102 INFO     under_walk_forward_runner [5/14] test=2026-05-07..2026-05-07
+2026-05-17 11:19:09,101 INFO     under_walk_forward_runner   completed: n_train=43 n_test=2 under_signal_win.test_brier=0.34323914147223616
+2026-05-17 11:19:09,101 INFO     under_walk_forward_runner [6/14] test=2026-05-08..2026-05-08
+2026-05-17 11:19:15,473 INFO     under_walk_forward_runner   completed: n_train=41 n_test=3 under_signal_win.test_brier=0.16460925945679727
+2026-05-17 11:19:15,473 INFO     under_walk_forward_runner [7/14] test=2026-05-09..2026-05-09
+2026-05-17 11:19:15,473 INFO     under_walk_forward_runner   skipped: no_test_data
+2026-05-17 11:19:15,473 INFO     under_walk_forward_runner [8/14] test=2026-05-10..2026-05-10
+2026-05-17 11:19:22,054 INFO     under_walk_forward_runner   completed: n_train=36 n_test=1 under_signal_win.test_brier=0.5889525648104946
+2026-05-17 11:19:22,054 INFO     under_walk_forward_runner [9/14] test=2026-05-11..2026-05-11
+2026-05-17 11:19:29,603 INFO     under_walk_forward_runner   completed: n_train=37 n_test=1 under_signal_win.test_brier=0.29896175936978175
+2026-05-17 11:19:29,603 INFO     under_walk_forward_runner [10/14] test=2026-05-12..2026-05-12
+2026-05-17 11:19:38,454 INFO     under_walk_forward_runner   completed: n_train=39 n_test=70 under_signal_win.test_brier=0.35168404906463235
+2026-05-17 11:19:38,454 INFO     under_walk_forward_runner [11/14] test=2026-05-13..2026-05-13
+2026-05-17 11:19:45,627 INFO     under_walk_forward_runner   completed: n_train=34 n_test=10 under_signal_win.test_brier=0.2902799037885015
+2026-05-17 11:19:45,627 INFO     under_walk_forward_runner [12/14] test=2026-05-14..2026-05-14
+2026-05-17 11:19:52,638 INFO     under_walk_forward_runner   completed: n_train=35 n_test=7 under_signal_win.test_brier=0.3558712948139597
+2026-05-17 11:19:52,638 INFO     under_walk_forward_runner [13/14] test=2026-05-15..2026-05-15
+2026-05-17 11:20:00,356 INFO     under_walk_forward_runner   completed: n_train=36 n_test=9 under_signal_win.test_brier=0.23717931158783057
+2026-05-17 11:20:00,356 INFO     under_walk_forward_runner [14/14] test=2026-05-16..2026-05-16
+2026-05-17 11:20:28,745 INFO     under_walk_forward_runner   completed: n_train=103 n_test=10 under_signal_win.test_brier=0.29620628825885287
+2026-05-17 11:20:28,748 INFO     under_walk_forward_runner Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\under_walk_forward\summary.json
+2026-05-17 11:20:28,748 INFO     under_walk_forward_runner Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\under_walk_forward\per_window_results.jsonl
+2026-05-17 11:20:28,748 INFO     under_walk_forward_runner Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\under_walk_forward\calibration_drift.csv (13 rows)
+2026-05-17 11:20:28,748 INFO     under_walk_forward_runner UNDER walk-forward complete: 13/14 windows completed
+2026-05-17 11:20:28,765 INFO daily_refresh Startup refresh step started: walk_forward_fv_disagreement_quality
+2026-05-17 11:20:29,634 INFO daily_refresh Startup refresh step ok: walk_forward_fv_disagreement_quality (0.9s)
+2026-05-17 11:20:29,635 DEBUG daily_refresh Startup refresh output tail for walk_forward_fv_disagreement_quality:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_disagreement_quality_walk_forward\summary.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_disagreement_quality_walk_forward\predictions.jsonl
+2026-05-17 11:20:29,635 INFO daily_refresh Startup refresh step started: stake_scaling_promotion_analyzer
+2026-05-17 11:20:29,844 INFO daily_refresh Startup refresh step ok: stake_scaling_promotion_analyzer (0.2s)
+2026-05-17 11:20:29,844 DEBUG daily_refresh Startup refresh output tail for stake_scaling_promotion_analyzer:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\stake_scaling_analysis\stake_scaling_analysis.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\stake_scaling_analysis\stake_scaling_analysis.md
+Verdict: need_more_data -- Have 5/30 sessions of shadow data (n_filled_bets=43, low=27, mid=1, high=15).
+2026-05-17 11:20:29,844 INFO daily_refresh Startup refresh step started: walk_forward_certification
+2026-05-17 11:20:29,946 INFO daily_refresh Startup refresh step ok: walk_forward_certification (0.1s)
+2026-05-17 11:20:29,946 DEBUG daily_refresh Startup refresh output tail for walk_forward_certification:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\walk_forward_certification\walk_forward_certification.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\walk_forward_certification\walk_forward_certification.md
+Readiness: PRELIMINARY -- 88 filled bets across 27 sessions.
+2026-05-17 11:20:29,946 INFO daily_refresh Startup refresh step started: quote_engine_shadow_report
+2026-05-17 11:20:30,016 INFO daily_refresh Startup refresh step ok: quote_engine_shadow_report (0.1s)
+2026-05-17 11:20:30,016 DEBUG daily_refresh Startup refresh output tail for quote_engine_shadow_report:
+2026-05-17 11:20:30,010 INFO     build_quote_engine_shadow_report Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\quote_engine_shadow\quote_engine_shadow_report.json (n_rows=0, both_quoted=0)
+2026-05-17 11:20:30,016 INFO daily_refresh Startup refresh step started: under_walk_forward_certification
+2026-05-17 11:20:30,110 INFO daily_refresh Startup refresh step ok: under_walk_forward_certification (0.1s)
+2026-05-17 11:20:30,110 DEBUG daily_refresh Startup refresh output tail for under_walk_forward_certification:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\under_walk_forward_certification\under_walk_forward_certification.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\under_walk_forward_certification\under_walk_forward_certification.md
+2026-05-17 11:20:30,110 INFO daily_refresh Startup refresh step started: weekly_drift_rollup
+2026-05-17 11:20:30,242 INFO daily_refresh Startup refresh step ok: weekly_drift_rollup (0.1s)
+2026-05-17 11:20:30,243 DEBUG daily_refresh Startup refresh output tail for weekly_drift_rollup:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\weekly_rollup\2026-05-16_weekly_rollup.html
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\weekly_rollup\weekly_rollup.html
+2026-05-17 11:20:30,243 INFO daily_refresh Startup refresh step started: auto_promote_demote_daemon
+2026-05-17 11:20:30,348 INFO daily_refresh Startup refresh step ok: auto_promote_demote_daemon (0.1s)
+2026-05-17 11:20:30,348 DEBUG daily_refresh Startup refresh output tail for auto_promote_demote_daemon:
+auto_daemon mode=preview cooldown_days=14 active_date=2026-05-17
+decisions: no_action=3, skipped_preview_only_lever=1
+  ok    [stage2] no_action  (verdict=promote=insufficient_history, demote=no_promotion_to_demote)  -- neither promote nor demote verdict actionable
+  ok    [stage3-v2] no_action  (verdict=promote=insufficient_history, demote=no_promotion_to_demote)  -- neither promote nor demote verdict actionable
+  ok    [stake-scaling] no_action  (verdict=promote=need_more_data, demote=no_promotion_to_demote)  -- neither promote nor demote verdict actionable
+  ok    [gate-threshold] skipped_preview_only_lever  (verdict=hold)  -- verdict=hold; daemon does not auto-act on gate-threshold (threshold value selection is operator-in-loop). Run `promote.py gate-threshold <gate> <value>` manually.
+2026-05-17 11:20:30,348 INFO daily_refresh Startup refresh step started: daemon_retrospective
+2026-05-17 11:20:30,434 INFO daily_refresh Startup refresh step ok: daemon_retrospective (0.1s)
+2026-05-17 11:20:30,434 DEBUG daily_refresh Startup refresh output tail for daemon_retrospective:
+daemon_retrospective: stage2 readiness=needs_more_history (match=0 disagree=0 daemon_only=0); stage3-v2 readiness=needs_more_history (match=0 disagree=0 daemon_only=0); overall_ready_for_act=False
+2026-05-17 11:20:30,434 INFO daily_refresh Startup refresh step started: artifact_lineage_freshness
+2026-05-17 11:20:37,104 INFO daily_refresh Startup refresh step ok: artifact_lineage_freshness (6.7s)
+2026-05-17 11:20:37,104 DEBUG daily_refresh Startup refresh output tail for artifact_lineage_freshness:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\artifact_lineage_freshness\artifact_lineage_freshness_report.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\artifact_lineage_freshness\artifact_lineage_freshness_report.md
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\artifact_lineage_freshness\artifact_lineage_freshness_report.csv
+2026-05-17 11:20:37,104 INFO daily_refresh Startup refresh step started: refresh_health_rollup
+2026-05-17 11:20:37,115 INFO daily_refresh Startup refresh step ok: refresh_health_rollup (0.0s)
+2026-05-17 11:20:37,115 DEBUG daily_refresh Startup refresh output tail for refresh_health_rollup:
+Step roll-up: 58/58 ok
+Latest daily review (2026-05-16): 0 active drift alerts (calibration=0, fill_rate=0, signal_qual=0, regime_mix=0, reconciler=0)
+Walk-forward: 13/14 windows, baseline cumulative profit $-23.77, max DD $-42.47
+Model freshness alerts:
+  - ALERT Stage-2 staging REGRESSES validation Brier by 0.0014 (0.1639 vs 0.1625). Promote with: copy mlb_stage2_run_env.staging.json -> mlb_stage2_run_env.json.
+Stage-3 v2 promotion: no alerts.
+Auto-daemon: auto_daemon mode=preview cooldown_days=14 active_date=2026-05-17
+Stake scaling: verdict=need_more_data (5/30 sessions, 43 filled bets)
+Walk-forward certification: PRELIMINARY (88 filled / 27 dates); gates: 5 KEEP, 0 RETUNE, 0 RETIRE
+WARNING Artifact lineage freshness: status=warning, 31 ok / 15 warning / 0 error, stale_mtime=4, stale_max_date=0
+  - stage2_run_env_cache: output_older_than_newest_input_mtime
+  - candidate_universe_table: output_older_than_newest_input_mtime
+  - calibration_opportunity_training_table: output_older_than_newest_input_mtime
+  - unified_signals_table: output_older_than_newest_input_mtime
+  - model_baseline_signal_win: generated_at_utc_missing
+2026-05-17 11:20:37,115 INFO daily_refresh Startup refresh health summary:
+Step roll-up: 58/58 ok
+Latest daily review (2026-05-16): 0 active drift alerts (calibration=0, fill_rate=0, signal_qual=0, regime_mix=0, reconciler=0)
+Walk-forward: 13/14 windows, baseline cumulative profit $-23.77, max DD $-42.47
+Model freshness alerts:
+  - ALERT Stage-2 staging REGRESSES validation Brier by 0.0014 (0.1639 vs 0.1625). Promote with: copy mlb_stage2_run_env.staging.json -> mlb_stage2_run_env.json.
+Stage-3 v2 promotion: no alerts.
+Auto-daemon: auto_daemon mode=preview cooldown_days=14 active_date=2026-05-17
+Stake scaling: verdict=need_more_data (5/30 sessions, 43 filled bets)
+Walk-forward certification: PRELIMINARY (88 filled / 27 dates); gates: 5 KEEP, 0 RETUNE, 0 RETIRE
+WARNING Artifact lineage freshness: status=warning, 31 ok / 15 warning / 0 error, stale_mtime=4, stale_max_date=0
+  - stage2_run_env_cache: output_older_than_newest_input_mtime
+  - candidate_universe_table: output_older_than_newest_input_mtime
+  - calibration_opportunity_training_table: output_older_than_newest_input_mtime
+  - unified_signals_table: output_older_than_newest_input_mtime
+  - model_baseline_signal_win: generated_at_utc_missing
+2026-05-17 11:20:37,122 INFO live_engine Startup artifact refresh complete: max_refresh_date=2026-05-16 steps_ok=59 steps_failed=0 manifest=C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\startup_refresh\2026-05-17_startup_refresh.json
+2026-05-17 11:20:37,127 INFO mlb_poly_monitor Pitcher cache loaded: 74 pitchers from C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\pitcher_cache.json
+2026-05-17 11:20:37,130 INFO signal_engine Weather v2 cache loaded: games=15 path=C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\weather\game_weather_2026-05-17.json
+2026-05-17 11:20:37,154 INFO signal_engine Cache loaded: 4298 cells
+2026-05-17 11:20:37,157 INFO signal_engine Stage-2 run-env model loaded: lines=['6.5', '7.5', '8.5', '9.5', '10.5', '11.5']  max_delta=1.10
+2026-05-17 11:20:37,171 INFO team_offense_model TeamOffenseModel loaded (TR20 Model 3, compiled_defaults): 31 teams, mlb_avg_rpg=4.448  betas=(prior=-0.1514 season=+0.1407 mom10=+0.1503)
+2026-05-17 11:20:37,171 INFO signal_engine Team offense model loaded: mlb_avg_rpg=4.448  mlb_avg_total=8.895  window=10 games
+2026-05-17 11:20:37,172 INFO signal_engine Probability calibrator loaded: mode=shadow method=platt path=C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration\signal_win_calibration.json
+2026-05-17 11:20:37,173 INFO signal_engine Ledger: C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\live_trading\master_ledger.jsonl
+2026-05-17 11:20:37,173 INFO signal_engine Session: C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\live_trading\sessions\2026-05-17_session.json
+2026-05-17 11:20:37,173 INFO signal_engine TR10 params: min_ask=0.55(std)/0.60(hi)  min_edge=0.15(std)/0.16(hi)  runs_needed_max=3.5  close_game_rn=4.0(lead<2)  inn5_rn_max=2.5  inn6_rn_max=2.5  min_total=4  min_total_relax=shadow(i=4,t=3,ask>=0.60,lead<=4,rn<=4.50)  blowout_relax=enforce(inn<=7,ask>=0.74,rn<=2.50)  ask_edge_ramp=on(start=0.75,end=0.90,max=0.050)  prob_calibration=shadow  min_inning_high_line=5(>=8.5)  confirm=3  dedup=60s  inning_dedup=2(per-line)  capture=120s  stage2=loaded  stage3=loaded
+2026-05-17 11:20:37,176 INFO live_engine EV policy runtime loaded (mode=shadow): min_ev_per_stake=-0.020  min_p_fill=0.000
+2026-05-17 11:20:37,183 INFO polymarket_client Loaded .env from C:\Users\micha\Desktop\github\NHL-BOT\baseball\.env
+2026-05-17 11:20:37,878 DEBUG rlp.codec Consider installing rusty-rlp to improve pyrlp performance with a rust basedbackend. Not currently functional for Python 3.11
+2026-05-17 11:20:38,189 INFO polymarket_client CLOB init: EOA=0x69062fB5f98aFF1bB7f79322f650eCbd61f67dAa  funder=0xD53b2Cd1f1b681dE5160F43D02A6df508906fc94  sig_type=2  maker_address=0xD53b2Cd1f1b681dE5160F43D02A6df508906fc94  dry_run=False (set POLY_USE_DEPOSIT_WALLET=1 + POLY_DEPOSIT_WALLET=0x... to migrate)
+2026-05-17 11:20:38,388 INFO polymarket_client API key derived: d194305c...
+2026-05-17 11:20:38,395 INFO polymarket_client CLOBOrderClient initialized OK
+2026-05-17 11:20:38,564 INFO live_engine CLOB health check passed -- ready to trade.
+2026-05-17 11:20:38,565 INFO live_engine LiveTradingEngine initialized | stake=flat $10 | budget=$100 | ev_policy=shadow | fv_cancel_min_edge=0.03 | fv_decay_min_age=90s
+2026-05-17 11:20:38,565 INFO mlb_poly_monitor Monitor date=2026-05-17 tz=America/Toronto output=C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\polymarket\mlb_ou
+2026-05-17 11:20:38,592 INFO mlb_poly_monitor Sleep prevention active (SetThreadExecutionState). Screen may still dim.
+2026-05-17 11:20:38,625 INFO mlb_poly_monitor Auto-detected i7-12700K: pinning to P-cores (logical CPUs 0-15)
+2026-05-17 11:20:38,625 INFO mlb_poly_monitor CPU affinity set to logical CPUs: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+2026-05-17 11:20:38,625 INFO mlb_poly_monitor Windows process priority set to HIGH_PRIORITY_CLASS
+2026-05-17 11:20:38,761 INFO mlb_poly_monitor Schedule refreshed for 2026-05-17: 15 games (0 live, 0 final)
+2026-05-17 11:20:39,383 INFO mlb_poly_monitor Mapped BAL@WSH (game 822738) -> mlb-bal-wsh-2026-05-17 (7 O/U lines)
+2026-05-17 11:20:40,025 INFO mlb_poly_monitor Mapped MIA@TB (game 822982) -> mlb-mia-tb-2026-05-17 (7 O/U lines)
+2026-05-17 11:20:40,561 INFO mlb_poly_monitor Mapped KC@STL (game 823058) -> mlb-kc-stl-2026-05-17 (7 O/U lines)
+2026-05-17 11:20:41,095 INFO mlb_poly_monitor Mapped SD@SEA (game 823138) -> mlb-sd-sea-2026-05-17 (7 O/U lines)
+2026-05-17 11:20:41,627 INFO mlb_poly_monitor Mapped PHI@PIT (game 823381) -> mlb-phi-pit-2026-05-17 (7 O/U lines)
+2026-05-17 11:20:42,142 INFO mlb_poly_monitor Mapped NYY@NYM (game 823628) -> mlb-nyy-nym-2026-05-17 (7 O/U lines)
+2026-05-17 11:20:42,659 INFO mlb_poly_monitor Mapped MIL@MIN (game 823708) -> mlb-mil-min-2026-05-17 (7 O/U lines)
+2026-05-17 11:20:43,508 INFO mlb_poly_monitor Mapped LAD@LAA (game 824034) -> mlb-lad-laa-2026-05-17 (7 O/U lines)
+2026-05-17 11:20:44,030 INFO mlb_poly_monitor Mapped TEX@HOU (game 824192) -> mlb-tex-hou-2026-05-17 (7 O/U lines)
+2026-05-17 11:20:44,538 INFO mlb_poly_monitor Mapped TOR@DET (game 824279) -> mlb-tor-det-2026-05-17 (7 O/U lines)
+2026-05-17 11:20:45,670 INFO mlb_poly_monitor Mapped CIN@CLE (game 824436) -> mlb-cin-cle-2026-05-17 (7 O/U lines)
+2026-05-17 11:20:46,202 INFO mlb_poly_monitor Mapped CHC@CWS (game 824599) -> mlb-chc-cws-2026-05-17 (7 O/U lines)
+2026-05-17 11:20:46,735 INFO mlb_poly_monitor Mapped BOS@ATL (game 824923) -> mlb-bos-atl-2026-05-17 (7 O/U lines)
+2026-05-17 11:20:47,280 INFO mlb_poly_monitor Mapped SF@ATH (game 825006) -> mlb-sf-oak-2026-05-17 (7 O/U lines)
+2026-05-17 11:20:47,282 DEBUG signal_engine tick_buffer health: 0 line_states
+2026-05-17 11:22:38,900 INFO mlb_poly_monitor Market discovery no-new-mapping rollup: cycles_since_last=1 games_attempted_since_last=1 total_cycles=1 total_games_attempted=1
+2026-05-17 11:24:39,084 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 11:26:39,569 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 11:28:39,257 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 11:29:41,097 DEBUG mlb_poly_monitor Schedule state-change rollup for 2026-05-17: changes_total=1 changes_since_last_log=1 games=15 live=0 final=0 states=live=0|final=0:1
+2026-05-17 11:30:39,384 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 11:32:39,928 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 11:34:39,671 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 11:36:39,942 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 11:38:40,449 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 11:40:40,163 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 11:42:40,413 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 11:44:40,914 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 11:46:40,631 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 11:48:40,827 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 11:50:41,319 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 11:50:48,989 DEBUG signal_engine tick_buffer health: 0 line_states
+2026-05-17 11:52:41,047 INFO mlb_poly_monitor Market discovery no-new-mapping rollup: cycles_since_last=15 games_attempted_since_last=15 total_cycles=16 total_games_attempted=16
+2026-05-17 11:54:41,278 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 11:56:41,848 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 11:58:41,601 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:00:41,762 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:02:42,226 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:04:42,216 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:06:42,720 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:08:21,431 INFO mlb_poly_monitor START monitoring game 822982 (MIA@TB, state=Live) — 7 lines ready, 0 deploying
+2026-05-17 12:08:43,122 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:10:23,734 DEBUG mlb_poly_monitor Schedule refreshed for 2026-05-17: 15 games (1 live, 0 final; unchanged)
+2026-05-17 12:10:42,914 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:12:43,326 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:14:43,797 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:16:39,418 DEBUG mlb_poly_monitor Polling 14 token books (1 active games)
+2026-05-17 12:16:40,313 DEBUG mlb_poly_monitor Wrote 14 tick snapshots
+2026-05-17 12:16:43,714 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:18:43,963 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:20:44,304 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:20:51,383 DEBUG signal_engine tick_buffer health: 7 line_states, 7 nonempty, len min/median/max=120/120/120, newest_age max=0.0s, oldest_age max=374.7s
+2026-05-17 12:22:44,124 INFO mlb_poly_monitor Market discovery no-new-mapping rollup: cycles_since_last=15 games_attempted_since_last=15 total_cycles=31 total_games_attempted=31
+2026-05-17 12:24:44,382 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:26:44,945 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:28:45,552 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:30:28,940 DEBUG mlb_poly_monitor Polling 14 token books (1 active games)
+2026-05-17 12:30:29,828 DEBUG mlb_poly_monitor Wrote 14 tick snapshots
+2026-05-17 12:30:45,650 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:32:46,058 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:34:45,873 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:36:45,765 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:38:46,286 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:40:45,929 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:42:46,879 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:44:22,225 DEBUG mlb_poly_monitor Polling 14 token books (1 active games)
+2026-05-17 12:44:23,116 DEBUG mlb_poly_monitor Wrote 14 tick snapshots
+2026-05-17 12:44:47,635 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:46:47,722 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:48:47,692 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:50:49,052 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:50:53,261 DEBUG signal_engine tick_buffer health: 7 line_states, 7 nonempty, len min/median/max=120/120/120, newest_age max=0.0s, oldest_age max=331.1s
+2026-05-17 12:52:48,813 INFO mlb_poly_monitor Market discovery no-new-mapping rollup: cycles_since_last=15 games_attempted_since_last=15 total_cycles=46 total_games_attempted=46
+2026-05-17 12:54:49,736 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:56:50,335 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 12:58:13,898 DEBUG mlb_poly_monitor Polling 14 token books (1 active games)
+2026-05-17 12:58:14,799 DEBUG mlb_poly_monitor Wrote 14 tick snapshots
+2026-05-17 12:58:49,898 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 13:00:50,255 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 13:02:51,081 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 13:04:50,883 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 13:06:51,244 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 13:08:52,611 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 13:09:56,300 INFO mlb_poly_monitor START monitoring game 824436 (CIN@CLE, state=Live) — 7 lines ready, 0 deploying
+2026-05-17 13:10:52,428 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 13:10:57,559 INFO mlb_poly_monitor START monitoring game 823381 (PHI@PIT, state=Live) — 7 lines ready, 0 deploying
+2026-05-17 13:11:57,822 DEBUG mlb_poly_monitor Polling 42 token books (3 active games)
+2026-05-17 13:12:00,404 DEBUG mlb_poly_monitor Wrote 42 tick snapshots
+2026-05-17 13:12:54,850 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 13:14:56,570 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 13:15:11,516 INFO mlb_poly_monitor START monitoring game 824279 (TOR@DET, state=Live) — 7 lines ready, 0 deploying
+2026-05-17 13:15:11,517 INFO mlb_poly_monitor START monitoring game 823628 (NYY@NYM, state=Live) — 7 lines ready, 0 deploying
+2026-05-17 13:16:49,845 INFO mlb_poly_monitor START monitoring game 824923 (BOS@ATL, state=Live) — 7 lines ready, 0 deploying
+2026-05-17 13:17:01,086 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 13:19:02,982 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 13:19:36,179 DEBUG mlb_poly_monitor Schedule state-change rollup for 2026-05-17: changes_total=25 changes_since_last_log=24 games=15 live=6 final=0 states=live=1|final=0:15, live=0|final=0:3, live=3|final=0:3, live=6|final=0:2
+2026-05-17 13:20:44,275 INFO live_engine Received signal 2 -- initiating graceful shutdown...
+2026-05-17 13:20:45,473 INFO live_engine Active-date final scrape complete for 2026-05-17. Tail: Failed:             0 | Run manifest:       C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\manifests\runs\run_20260517T172045Z.json | ========================================================================
+2026-05-17 13:20:45,863 INFO live_engine Daily human-review report written: json=C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\daily_human_review\2026-05-17_human_review.json markdown=C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\daily_human_review\2026-05-17_human_review.md
+2026-05-17 13:20:47,345 INFO build_calibration_opportunity_training_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_opportunity_training\calibration_opportunity_training_table.jsonl
+2026-05-17 13:20:47,351 INFO build_calibration_opportunity_training_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_opportunity_training\calibration_opportunity_training_table.csv
+2026-05-17 13:20:47,351 INFO build_calibration_opportunity_training_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_opportunity_training\calibration_opportunity_training_table_manifest.json
+2026-05-17 13:20:47,352 INFO build_calibration_opportunity_training_table Rows: source=5092 output=1363 final_labels=1347 score_confirmations=743 selected_inferred_rows=2826 current_support_backfill_rows=2059 score_event_repeat_policy=dedupe collapsed=3729
+2026-05-17 13:20:47,391 INFO live_engine Model maturity input table refreshed through 2026-05-17.
+2026-05-17 13:20:47,593 INFO live_engine Model maturity report written: json=C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\model_maturity\model_maturity_report.json markdown=C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\model_maturity\model_maturity_report.md
+2026-05-17 13:20:47,593 INFO live_engine Graceful shutdown complete.
+2026-05-17 13:20:47,593 INFO mlb_poly_monitor === MONITOR ROLLUP (2026-05-17) schedule_refreshes=237 changes=25 failures=0 poll_cycles=2526 tick_snapshots=27874 discovery_no_new_cycles=59 discovery_no_new_games_attempted=59 retired_book_keys=0 retire_events=0 runtime=7210s ===
+2026-05-17 13:20:47,593 INFO mlb_poly_monitor MONITOR SCHEDULE ROLLUP (2026-05-17) state_change_buckets=live=1|final=0:15, live=0|final=0:3, live=3|final=0:3, live=6|final=0:2, live=2|final=0:1, live=5|final=0:1
+2026-05-17 13:45:00,323 INFO live_engine Log file: C:\Users\micha\Desktop\github\NHL-BOT\baseball\logs\real-logs\2026-05-17.log
+2026-05-17 13:45:00,340 INFO daily_refresh Startup refresh plan: active_date=2026-05-17 max_refresh_date=2026-05-16 steps=58 strict=False
+2026-05-17 13:45:00,340 INFO daily_refresh Startup refresh step started: preflight_env_secrets
+2026-05-17 13:45:00,341 INFO daily_refresh Startup refresh step ok: preflight_env_secrets (0.0s)
+2026-05-17 13:45:00,341 DEBUG daily_refresh Startup refresh output tail for preflight_env_secrets:
+env_path=C:\Users\micha\Desktop\github\NHL-BOT\baseball\.env
+POLY_PRIVATE_KEY present (length=66)
+2026-05-17 13:45:00,341 INFO daily_refresh Startup refresh step started: scrape_recent_games
+2026-05-17 13:45:00,735 INFO daily_refresh Startup refresh step ok: scrape_recent_games (0.4s)
+2026-05-17 13:45:00,735 DEBUG daily_refresh Startup refresh output tail for scrape_recent_games:
+========================================================================
+MLB Historical Scrape
+========================================================================
+Date range:      2026-05-10 -> 2026-05-16
+Game types:      R
+Sport ID:        1
+Max workers:     8
+Overwrite:       False
+Dry run:         False
+Output root:     C:\Users\micha\Desktop\github\NHL-BOT\baseball\data
+========================================================================
+
+[2026-05] Fetching schedule 2026-05-10 -> 2026-05-16 ...
+  games=92 — downloading feeds ...
+  complete: downloaded=0 skipped=92 failed=0
+
+========================================================================
+SCRAPE SUMMARY
+========================================================================
+Months processed:   1
+Games discovered:   92
+Downloaded:         0
+Skipped existing:   92
+Failed:             0
+Run manifest:       C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\manifests\runs\run_20260517T174500Z.json
+========================================================================
+2026-05-17 13:45:00,735 INFO daily_refresh Startup refresh step started: stage1_ou_cache
+2026-05-17 13:52:35,315 INFO daily_refresh Startup refresh step ok: stage1_ou_cache (452.7s)
+2026-05-17 13:52:35,315 DEBUG daily_refresh Startup refresh output tail for stage1_ou_cache:
+Found 12400 files under C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\games\regular (from 23965 total after history filters). Parsing pass 1...
+  pass1 0/12400 files ...
+  pass1 1000/12400 files ...
+  pass1 2000/12400 files ...
+  pass1 3000/12400 files ...
+  pass1 4000/12400 files ...
+  pass1 5000/12400 files ...
+  pass1 6000/12400 files ...
+  pass1 7000/12400 files ...
+  pass1 8000/12400 files ...
+  pass1 9000/12400 files ...
+  pass1 10000/12400 files ...
+  pass1 11000/12400 files ...
+  pass1 12000/12400 files ...
+Parsing pass 2 for fallback calibration ...
+  pass2 0/12400 files ...
+  pass2 1000/12400 files ...
+  pass2 2000/12400 files ...
+  pass2 3000/12400 files ...
+  pass2 4000/12400 files ...
+  pass2 5000/12400 files ...
+  pass2 6000/12400 files ...
+  pass2 7000/12400 files ...
+  pass2 8000/12400 files ...
+  pass2 9000/12400 files ...
+  pass2 10000/12400 files ...
+  pass2 11000/12400 files ...
+  pass2 12000/12400 files ...
+Building cache cells ...
+
+Cache build complete:
+  Games loaded: 12148
+  Seasons: 2021, 2022, 2023, 2024, 2025
+  History window: 2021-04-01 -> 2025-09-28
+  Duplicate game files skipped: 250
+  Samples recorded: 915426
+  Valid cells: 4298
+  Skipped low games: 36343
+  Skipped high score cells: 1871
+  Calibration keys: 3179 (prior_n=80, min_n=20, samples=245100)
+
+Sample cells:
+  0_0_1_T_0_0        n=12148 n_samples= 12148 lam=8.92 label=Top1  0 out  bases=---
+  0_0_1_B_0_0        n=8910 n_samples=  8910 lam=8.46 label=Bot1  0 out  bases=---
+  1_0_5_T_1_3        n=  76 n_samples=    76 lam=5.41 label=Top5  1 out  bases=12-
+
+Saved cache -> C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\mlb_ou_cache.staging.json
+2026-05-17 13:52:35,315 INFO daily_refresh Startup refresh step started: stage1_cache_promote
+2026-05-17 13:52:35,368 INFO daily_refresh Startup refresh step ok: stage1_cache_promote (0.1s)
+2026-05-17 13:52:35,368 DEBUG daily_refresh Startup refresh output tail for stage1_cache_promote:
+ok Stage-1 promoted: mlb_ou_cache.staging.json -> mlb_ou_cache.json. sanity guard passed: staging 12148 games >= 99% of production 12148.
+2026-05-17 13:52:35,368 INFO daily_refresh Startup refresh step started: scrape_active_schedule
+2026-05-17 13:52:36,078 INFO daily_refresh Startup refresh step ok: scrape_active_schedule (0.7s)
+2026-05-17 13:52:36,079 DEBUG daily_refresh Startup refresh output tail for scrape_active_schedule:
+========================================================================
+MLB Historical Scrape
+========================================================================
+Date range:      2026-04-01 -> 2026-05-31
+Game types:      R
+Sport ID:        1
+Max workers:     8
+Overwrite:       False
+Dry run:         True
+Output root:     C:\Users\micha\Desktop\github\NHL-BOT\baseball\data
+========================================================================
+
+[2026-04] Fetching schedule 2026-04-01 -> 2026-04-30 ...
+  games=398 (dry-run, no game feed downloads)
+
+[2026-05] Fetching schedule 2026-05-01 -> 2026-05-31 ...
+  games=424 (dry-run, no game feed downloads)
+
+========================================================================
+SCRAPE SUMMARY
+========================================================================
+Months processed:   2
+Games discovered:   822
+Downloaded:         0
+Skipped existing:   0
+Failed:             0
+Run manifest:       C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\manifests\runs\run_20260517T175236Z.json
+========================================================================
+2026-05-17 13:52:36,079 INFO daily_refresh Startup refresh step started: game_weather_cache
+2026-05-17 13:52:38,444 INFO daily_refresh Startup refresh step ok: game_weather_cache (2.4s)
+2026-05-17 13:52:38,445 DEBUG daily_refresh Startup refresh output tail for game_weather_cache:
+2026-05-17 13:52:38,424 INFO refresh_game_weather Weather cache refreshed: date=2026-05-17 provider=open-meteo games=15 provider_ok=15 output=C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\weather\game_weather_2026-05-17.json
+{
+  "coverage": {
+    "fixed_roof_default": 1,
+    "metadata_matched": 15,
+    "missing_metadata": 0,
+    "provider_disabled": 0,
+    "provider_missing": 0,
+    "provider_ok": 15,
+    "retractable_roof_default": 2,
+    "scheduled_games": 15
+  },
+  "date": "2026-05-17",
+  "output_path": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\cache\\weather\\game_weather_2026-05-17.json",
+  "warnings": []
+}
+2026-05-17 13:52:38,445 INFO daily_refresh Startup refresh step started: pitcher_cache
+2026-05-17 13:52:38,816 INFO daily_refresh Startup refresh step ok: pitcher_cache (0.4s)
+2026-05-17 13:52:38,816 DEBUG daily_refresh Startup refresh output tail for pitcher_cache:
+2026-05-17 13:52:38,608 INFO Fetching pitching stats offset=0 limit=500 ...
+2026-05-17 13:52:38,793 INFO Total pitcher splits fetched: 74
+2026-05-17 13:52:38,793 INFO Pitchers in cache: 74  (skipped low_ip=0  no_era=0)
+2026-05-17 13:52:38,794 INFO Computed avg ERA across 74 pitchers: 3.47 (MLB_AVG constant: 4.20)
+2026-05-17 13:52:38,795 INFO Pitcher cache written to C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\pitcher_cache.json  (74 pitchers)
+2026-05-17 13:52:38,816 INFO daily_refresh Startup refresh step started: team_game_log
+2026-05-17 13:54:54,992 INFO daily_refresh Startup refresh step ok: team_game_log (136.2s)
+2026-05-17 13:54:54,992 DEBUG daily_refresh Startup refresh output tail for team_game_log:
+2026-05-17 13:52:38,875 INFO Scanning game feeds under C:\Users\micha\Desktop\github\NHL-BOT\baseball\data for seasons ['2021', '2022', '2023', '2024', '2025', '2026'] ...
+2026-05-17 13:52:38,921 INFO   Year 2021: 2512 files
+2026-05-17 13:53:06,380 INFO     -> 2511 valid final games
+2026-05-17 13:53:06,450 INFO   Year 2022: 2479 files
+2026-05-17 13:53:30,852 INFO     -> 2479 valid final games
+2026-05-17 13:53:30,878 INFO   Year 2023: 2476 files
+2026-05-17 13:53:54,274 INFO     -> 2476 valid final games
+2026-05-17 13:53:54,297 INFO   Year 2024: 2469 files
+2026-05-17 13:54:19,567 INFO     -> 2468 valid final games
+2026-05-17 13:54:19,594 INFO   Year 2025: 2464 files
+2026-05-17 13:54:47,060 INFO     -> 2464 valid final games
+2026-05-17 13:54:47,074 INFO   Year 2026: 708 files
+2026-05-17 13:54:54,913 INFO     -> 660 valid final games
+2026-05-17 13:54:54,915 INFO Total: 13058 games loaded, 2 files skipped
+2026-05-17 13:54:54,977 INFO Wrote 13058 games to C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\team_game_log.json (136.1s)  MLB avg RPG=4.448  avg total=8.895
+2026-05-17 13:54:54,992 INFO daily_refresh Startup refresh step started: park_hr_factors
+2026-05-17 13:57:05,889 INFO daily_refresh Startup refresh step ok: park_hr_factors (130.9s)
+2026-05-17 13:57:05,889 DEBUG daily_refresh Startup refresh output tail for park_hr_factors:
+2026-05-17 13:54:55,092 INFO build_park_hr_factors Year 2021: 2512 files
+2026-05-17 13:55:17,703 INFO build_park_hr_factors Year 2022: 2479 files
+2026-05-17 13:55:42,994 INFO build_park_hr_factors Year 2023: 2476 files
+2026-05-17 13:56:09,829 INFO build_park_hr_factors Year 2024: 2469 files
+2026-05-17 13:56:34,044 INFO build_park_hr_factors Year 2025: 2464 files
+2026-05-17 13:56:59,210 INFO build_park_hr_factors Year 2026: 708 files
+2026-05-17 13:57:05,875 INFO build_park_hr_factors Scanned 13108 files (13060 Final games used, 48 skipped).
+2026-05-17 13:57:05,879 INFO build_park_hr_factors League HR/game by year: {'2021': 2.4347, '2022': 2.1444, '2023': 2.4148, '2024': 2.2414, '2025': 2.3312, '2026': 2.1182}
+2026-05-17 13:57:05,879 INFO build_park_hr_factors Wrote 47 parks x up to 6 years -> C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\park_hr_factors.json
+2026-05-17 13:57:05,879 INFO build_park_hr_factors Top 5 HR-friendly (2026, shrunk_factor):
+2026-05-17 13:57:05,879 INFO build_park_hr_factors   Great American Ball Park        1.216  (n=23 games)
+2026-05-17 13:57:05,879 INFO build_park_hr_factors   Daikin Park                     1.185  (n=24 games)
+2026-05-17 13:57:05,879 INFO build_park_hr_factors   Yankee Stadium                  1.171  (n=19 games)
+2026-05-17 13:57:05,879 INFO build_park_hr_factors   Nationals Park                  1.157  (n=20 games)
+2026-05-17 13:57:05,880 INFO build_park_hr_factors   Sutter Health Park              1.133  (n=19 games)
+2026-05-17 13:57:05,880 INFO build_park_hr_factors Bottom 5 HR-friendly (2026, shrunk_factor):
+2026-05-17 13:57:05,880 INFO build_park_hr_factors   Oracle Park                     0.894  (n=21 games)
+2026-05-17 13:57:05,880 INFO build_park_hr_factors   Angel Stadium                   0.892  (n=19 games)
+2026-05-17 13:57:05,880 INFO build_park_hr_factors   Comerica Park                   0.882  (n=19 games)
+2026-05-17 13:57:05,880 INFO build_park_hr_factors   loanDepot park                  0.839  (n=26 games)
+2026-05-17 13:57:05,880 INFO build_park_hr_factors   Fenway Park                     0.827  (n=20 games)
+2026-05-17 13:57:05,889 INFO daily_refresh Startup refresh step started: preflight_artifacts
+2026-05-17 13:57:05,949 INFO daily_refresh Startup refresh step ok: preflight_artifacts (0.1s)
+2026-05-17 13:57:05,949 DEBUG daily_refresh Startup refresh output tail for preflight_artifacts:
+ok Stage-1 (mlb_ou_cache.json) loaded
+ok Stage-1 production coverage: seasons 2021-2025, total_games=12148, history=2021-04-01->2025-09-28, duplicate_files_skipped=250
+ok Stage-2 (mlb_stage2_run_env.json) loaded
+ok Stage-3: team_game_log: 31 teams, 30 with 2026 games (avg 44/team)
+ok Pitcher cache (74 entries)
+ok Park HR factors: 47 parks, 31 with 2026 entries
+2026-05-17 13:57:05,949 INFO daily_refresh Startup refresh step started: settlement_truth_verification
+2026-05-17 13:57:07,170 INFO daily_refresh Startup refresh step ok: settlement_truth_verification (1.2s)
+2026-05-17 13:57:07,170 DEBUG daily_refresh Startup refresh output tail for settlement_truth_verification:
+2026-05-17 13:57:07,163 INFO     verify_settlement_truth Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\settlement_truth\settlement_truth_report.json (counts={'total_bets_seen': 179, 'filled_or_settled_total': 89, 'not_filled': 90, 'ok': 81, 'game_not_final_yet': 7, 'stale_filled': 1}, oldest_stale=25)
+2026-05-17 13:57:07,170 INFO daily_refresh Startup refresh step started: analysis_safe_trade_table
+2026-05-17 13:57:07,350 INFO daily_refresh Startup refresh step ok: analysis_safe_trade_table (0.2s)
+2026-05-17 13:57:07,350 DEBUG daily_refresh Startup refresh output tail for analysis_safe_trade_table:
+analysis-safe trades: rows=117 filled=89 live_filled=85 paper_fallback_filled=4 excluded={'order_status_error': 62, 'ledger_only_bet_id': 3}
+P&L: live=$-110.07 paper_fallback=$-20.44 all_filled=$-130.51
+wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\analysis_safe_trades\analysis_safe_trades.jsonl
+wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\analysis_safe_trades\analysis_safe_trades.csv
+wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\analysis_safe_trades\analysis_safe_trades_summary.json
+2026-05-17 13:57:07,350 INFO daily_refresh Startup refresh step started: candidate_universe_table
+2026-05-17 13:58:13,686 INFO daily_refresh Startup refresh step ok: candidate_universe_table (66.3s)
+2026-05-17 13:58:13,687 DEBUG daily_refresh Startup refresh output tail for candidate_universe_table:
+2026-05-17 13:58:11,048 INFO     build_candidate_universe_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\candidate_universe\candidates_master.jsonl
+2026-05-17 13:58:11,052 INFO     build_candidate_universe_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\candidate_universe\candidates_master.csv
+2026-05-17 13:58:11,052 INFO     build_candidate_universe_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\candidate_universe\build_manifest.json
+2026-05-17 13:58:11,166 INFO     build_candidate_universe_table Rows: source=392255 output=392255 labels=0
+2026-05-17 13:58:13,687 INFO daily_refresh Startup refresh step started: calibration_opportunity_training
+2026-05-17 13:58:15,314 INFO daily_refresh Startup refresh step ok: calibration_opportunity_training (1.6s)
+2026-05-17 13:58:15,314 DEBUG daily_refresh Startup refresh output tail for calibration_opportunity_training:
+2026-05-17 13:58:15,255 INFO     build_calibration_opportunity_training_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_opportunity_training\calibration_opportunity_training_table.jsonl
+2026-05-17 13:58:15,256 INFO     build_calibration_opportunity_training_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_opportunity_training\calibration_opportunity_training_table.csv
+2026-05-17 13:58:15,256 INFO     build_calibration_opportunity_training_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_opportunity_training\calibration_opportunity_training_table_manifest.json
+2026-05-17 13:58:15,256 INFO     build_calibration_opportunity_training_table Rows: source=5079 output=1350 final_labels=1347 score_confirmations=743 selected_inferred_rows=2826 current_support_backfill_rows=2059 score_event_repeat_policy=dedupe collapsed=3729
+2026-05-17 13:58:15,314 INFO daily_refresh Startup refresh step started: calibrate_signal_probabilities
+2026-05-17 13:58:18,780 INFO daily_refresh Startup refresh step ok: calibrate_signal_probabilities (3.5s)
+2026-05-17 13:58:18,780 DEBUG daily_refresh Startup refresh output tail for calibrate_signal_probabilities:
+2026-05-17 13:58:16,844 WARNING  calibrate_signal_probabilities Calibration stability gate fired for no_score_drift: today's pick was 'platt' but trailing 7-day modal is 'isotonic' (history=['isotonic', 'isotonic', 'isotonic', 'platt', 'isotonic', 'platt', 'platt']). Overriding to 'isotonic' to avoid daily flip-flop on small validation samples.
+2026-05-17 13:58:16,844 WARNING  calibrate_signal_probabilities Input-drift flag set for no_score_drift: 3 continuous features at PSI >= 0.25 (threshold trigger 2). Top: stage2_run_env_delta PSI 2.32, base_fair_value PSI 1.75, team_offense_delta PSI 1.37. Today's calibration method (isotonic) was selected on materially-shifted inputs.
+2026-05-17 13:58:18,738 WARNING  calibrate_signal_probabilities Input-drift flag set for score_event_transition: 3 continuous features at PSI >= 0.25 (threshold trigger 2). Top: stage2_run_env_delta PSI 2.32, base_fair_value PSI 1.75, team_offense_delta PSI 1.37. Today's calibration method (platt) was selected on materially-shifted inputs.
+2026-05-17 13:58:18,756 INFO     calibrate_signal_probabilities Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration\signal_win_calibration.json
+2026-05-17 13:58:18,756 INFO     calibrate_signal_probabilities Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration\signal_win_calibration_report.json
+2026-05-17 13:58:18,756 INFO     calibrate_signal_probabilities Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration\signal_win_calibration_predictions.jsonl
+2026-05-17 13:58:18,756 INFO     calibrate_signal_probabilities Calibration rows: total=1347 family_mode=separate families={'no_score_drift': 604, 'score_event_transition': 743} selected=platt
+2026-05-17 13:58:18,780 INFO daily_refresh Startup refresh step started: calibrate_signal_probabilities_under
+2026-05-17 13:58:22,170 INFO daily_refresh Startup refresh step ok: calibrate_signal_probabilities_under (3.4s)
+2026-05-17 13:58:22,171 DEBUG daily_refresh Startup refresh output tail for calibrate_signal_probabilities_under:
+2026-05-17 13:58:20,276 WARNING  calibrate_signal_probabilities Input-drift flag set for no_score_drift: 3 continuous features at PSI >= 0.25 (threshold trigger 2). Top: stage2_run_env_delta PSI 2.32, base_fair_value PSI 1.75, team_offense_delta PSI 1.37. Today's calibration method (platt) was selected on materially-shifted inputs.
+2026-05-17 13:58:22,128 WARNING  calibrate_signal_probabilities Input-drift flag set for score_event_transition: 3 continuous features at PSI >= 0.25 (threshold trigger 2). Top: stage2_run_env_delta PSI 2.32, base_fair_value PSI 1.75, team_offense_delta PSI 1.37. Today's calibration method (platt) was selected on materially-shifted inputs.
+2026-05-17 13:58:22,147 INFO     calibrate_signal_probabilities Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration\signal_win_calibration_under.json
+2026-05-17 13:58:22,147 INFO     calibrate_signal_probabilities Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration\signal_win_calibration_under_report.json
+2026-05-17 13:58:22,147 INFO     calibrate_signal_probabilities Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration\signal_win_calibration_under_predictions.jsonl
+2026-05-17 13:58:22,147 INFO     calibrate_signal_probabilities Calibration rows: total=1347 family_mode=separate families={'no_score_drift': 604, 'score_event_transition': 743} selected=platt
+2026-05-17 13:58:22,171 INFO daily_refresh Startup refresh step started: model_maturity_report
+2026-05-17 13:58:22,442 INFO daily_refresh Startup refresh step ok: model_maturity_report (0.3s)
+2026-05-17 13:58:22,442 DEBUG daily_refresh Startup refresh output tail for model_maturity_report:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\model_maturity\model_maturity_report.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\model_maturity\model_maturity_report.md
+2026-05-17 13:58:22,442 INFO daily_refresh Startup refresh step started: fair_value_stage_ablation
+2026-05-17 13:58:23,151 INFO daily_refresh Startup refresh step ok: fair_value_stage_ablation (0.7s)
+2026-05-17 13:58:23,151 DEBUG daily_refresh Startup refresh output tail for fair_value_stage_ablation:
+{
+  "paths": {
+    "dated_json": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\data\\analysis_output\\fair_value_stage_ablation\\2026-05-16_fair_value_stage_ablation_report.json",
+    "dated_markdown": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\data\\analysis_output\\fair_value_stage_ablation\\2026-05-16_fair_value_stage_ablation_report.md",
+    "json": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\data\\analysis_output\\fair_value_stage_ablation\\fair_value_stage_ablation_report.json",
+    "markdown": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\data\\analysis_output\\fair_value_stage_ablation\\fair_value_stage_ablation_report.md"
+  },
+  "row_counts": {
+    "families": {
+      "__all__": 1347,
+      "no_score_drift": 604,
+      "score_event_transition": 743
+    },
+    "filtered_rows": 1350,
+    "input_rows": 1350,
+    "labeled_rows": 1347
+  }
+}
+2026-05-17 13:58:23,151 INFO daily_refresh Startup refresh step started: fv_gap_decomposition
+2026-05-17 13:58:23,653 INFO daily_refresh Startup refresh step ok: fv_gap_decomposition (0.5s)
+2026-05-17 13:58:23,653 DEBUG daily_refresh Startup refresh output tail for fv_gap_decomposition:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_gap_decomposition\fv_gap_decomposition_report.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_gap_decomposition\fv_gap_decomposition_report.md
+2026-05-17 13:58:23,653 INFO daily_refresh Startup refresh step started: fv_trust_shrinkage
+2026-05-17 13:58:25,229 INFO daily_refresh Startup refresh step ok: fv_trust_shrinkage (1.6s)
+2026-05-17 13:58:25,229 DEBUG daily_refresh Startup refresh output tail for fv_trust_shrinkage:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_trust_shrinkage\fv_trust_shrinkage_report.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_trust_shrinkage\fv_trust_shrinkage_report.md
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_trust_shrinkage\fv_trust_shrinkage_predictions.jsonl
+2026-05-17 13:58:25,229 INFO daily_refresh Startup refresh step started: calibration_market_anchored_alpha
+2026-05-17 13:58:29,291 INFO daily_refresh Startup refresh step ok: calibration_market_anchored_alpha (4.1s)
+2026-05-17 13:58:29,291 DEBUG daily_refresh Startup refresh output tail for calibration_market_anchored_alpha:
+2026-05-17 13:58:29,261 INFO     train_calibration_market_anchored_alpha Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_market_anchored_alpha\calibration_market_anchored_alpha_report.json
+2026-05-17 13:58:29,261 INFO     train_calibration_market_anchored_alpha Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_market_anchored_alpha\calibration_market_anchored_alpha_report.md
+2026-05-17 13:58:29,263 INFO     train_calibration_market_anchored_alpha Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_market_anchored_alpha\calibration_market_anchored_alpha_predictions.jsonl
+2026-05-17 13:58:29,291 INFO daily_refresh Startup refresh step started: stage1_inferred_empirical_audit
+2026-05-17 13:58:35,896 INFO daily_refresh Startup refresh step ok: stage1_inferred_empirical_audit (6.6s)
+2026-05-17 13:58:35,896 DEBUG daily_refresh Startup refresh output tail for stage1_inferred_empirical_audit:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\stage1_inferred_empirical_audit\stage1_inferred_empirical_audit.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\stage1_inferred_empirical_audit\stage1_inferred_empirical_audit.md
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\stage1_inferred_empirical_audit\stage1_inferred_empirical_audit_rows.jsonl
+2026-05-17 13:58:35,896 INFO daily_refresh Startup refresh step started: unified_signals
+2026-05-17 13:58:40,304 INFO daily_refresh Startup refresh step ok: unified_signals (4.4s)
+2026-05-17 13:58:40,304 DEBUG daily_refresh Startup refresh output tail for unified_signals:
+2026-05-17 13:58:36,075 INFO     build_unified_signal_table Building mode=live
+2026-05-17 13:58:40,152 INFO     build_unified_signal_table mode=live rows: master=182 events=480 snapshots=11654
+2026-05-17 13:58:40,270 INFO     build_unified_signal_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\unified_signals\signals_master.jsonl
+2026-05-17 13:58:40,270 INFO     build_unified_signal_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\unified_signals\signals_master.csv
+2026-05-17 13:58:40,270 INFO     build_unified_signal_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\unified_signals\signal_order_events.jsonl
+2026-05-17 13:58:40,270 INFO     build_unified_signal_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\unified_signals\signal_book_snapshots.jsonl
+2026-05-17 13:58:40,270 INFO     build_unified_signal_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\unified_signals\build_manifest.json
+2026-05-17 13:58:40,272 INFO     build_unified_signal_table Warnings: 0  Hard errors: 0
+2026-05-17 13:58:40,304 INFO daily_refresh Startup refresh step started: concept_drift_report
+2026-05-17 13:58:40,416 INFO daily_refresh Startup refresh step ok: concept_drift_report (0.1s)
+2026-05-17 13:58:40,416 DEBUG daily_refresh Startup refresh output tail for concept_drift_report:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\concept_drift\concept_drift_report.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\concept_drift\concept_drift_report.md
+Alerts: 3
+2026-05-17 13:58:40,416 INFO daily_refresh Startup refresh step started: drift_in_drift_report
+2026-05-17 13:58:40,500 INFO daily_refresh Startup refresh step ok: drift_in_drift_report (0.1s)
+2026-05-17 13:58:40,500 DEBUG daily_refresh Startup refresh output tail for drift_in_drift_report:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\concept_drift\drift_in_drift_report.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\concept_drift\drift_in_drift_report.md
+Alerts: 0, features evaluated: 3
+2026-05-17 13:58:40,500 INFO daily_refresh Startup refresh step started: signal_training_table
+2026-05-17 13:58:40,757 INFO daily_refresh Startup refresh step ok: signal_training_table (0.3s)
+2026-05-17 13:58:40,757 DEBUG daily_refresh Startup refresh output tail for signal_training_table:
+2026-05-17 13:58:40,739 INFO     build_signal_training_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\training_tables\signal_training_table.jsonl
+2026-05-17 13:58:40,739 INFO     build_signal_training_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\training_tables\signal_training_table.csv
+2026-05-17 13:58:40,739 INFO     build_signal_training_table Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\training_tables\signal_training_table_manifest.json
+2026-05-17 13:58:40,739 INFO     build_signal_training_table Rows: source=182 filtered=182 training=182
+2026-05-17 13:58:40,759 INFO daily_refresh Startup refresh step started: clv_report
+2026-05-17 13:58:41,136 INFO daily_refresh Startup refresh step ok: clv_report (0.4s)
+2026-05-17 13:58:41,136 DEBUG daily_refresh Startup refresh output tail for clv_report:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\clv\clv_summary.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\clv\clv_rows.jsonl
+2026-05-17 13:58:41,136 INFO daily_refresh Startup refresh step started: fv_disagreement_quality
+2026-05-17 13:58:41,651 INFO daily_refresh Startup refresh step ok: fv_disagreement_quality (0.5s)
+2026-05-17 13:58:41,651 DEBUG daily_refresh Startup refresh output tail for fv_disagreement_quality:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_disagreement_quality\fv_disagreement_quality_summary.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_disagreement_quality\fv_disagreement_quality_rows.jsonl
+2026-05-17 13:58:41,651 INFO daily_refresh Startup refresh step started: train_baseline_models
+2026-05-17 13:59:16,289 INFO daily_refresh Startup refresh step ok: train_baseline_models (34.6s)
+2026-05-17 13:59:16,289 DEBUG daily_refresh Startup refresh output tail for train_baseline_models:
+2026-05-17 13:58:58,059 INFO     train_baseline_models Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\model_baselines\signal_win_model.json
+2026-05-17 13:58:58,059 INFO     train_baseline_models Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\model_baselines\signal_win_predictions.jsonl
+2026-05-17 13:59:16,277 INFO     train_baseline_models Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\model_baselines\execution_fill_model.json
+2026-05-17 13:59:16,277 INFO     train_baseline_models Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\model_baselines\execution_fill_predictions.jsonl
+2026-05-17 13:59:16,277 INFO     train_baseline_models Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\model_baselines\baseline_model_report.json
+2026-05-17 13:59:16,289 INFO daily_refresh Startup refresh step started: ev_policy_backtest
+2026-05-17 14:00:14,771 INFO daily_refresh Startup refresh step ok: ev_policy_backtest (58.5s)
+2026-05-17 14:00:14,771 DEBUG daily_refresh Startup refresh output tail for ev_policy_backtest:
+2026-05-17 14:00:14,759 INFO     backtest_ev_policy Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\ev_policy\ev_policy_report.json
+2026-05-17 14:00:14,759 INFO     backtest_ev_policy Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\ev_policy\ev_scored_rows.jsonl
+2026-05-17 14:00:14,759 INFO     backtest_ev_policy Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\ev_policy\ev_policy_validation_trades.jsonl
+2026-05-17 14:00:14,759 INFO     backtest_ev_policy Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\ev_policy\ev_policy_test_trades.jsonl
+2026-05-17 14:00:14,759 INFO     backtest_ev_policy Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\ev_policy\ev_signal_win_if_filled_model.json
+2026-05-17 14:00:14,759 INFO     backtest_ev_policy Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\ev_policy\ev_execution_fill_runtime_model.json
+2026-05-17 14:00:14,759 INFO     backtest_ev_policy Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\ev_policy\ev_execution_fill_strict_model.json
+2026-05-17 14:00:14,771 INFO daily_refresh Startup refresh step started: stage2_run_env_retrain_staging
+2026-05-17 14:17:26,950 INFO daily_refresh Startup refresh step ok: stage2_run_env_retrain_staging (1028.6s)
+2026-05-17 14:17:26,952 DEBUG daily_refresh Startup refresh output tail for stage2_run_env_retrain_staging:
+Lines: 6.5, 7.5, 8.5, 9.5, 10.5, 11.5
+Train <= 2024, validation >= 2025
+  parsing 0/23965 files ...
+  parsing 1000/23965 files ...
+  parsing 2000/23965 files ...
+  parsing 3000/23965 files ...
+  parsing 4000/23965 files ...
+  parsing 5000/23965 files ...
+  parsing 6000/23965 files ...
+  parsing 7000/23965 files ...
+  parsing 8000/23965 files ...
+  parsing 9000/23965 files ...
+  parsing 10000/23965 files ...
+  parsing 11000/23965 files ...
+  parsing 12000/23965 files ...
+  parsing 13000/23965 files ...
+  parsing 14000/23965 files ...
+  parsing 15000/23965 files ...
+  parsing 16000/23965 files ...
+  parsing 17000/23965 files ...
+  parsing 18000/23965 files ...
+  parsing 19000/23965 files ...
+  parsing 20000/23965 files ...
+  parsing 21000/23965 files ...
+  parsing 22000/23965 files ...
+  parsing 23000/23965 files ...
+Loaded games=23905, samples=1810220, with_stage1=1307433, val_rows=172755
+
+Validation summary:
+  O6.5: brier 0.168926 -> 0.16857 (gain=0.000356, 0.2108%) weights={'park': 0.0, 'temp': 0.25, 'wind': 0.0, 'park_wind': 0.0, 'density_alt': 0.5, 'hr_factor': 0.5}
+  O7.5: brier 0.182226 -> 0.18155 (gain=0.000676, 0.3712%) weights={'park': 0.5, 'temp': 0.0, 'wind': 0.0, 'park_wind': 0.2, 'density_alt': 0.5, 'hr_factor': 0.5}
+  O8.5: brier 0.180216 -> 0.179414 (gain=0.000802, 0.4449%) weights={'park': 0.5, 'temp': 0.0, 'wind': 0.0, 'park_wind': 0.2, 'density_alt': 0.5, 'hr_factor': 0.5}
+  O9.5: brier 0.169228 -> 0.168301 (gain=0.000926, 0.5474%) weights={'park': 0.5, 'temp': 0.25, 'wind': 0.0, 'park_wind': 0.2, 'density_alt': 0.5, 'hr_factor': 0.5}
+  O10.5: brier 0.156175 -> 0.155399 (gain=0.000775, 0.4965%) weights={'park': 0.5, 'temp': 0.25, 'wind': 0.5, 'park_wind': 0.2, 'density_alt': 0.5, 'hr_factor': 0.5}
+  O11.5: brier 0.130568 -> 0.130012 (gain=0.000555, 0.4254%) weights={'park': 0.5, 'temp': 0.25, 'wind': 0.0, 'park_wind': 0.0, 'density_alt': 0.25, 'hr_factor': 0.5}
+
+Saved Stage-2 model -> C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\mlb_stage2_run_env.staging.json
+2026-05-17 14:17:26,953 INFO daily_refresh Startup refresh step started: stage3_team_offense_features
+2026-05-17 14:17:29,848 INFO daily_refresh Startup refresh step ok: stage3_team_offense_features (2.9s)
+2026-05-17 14:17:29,848 DEBUG daily_refresh Startup refresh output tail for stage3_team_offense_features:
+2026-05-17 14:17:27,073 INFO build_team_offense_features Loading history from C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\team_game_log.json
+2026-05-17 14:17:27,090 INFO build_team_offense_features   31 teams, mlb_avg_rpg=4.448
+2026-05-17 14:17:29,838 INFO build_team_offense_features Wrote 25158 rows in 2.7s
+2026-05-17 14:17:29,838 INFO build_team_offense_features Feature coverage:
+2026-05-17 14:17:29,838 INFO build_team_offense_features   n_games_in_season      100.00%
+2026-05-17 14:17:29,839 INFO build_team_offense_features   season_rpg_to_date     96.47%
+2026-05-17 14:17:29,839 INFO build_team_offense_features   prior_season_rpg       80.52%
+2026-05-17 14:17:29,839 INFO build_team_offense_features   momentum_rpg_5         99.64%
+2026-05-17 14:17:29,839 INFO build_team_offense_features   momentum_rpg_10        99.40%
+2026-05-17 14:17:29,839 INFO build_team_offense_features   momentum_rpg_20        98.81%
+2026-05-17 14:17:29,839 INFO build_team_offense_features   rolling_rpg_50         98.81%
+2026-05-17 14:17:29,839 INFO build_team_offense_features   decay_weighted_rpg     98.81%
+2026-05-17 14:17:29,839 INFO build_team_offense_features   home_rpg_30            98.05%
+2026-05-17 14:17:29,839 INFO build_team_offense_features   road_rpg_30            98.05%
+2026-05-17 14:17:29,839 INFO build_team_offense_features   momentum_minus_season  96.47%
+2026-05-17 14:17:29,839 INFO build_team_offense_features   season_minus_prior     77.59%
+2026-05-17 14:17:29,839 INFO build_team_offense_features Manifest: C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\team_offense_calibration\team_features_manifest.json
+2026-05-17 14:17:29,848 INFO daily_refresh Startup refresh step started: stage3_team_offense_calibration_table
+2026-05-17 14:20:11,867 INFO daily_refresh Startup refresh step ok: stage3_team_offense_calibration_table (162.0s)
+2026-05-17 14:20:11,867 DEBUG daily_refresh Startup refresh output tail for stage3_team_offense_calibration_table:
+2026-05-17 14:17:29,934 INFO build_team_offense_calibration_table Loading Stage-1 cache from C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\mlb_ou_cache.json
+2026-05-17 14:17:29,951 INFO build_team_offense_calibration_table   4298 cells, extras_bucket=10
+2026-05-17 14:17:29,951 INFO build_team_offense_calibration_table Loading Stage-2 model from C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\mlb_stage2_run_env.json
+2026-05-17 14:17:29,965 INFO build_team_offense_calibration_table Writing rows to C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\team_offense_calibration\training_table.jsonl
+2026-05-17 14:17:48,836 INFO build_team_offense_calibration_table   progress: 1000 games seen, 1000 used, 89694 rows, 19s
+2026-05-17 14:18:02,862 INFO build_team_offense_calibration_table   progress: 2000 games seen, 2000 used, 178493 rows, 33s
+2026-05-17 14:18:13,820 INFO build_team_offense_calibration_table   progress: 3000 games seen, 2999 used, 269392 rows, 44s
+2026-05-17 14:18:24,966 INFO build_team_offense_calibration_table   progress: 4000 games seen, 3999 used, 360375 rows, 55s
+2026-05-17 14:18:36,131 INFO build_team_offense_calibration_table   progress: 5000 games seen, 4999 used, 453616 rows, 66s
+2026-05-17 14:18:47,671 INFO build_team_offense_calibration_table   progress: 6000 games seen, 5999 used, 542966 rows, 78s
+2026-05-17 14:18:58,942 INFO build_team_offense_calibration_table   progress: 7000 games seen, 6999 used, 631923 rows, 89s
+2026-05-17 14:19:11,871 INFO build_team_offense_calibration_table   progress: 8000 games seen, 7999 used, 722715 rows, 102s
+2026-05-17 14:19:24,399 INFO build_team_offense_calibration_table   progress: 9000 games seen, 8999 used, 814440 rows, 114s
+2026-05-17 14:19:35,849 INFO build_team_offense_calibration_table   progress: 10000 games seen, 9998 used, 905343 rows, 126s
+2026-05-17 14:19:48,262 INFO build_team_offense_calibration_table   progress: 11000 games seen, 10998 used, 997058 rows, 138s
+2026-05-17 14:20:00,020 INFO build_team_offense_calibration_table   progress: 12000 games seen, 11998 used, 1086457 rows, 150s
+2026-05-17 14:20:10,917 INFO build_team_offense_calibration_table   progress: 13000 games seen, 12979 used, 1176328 rows, 161s
+2026-05-17 14:20:11,857 INFO build_team_offense_calibration_table Done: 1183854 rows written in 161.9s (7313 rows/s)
+2026-05-17 14:20:11,857 INFO build_team_offense_calibration_table Manifest: C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\team_offense_calibration\manifest.json
+2026-05-17 14:20:11,867 INFO daily_refresh Startup refresh step started: stage3_team_offense_v2_fit
+2026-05-17 14:21:12,052 INFO daily_refresh Startup refresh step ok: stage3_team_offense_v2_fit (60.2s)
+2026-05-17 14:21:12,052 DEBUG daily_refresh Startup refresh output tail for stage3_team_offense_v2_fit:
+calibrate_team_offense_v2   scan: 400000 rows seen, 168751 kept
+2026-05-17 14:20:16,749 INFO calibrate_team_offense_v2   scan: 600000 rows seen, 362106 kept
+2026-05-17 14:20:18,545 INFO calibrate_team_offense_v2   scan: 800000 rows seen, 554572 kept
+2026-05-17 14:20:21,598 INFO calibrate_team_offense_v2 Joined: 910319 kept of 1183854 total (76.9%)
+2026-05-17 14:20:22,043 INFO calibrate_team_offense_v2   joined rows: 910319
+2026-05-17 14:20:22,043 INFO calibrate_team_offense_v2 Estimating sigma_within^2 (single-game variance) on training years
+2026-05-17 14:20:22,070 INFO calibrate_team_offense_v2   sigma_within^2 = 10.000 (sigma = 3.162)
+2026-05-17 14:20:22,071 INFO calibrate_team_offense_v2 Estimating tau^2 per window on training years
+2026-05-17 14:20:22,077 INFO calibrate_team_offense_v2   rolling_rpg_50         tau^2=0.176  shrinkage_k(equivalent prior games)=56.7
+2026-05-17 14:20:22,085 INFO calibrate_team_offense_v2   season_rpg_to_date     tau^2=0.238  shrinkage_k(equivalent prior games)=41.9
+2026-05-17 14:20:22,091 INFO calibrate_team_offense_v2   prior_season_rpg       tau^2=0.169  shrinkage_k(equivalent prior games)=59.2
+2026-05-17 14:20:22,100 INFO calibrate_team_offense_v2   momentum_rpg_10        tau^2=0.202  shrinkage_k(equivalent prior games)=49.4
+2026-05-17 14:20:22,260 INFO calibrate_team_offense_v2 Splits: train=653987 val=202646 test=53686
+2026-05-17 14:20:22,260 INFO calibrate_team_offense_v2 Fitting Model 1 (refit constant on v1 shape)
+2026-05-17 14:20:22,672 INFO calibrate_team_offense_v2   beta_diff = 0.1129 (vs v1 = 0.2000)
+2026-05-17 14:20:22,672 INFO calibrate_team_offense_v2 Fitting Model 2 (EB-shrunk rolling_50, no clamp)
+2026-05-17 14:20:23,117 INFO calibrate_team_offense_v2   beta_diff = 0.2407
+2026-05-17 14:20:23,117 INFO calibrate_team_offense_v2 Fitting Model 3 (blend prior/season/momentum, EB-shrunk)
+2026-05-17 14:20:23,894 INFO calibrate_team_offense_v2   beta_prior=-0.1578 beta_season=0.1410 beta_momentum=0.1544
+2026-05-17 14:20:23,894 INFO calibrate_team_offense_v2 Fitting Model 4 (Model 3 + per-inning weights)
+2026-05-17 14:21:11,816 INFO calibrate_team_offense_v2   betas: prior=-0.1522 season=0.1302 momentum=0.1386
+2026-05-17 14:21:11,816 INFO calibrate_team_offense_v2   inning weights: [1.0, 0.903, 0.783, 0.798, 0.594, 0.507, 0.335, 0.136, 0.255, 0.666]
+2026-05-17 14:21:11,918 INFO calibrate_team_offense_v2 Brier on VAL  (baseline_A=0.171487, baseline_B=0.171544)
+2026-05-17 14:21:11,918 INFO calibrate_team_offense_v2 Brier on TEST (baseline_A=0.173381, baseline_B=0.174441)
+2026-05-17 14:21:11,956 INFO calibrate_team_offense_v2 Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\team_offense_calibration\phase4_models.json
+
+=== MODEL FITS (training years 2021-2024) ===
+  baseline B (v1):                 logit_delta_per_run = 0.2000
+  model 1 (refit constant):        beta_diff = +0.1129  (ratio to v1: 0.56x)
+  model 2 (EB-shrunk rolling_50):  beta_diff = +0.2407
+  model 3 (blend):                 b_prior=-0.1578  b_season=+0.1410  b_momentum=+0.1544
+  model 4 (blend + per-inn):       b_prior=-0.1522  b_season=+0.1302  b_momentum=+0.1386
+      inning weights: [1.0, 0.903, 0.783, 0.798, 0.594, 0.507, 0.335, 0.136, 0.255, 0.666]
+
+=== SCORES (Brier  /  log-loss) ===
+  model                       VAL_brier VAL_logloss    TEST_brier TEST_logloss    TEST vs A  TEST vs B
+  baseline_A_no_stage3         0.171487    0.510732      0.173381     0.519293      +0.000%    +0.608%
+  baseline_B_v1                0.171544    0.510797      0.174441     0.521895      -0.611%    +0.000%
+  model_1_refit_const          0.171380    0.510446      0.173903     0.520585      -0.301%    +0.308%
+  model_2_eb_shrunk            0.171380    0.510445      0.173902     0.520583      -0.300%    +0.309%
+  model_3_blend                0.171350    0.510348      0.173153     0.518750      +0.132%    +0.738%
+  model_4_blend_per_inn        0.171344    0.510321      0.173122     0.518698      +0.149%    +0.756%
+2026-05-17 14:21:12,054 INFO daily_refresh Startup refresh step started: model_freshness_health
+2026-05-17 14:21:12,101 INFO daily_refresh Startup refresh step ok: model_freshness_health (0.0s)
+2026-05-17 14:21:12,101 DEBUG daily_refresh Startup refresh output tail for model_freshness_health:
+ALERT Stage-2 staging REGRESSES validation Brier by 0.0014 (0.1639 vs 0.1625). Promote with: copy mlb_stage2_run_env.staging.json -> mlb_stage2_run_env.json.
+ok Stage-2 promotion stability gate: building history (1/5 distinct prior dates).
+ok Stage-2 production cache: 8.7d old
+ok Stage-1 OU cache: 0.0d old
+ok EV-policy report: 0.0d old
+ok EV-policy win model: 0.0d old
+ok EV-policy fill model: 0.0d old
+ok Calibration artifact: 0.0d old
+ok Learned execution policy report: 0.1d old
+ok Stage-3 v2 fit (phase4_models.json): 0.0d old
+2026-05-17 14:21:12,101 INFO daily_refresh Startup refresh step started: stage3_v2_promotion_check
+2026-05-17 14:21:12,118 INFO daily_refresh Startup refresh step ok: stage3_v2_promotion_check (0.0s)
+2026-05-17 14:21:12,118 DEBUG daily_refresh Startup refresh output tail for stage3_v2_promotion_check:
+Stage-3 v2: research vs compiled_defaults max|delta|=0.0064 (prior -0.1578 vs -0.1514, season +0.1410 vs +0.1407, momentum +0.1544 vs +0.1503).
+ok Stage-3 v2 promotion stability gate: building history (1/5 distinct prior dates).
+note Stage-3 v2 production weights file missing -- runtime is using compiled-in defaults. Drift is measured against those defaults until promote_team_offense_v2.py runs at least once.
+2026-05-17 14:21:12,120 INFO daily_refresh Startup refresh step started: execution_diagnostics
+2026-05-17 14:21:12,289 INFO daily_refresh Startup refresh step ok: execution_diagnostics (0.2s)
+2026-05-17 14:21:12,289 DEBUG daily_refresh Startup refresh output tail for execution_diagnostics:
+2026-05-17 14:21:12,273 INFO     build_execution_diagnostics_report Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\execution_diagnostics\execution_diagnostics_master.jsonl
+2026-05-17 14:21:12,273 INFO     build_execution_diagnostics_report Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\execution_diagnostics\execution_diagnostics_master.csv
+2026-05-17 14:21:12,273 INFO     build_execution_diagnostics_report Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\execution_diagnostics\execution_diagnostics_summary.json
+2026-05-17 14:21:12,273 INFO     build_execution_diagnostics_report rows=182  warnings=0  hard_errors=0
+2026-05-17 14:21:12,289 INFO daily_refresh Startup refresh step started: queue_aware_execution_replay
+2026-05-17 14:21:12,503 INFO daily_refresh Startup refresh step ok: queue_aware_execution_replay (0.2s)
+2026-05-17 14:21:12,503 DEBUG daily_refresh Startup refresh output tail for queue_aware_execution_replay:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\execution_replay\queue_aware_execution_replay_summary.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\execution_replay\queue_aware_execution_replay_rows.jsonl
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\execution_replay\queue_aware_execution_replay_rows.csv
+
+Queue-aware execution replay
+Policy                Fill model       Filled  Fill%    Profit     ROI    dProfit
+current_limit         touch               74  41.6%     +6.64    0.6%     +0.00
+current_limit         queue_adjusted      68  38.2%    -32.19   -3.5%     +0.00
+limit_p1c             touch              118  66.3%    -30.09   -2.0%    -36.73
+limit_p1c             queue_adjusted     110  61.8%    -69.50   -4.9%    -37.30
+limit_p2c             touch              147  82.6%    +34.37    1.8%    +27.73
+limit_p2c             queue_adjusted     143  80.3%     +6.32    0.3%    +38.51
+taker_like            touch              178 100.0%    +17.42    0.8%    +10.78
+taker_like            queue_adjusted     178 100.0%    +17.42    0.8%    +49.61
+2026-05-17 14:21:12,503 INFO daily_refresh Startup refresh step started: learn_execution_policy
+2026-05-17 14:21:12,668 INFO daily_refresh Startup refresh step ok: learn_execution_policy (0.2s)
+2026-05-17 14:21:12,668 DEBUG daily_refresh Startup refresh output tail for learn_execution_policy:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\execution_policy_prototype\learned_execution_policy_report.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\execution_policy_prototype\learned_execution_policy_report.md
+2026-05-17 14:21:12,669 INFO daily_refresh Startup refresh step started: state_value_transition_report
+2026-05-17 14:21:19,855 INFO daily_refresh Startup refresh step ok: state_value_transition_report (7.2s)
+2026-05-17 14:21:19,855 DEBUG daily_refresh Startup refresh output tail for state_value_transition_report:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\state_value_transition\state_value_transition_report.json
+2026-05-17 14:21:19,855 INFO daily_refresh Startup refresh step started: under_state_value_transition_report
+2026-05-17 14:21:26,673 INFO daily_refresh Startup refresh step ok: under_state_value_transition_report (6.8s)
+2026-05-17 14:21:26,673 DEBUG daily_refresh Startup refresh output tail for under_state_value_transition_report:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\under_state_value_transition\under_state_value_transition_report.json
+2026-05-17 14:21:26,673 INFO daily_refresh Startup refresh step started: under_candidate_universe
+2026-05-17 14:21:34,956 INFO daily_refresh Startup refresh step ok: under_candidate_universe (8.3s)
+2026-05-17 14:21:34,956 DEBUG daily_refresh Startup refresh output tail for under_candidate_universe:
+2026-05-17 14:21:34,946 INFO     build_under_candidate_universe Synthesized 3172 UNDER rows from 393728 OVER rows (rate=0.0081); manifest at C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\under_candidate_universe\manifest.json
+2026-05-17 14:21:34,957 INFO daily_refresh Startup refresh step started: no_score_drift_policy
+2026-05-17 14:21:41,489 INFO daily_refresh Startup refresh step ok: no_score_drift_policy (6.5s)
+2026-05-17 14:21:41,490 DEBUG daily_refresh Startup refresh output tail for no_score_drift_policy:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_policy\no_score_drift_policy_summary.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_policy\no_score_drift_policy_rows.jsonl
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_policy\no_score_drift_policy_rows.csv
+No-score drift policy rows: 717 (collapsed 334 duplicate candidate rows)
+  empirical_only_support: rows=86 win_rate=0.488095 profit_units=7.342103
+  poisson_and_empirical_support: rows=106 win_rate=0.580952 profit_units=8.344285
+  poisson_only_support: rows=525 win_rate=0.551923 profit_units=-79.165879
+2026-05-17 14:21:41,490 INFO daily_refresh Startup refresh step started: no_score_drift_paper_ledger
+2026-05-17 14:21:48,335 INFO daily_refresh Startup refresh step ok: no_score_drift_paper_ledger (6.8s)
+2026-05-17 14:21:48,335 DEBUG daily_refresh Startup refresh output tail for no_score_drift_paper_ledger:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_paper_ledger\no_score_drift_paper_ledger_summary.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_paper_ledger\no_score_drift_paper_ledger_rows.jsonl
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_paper_ledger\no_score_drift_paper_ledger_rows.csv
+No-score drift paper ledger: rows=717 submitted=158 filled=158 skipped=559 profit=$-196.09 roi=-0.124108
+2026-05-17 14:21:48,335 INFO daily_refresh Startup refresh step started: walk_forward_score_event
+2026-05-17 14:26:59,003 INFO daily_refresh Startup refresh step ok: walk_forward_score_event (310.7s)
+2026-05-17 14:26:59,003 DEBUG daily_refresh Startup refresh output tail for walk_forward_score_event:
+7..2026-05-07  train=2026-04-20..2026-05-03  val=2026-05-04..2026-05-06
+2026-05-17 14:23:18,181 INFO     walk_forward_runner   completed: n_train=43 n_test=2 placed=2 filled=2 won=2 baseline_profit=10.46 model_selected=0 model_profit=0.00 signal_win.test_brier=0.343239141472236
+2026-05-17 14:23:18,181 INFO     walk_forward_runner [6/14] test=2026-05-08..2026-05-08  train=2026-04-21..2026-05-04  val=2026-05-05..2026-05-07
+2026-05-17 14:23:38,653 INFO     walk_forward_runner   completed: n_train=41 n_test=3 placed=3 filled=2 won=2 baseline_profit=6.33 model_selected=0 model_profit=0.00 signal_win.test_brier=0.16460925945679727
+2026-05-17 14:23:38,653 INFO     walk_forward_runner [7/14] test=2026-05-09..2026-05-09  train=2026-04-22..2026-05-05  val=2026-05-06..2026-05-08
+2026-05-17 14:23:38,653 INFO     walk_forward_runner   skipped: no_test_data
+2026-05-17 14:23:38,653 INFO     walk_forward_runner [8/14] test=2026-05-10..2026-05-10  train=2026-04-23..2026-05-06  val=2026-05-07..2026-05-09
+2026-05-17 14:23:58,219 INFO     walk_forward_runner   completed: n_train=36 n_test=1 placed=1 filled=0 won=0 baseline_profit=0.00 model_selected=0 model_profit=0.00 signal_win.test_brier=0.5889525648104944
+2026-05-17 14:23:58,219 INFO     walk_forward_runner [9/14] test=2026-05-11..2026-05-11  train=2026-04-24..2026-05-07  val=2026-05-08..2026-05-10
+2026-05-17 14:24:20,036 INFO     walk_forward_runner   completed: n_train=37 n_test=1 placed=1 filled=1 won=1 baseline_profit=6.66 model_selected=0 model_profit=0.00 signal_win.test_brier=0.29896175936978175
+2026-05-17 14:24:20,036 INFO     walk_forward_runner [10/14] test=2026-05-12..2026-05-12  train=2026-04-25..2026-05-08  val=2026-05-09..2026-05-11
+2026-05-17 14:24:45,073 INFO     walk_forward_runner   completed: n_train=39 n_test=70 placed=70 filled=8 won=6 baseline_profit=3.22 model_selected=3 model_profit=11.03 signal_win.test_brier=0.3516840490646324
+2026-05-17 14:24:45,073 INFO     walk_forward_runner [11/14] test=2026-05-13..2026-05-13  train=2026-04-26..2026-05-09  val=2026-05-10..2026-05-12
+2026-05-17 14:25:04,800 INFO     walk_forward_runner   completed: n_train=34 n_test=10 placed=10 filled=10 won=6 baseline_profit=-11.16 model_selected=3 model_profit=-12.40 signal_win.test_brier=0.2902799037885015
+2026-05-17 14:25:04,800 INFO     walk_forward_runner [12/14] test=2026-05-14..2026-05-14  train=2026-04-27..2026-05-10  val=2026-05-11..2026-05-13
+2026-05-17 14:25:26,113 INFO     walk_forward_runner   completed: n_train=35 n_test=7 placed=7 filled=6 won=4 baseline_profit=-2.72 model_selected=1 model_profit=-7.99 signal_win.test_brier=0.3558712948139597
+2026-05-17 14:25:26,113 INFO     walk_forward_runner [13/14] test=2026-05-15..2026-05-15  train=2026-04-28..2026-05-11  val=2026-05-12..2026-05-14
+2026-05-17 14:25:47,895 INFO     walk_forward_runner   completed: n_train=36 n_test=9 placed=9 filled=9 won=6 baseline_profit=-5.90 model_selected=5 model_profit=7.93 signal_win.test_brier=0.2371793115878306
+2026-05-17 14:25:47,895 INFO     walk_forward_runner [14/14] test=2026-05-16..2026-05-16  train=2026-04-29..2026-05-12  val=2026-05-13..2026-05-15
+2026-05-17 14:26:58,961 INFO     walk_forward_runner   completed: n_train=103 n_test=10 placed=10 filled=10 won=8 baseline_profit=11.81 model_selected=1 model_profit=6.13 signal_win.test_brier=0.29620628825885287
+2026-05-17 14:26:58,968 INFO     walk_forward_runner Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\walk_forward\summary.json
+2026-05-17 14:26:58,968 INFO     walk_forward_runner Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\walk_forward\per_window_results.jsonl
+2026-05-17 14:26:58,968 INFO     walk_forward_runner Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\walk_forward\calibration_drift.csv (26 rows)
+2026-05-17 14:26:58,968 INFO     walk_forward_runner Walk-forward complete: 13/14 windows completed, baseline_cumulative_profit=-23.77, baseline_max_dd=-42.47
+2026-05-17 14:26:59,003 INFO daily_refresh Startup refresh step started: walk_forward_no_score_drift
+2026-05-17 14:28:00,045 INFO daily_refresh Startup refresh step ok: walk_forward_no_score_drift (61.0s)
+2026-05-17 14:28:00,045 DEBUG daily_refresh Startup refresh output tail for walk_forward_no_score_drift:
+2026-05-17 14:26:59,235 INFO     no_score_drift_walk_forward Loading no-score drift source rows
+2026-05-17 14:27:59,076 INFO     no_score_drift_walk_forward Window 2026-05-16 completed=True error=None
+2026-05-17 14:27:59,142 INFO     no_score_drift_walk_forward Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_walk_forward\no_score_drift_training_rows.jsonl
+2026-05-17 14:27:59,142 INFO     no_score_drift_walk_forward Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_walk_forward\summary.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_walk_forward\summary.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\no_score_drift_walk_forward\no_score_drift_training_rows.jsonl
+2026-05-17 14:28:00,045 INFO daily_refresh Startup refresh step started: walk_forward_market_anchored_alpha
+2026-05-17 14:28:04,845 INFO daily_refresh Startup refresh step ok: walk_forward_market_anchored_alpha (4.8s)
+2026-05-17 14:28:04,845 DEBUG daily_refresh Startup refresh output tail for walk_forward_market_anchored_alpha:
+2026-05-17 14:28:00,512 INFO     calibration_market_anchored_alpha_walk_forward Window family=score_event_transition anchor=ask test=2026-05-14 completed=True error=None
+2026-05-17 14:28:01,220 INFO     calibration_market_anchored_alpha_walk_forward Window family=score_event_transition anchor=ask test=2026-05-15 completed=True error=None
+2026-05-17 14:28:02,639 INFO     calibration_market_anchored_alpha_walk_forward Window family=score_event_transition anchor=ask test=2026-05-16 completed=True error=None
+2026-05-17 14:28:02,937 INFO     calibration_market_anchored_alpha_walk_forward Window family=no_score_drift anchor=ask test=2026-05-14 completed=True error=None
+2026-05-17 14:28:03,612 INFO     calibration_market_anchored_alpha_walk_forward Window family=no_score_drift anchor=ask test=2026-05-15 completed=True error=None
+2026-05-17 14:28:04,495 INFO     calibration_market_anchored_alpha_walk_forward Window family=no_score_drift anchor=ask test=2026-05-16 completed=True error=None
+2026-05-17 14:28:04,822 INFO     calibration_market_anchored_alpha_walk_forward Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_market_anchored_alpha_walk_forward\summary.json
+2026-05-17 14:28:04,822 INFO     calibration_market_anchored_alpha_walk_forward Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_market_anchored_alpha_walk_forward\summary.md
+2026-05-17 14:28:04,822 INFO     calibration_market_anchored_alpha_walk_forward Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_market_anchored_alpha_walk_forward\per_window_results.jsonl
+2026-05-17 14:28:04,822 INFO     calibration_market_anchored_alpha_walk_forward Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_market_anchored_alpha_walk_forward\predictions.jsonl
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration_market_anchored_alpha_walk_forward\summary.json
+2026-05-17 14:28:04,845 INFO daily_refresh Startup refresh step started: under_walk_forward
+2026-05-17 14:30:15,393 INFO daily_refresh Startup refresh step ok: under_walk_forward (130.5s)
+2026-05-17 14:30:15,393 DEBUG daily_refresh Startup refresh output tail for under_walk_forward:
+:28:05,051 INFO     under_walk_forward_runner Planned 14 UNDER windows (train=14d, val=3d, test=1d) over 28 dates [2026-04-16..2026-05-16]
+2026-05-17 14:28:05,052 INFO     under_walk_forward_runner [1/14] test=2026-05-03..2026-05-03
+2026-05-17 14:28:10,649 INFO     under_walk_forward_runner   completed: n_train=45 n_test=4 under_signal_win.test_brier=0.3767799290480083
+2026-05-17 14:28:10,649 INFO     under_walk_forward_runner [2/14] test=2026-05-04..2026-05-04
+2026-05-17 14:28:18,801 INFO     under_walk_forward_runner   completed: n_train=42 n_test=3 under_signal_win.test_brier=0.013605304457662839
+2026-05-17 14:28:18,801 INFO     under_walk_forward_runner [3/14] test=2026-05-05..2026-05-05
+2026-05-17 14:28:25,573 INFO     under_walk_forward_runner   completed: n_train=44 n_test=2 under_signal_win.test_brier=0.25336763843258014
+2026-05-17 14:28:25,575 INFO     under_walk_forward_runner [4/14] test=2026-05-06..2026-05-06
+2026-05-17 14:28:32,482 INFO     under_walk_forward_runner   completed: n_train=44 n_test=3 under_signal_win.test_brier=0.2262308966999607
+2026-05-17 14:28:32,482 INFO     under_walk_forward_runner [5/14] test=2026-05-07..2026-05-07
+2026-05-17 14:28:40,687 INFO     under_walk_forward_runner   completed: n_train=43 n_test=2 under_signal_win.test_brier=0.34323914147223616
+2026-05-17 14:28:40,687 INFO     under_walk_forward_runner [6/14] test=2026-05-08..2026-05-08
+2026-05-17 14:28:48,271 INFO     under_walk_forward_runner   completed: n_train=41 n_test=3 under_signal_win.test_brier=0.16460925945679727
+2026-05-17 14:28:48,271 INFO     under_walk_forward_runner [7/14] test=2026-05-09..2026-05-09
+2026-05-17 14:28:48,271 INFO     under_walk_forward_runner   skipped: no_test_data
+2026-05-17 14:28:48,271 INFO     under_walk_forward_runner [8/14] test=2026-05-10..2026-05-10
+2026-05-17 14:28:56,000 INFO     under_walk_forward_runner   completed: n_train=36 n_test=1 under_signal_win.test_brier=0.5889525648104946
+2026-05-17 14:28:56,000 INFO     under_walk_forward_runner [9/14] test=2026-05-11..2026-05-11
+2026-05-17 14:29:04,887 INFO     under_walk_forward_runner   completed: n_train=37 n_test=1 under_signal_win.test_brier=0.29896175936978175
+2026-05-17 14:29:04,887 INFO     under_walk_forward_runner [10/14] test=2026-05-12..2026-05-12
+2026-05-17 14:29:15,053 INFO     under_walk_forward_runner   completed: n_train=39 n_test=70 under_signal_win.test_brier=0.35168404906463235
+2026-05-17 14:29:15,053 INFO     under_walk_forward_runner [11/14] test=2026-05-13..2026-05-13
+2026-05-17 14:29:22,795 INFO     under_walk_forward_runner   completed: n_train=34 n_test=10 under_signal_win.test_brier=0.2902799037885015
+2026-05-17 14:29:22,795 INFO     under_walk_forward_runner [12/14] test=2026-05-14..2026-05-14
+2026-05-17 14:29:30,972 INFO     under_walk_forward_runner   completed: n_train=35 n_test=7 under_signal_win.test_brier=0.3558712948139597
+2026-05-17 14:29:30,972 INFO     under_walk_forward_runner [13/14] test=2026-05-15..2026-05-15
+2026-05-17 14:29:40,297 INFO     under_walk_forward_runner   completed: n_train=36 n_test=9 under_signal_win.test_brier=0.23717931158783057
+2026-05-17 14:29:40,297 INFO     under_walk_forward_runner [14/14] test=2026-05-16..2026-05-16
+2026-05-17 14:30:15,365 INFO     under_walk_forward_runner   completed: n_train=103 n_test=10 under_signal_win.test_brier=0.29620628825885287
+2026-05-17 14:30:15,369 INFO     under_walk_forward_runner Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\under_walk_forward\summary.json
+2026-05-17 14:30:15,369 INFO     under_walk_forward_runner Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\under_walk_forward\per_window_results.jsonl
+2026-05-17 14:30:15,369 INFO     under_walk_forward_runner Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\under_walk_forward\calibration_drift.csv (13 rows)
+2026-05-17 14:30:15,369 INFO     under_walk_forward_runner UNDER walk-forward complete: 13/14 windows completed
+2026-05-17 14:30:15,393 INFO daily_refresh Startup refresh step started: walk_forward_fv_disagreement_quality
+2026-05-17 14:30:16,332 INFO daily_refresh Startup refresh step ok: walk_forward_fv_disagreement_quality (0.9s)
+2026-05-17 14:30:16,332 DEBUG daily_refresh Startup refresh output tail for walk_forward_fv_disagreement_quality:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_disagreement_quality_walk_forward\summary.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\fv_disagreement_quality_walk_forward\predictions.jsonl
+2026-05-17 14:30:16,332 INFO daily_refresh Startup refresh step started: stake_scaling_promotion_analyzer
+2026-05-17 14:30:16,603 INFO daily_refresh Startup refresh step ok: stake_scaling_promotion_analyzer (0.3s)
+2026-05-17 14:30:16,603 DEBUG daily_refresh Startup refresh output tail for stake_scaling_promotion_analyzer:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\stake_scaling_analysis\stake_scaling_analysis.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\stake_scaling_analysis\stake_scaling_analysis.md
+Verdict: need_more_data -- Have 5/30 sessions of shadow data (n_filled_bets=43, low=27, mid=1, high=15).
+2026-05-17 14:30:16,604 INFO daily_refresh Startup refresh step started: walk_forward_certification
+2026-05-17 14:30:16,720 INFO daily_refresh Startup refresh step ok: walk_forward_certification (0.1s)
+2026-05-17 14:30:16,720 DEBUG daily_refresh Startup refresh output tail for walk_forward_certification:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\walk_forward_certification\walk_forward_certification.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\walk_forward_certification\walk_forward_certification.md
+Readiness: PRELIMINARY -- 88 filled bets across 27 sessions.
+2026-05-17 14:30:16,720 INFO daily_refresh Startup refresh step started: quote_engine_shadow_report
+2026-05-17 14:30:16,799 INFO daily_refresh Startup refresh step ok: quote_engine_shadow_report (0.1s)
+2026-05-17 14:30:16,799 DEBUG daily_refresh Startup refresh output tail for quote_engine_shadow_report:
+2026-05-17 14:30:16,792 INFO     build_quote_engine_shadow_report Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\quote_engine_shadow\quote_engine_shadow_report.json (n_rows=0, both_quoted=0)
+2026-05-17 14:30:16,799 INFO daily_refresh Startup refresh step started: under_walk_forward_certification
+2026-05-17 14:30:16,900 INFO daily_refresh Startup refresh step ok: under_walk_forward_certification (0.1s)
+2026-05-17 14:30:16,900 DEBUG daily_refresh Startup refresh output tail for under_walk_forward_certification:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\under_walk_forward_certification\under_walk_forward_certification.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\under_walk_forward_certification\under_walk_forward_certification.md
+2026-05-17 14:30:16,900 INFO daily_refresh Startup refresh step started: weekly_drift_rollup
+2026-05-17 14:30:17,055 INFO daily_refresh Startup refresh step ok: weekly_drift_rollup (0.2s)
+2026-05-17 14:30:17,055 DEBUG daily_refresh Startup refresh output tail for weekly_drift_rollup:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\weekly_rollup\2026-05-17_weekly_rollup.html
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\weekly_rollup\weekly_rollup.html
+2026-05-17 14:30:17,055 INFO daily_refresh Startup refresh step started: auto_promote_demote_daemon
+2026-05-17 14:30:17,160 INFO daily_refresh Startup refresh step ok: auto_promote_demote_daemon (0.1s)
+2026-05-17 14:30:17,160 DEBUG daily_refresh Startup refresh output tail for auto_promote_demote_daemon:
+auto_daemon mode=preview cooldown_days=14 active_date=2026-05-17
+decisions: no_action=3, skipped_preview_only_lever=1
+  ok    [stage2] no_action  (verdict=promote=insufficient_history, demote=no_promotion_to_demote)  -- neither promote nor demote verdict actionable
+  ok    [stage3-v2] no_action  (verdict=promote=insufficient_history, demote=no_promotion_to_demote)  -- neither promote nor demote verdict actionable
+  ok    [stake-scaling] no_action  (verdict=promote=need_more_data, demote=no_promotion_to_demote)  -- neither promote nor demote verdict actionable
+  ok    [gate-threshold] skipped_preview_only_lever  (verdict=hold)  -- verdict=hold; daemon does not auto-act on gate-threshold (threshold value selection is operator-in-loop). Run `promote.py gate-threshold <gate> <value>` manually.
+2026-05-17 14:30:17,160 INFO daily_refresh Startup refresh step started: daemon_retrospective
+2026-05-17 14:30:17,256 INFO daily_refresh Startup refresh step ok: daemon_retrospective (0.1s)
+2026-05-17 14:30:17,256 DEBUG daily_refresh Startup refresh output tail for daemon_retrospective:
+daemon_retrospective: stage2 readiness=needs_more_history (match=0 disagree=0 daemon_only=0); stage3-v2 readiness=needs_more_history (match=0 disagree=0 daemon_only=0); overall_ready_for_act=False
+2026-05-17 14:30:17,256 INFO daily_refresh Startup refresh step started: artifact_lineage_freshness
+2026-05-17 14:30:26,064 INFO daily_refresh Startup refresh step ok: artifact_lineage_freshness (8.8s)
+2026-05-17 14:30:26,064 DEBUG daily_refresh Startup refresh output tail for artifact_lineage_freshness:
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\artifact_lineage_freshness\artifact_lineage_freshness_report.json
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\artifact_lineage_freshness\artifact_lineage_freshness_report.md
+Wrote C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\artifact_lineage_freshness\artifact_lineage_freshness_report.csv
+2026-05-17 14:30:26,064 INFO daily_refresh Startup refresh step started: refresh_health_rollup
+2026-05-17 14:30:26,090 INFO daily_refresh Startup refresh step ok: refresh_health_rollup (0.0s)
+2026-05-17 14:30:26,091 DEBUG daily_refresh Startup refresh output tail for refresh_health_rollup:
+Step roll-up: 57/57 ok
+Latest daily review (2026-05-17): 0 active drift alerts (calibration=0, fill_rate=0, signal_qual=0, regime_mix=0, reconciler=0)
+Walk-forward: 13/14 windows, baseline cumulative profit $-23.77, max DD $-42.47
+Model freshness alerts:
+  - ALERT Stage-2 staging REGRESSES validation Brier by 0.0014 (0.1639 vs 0.1625). Promote with: copy mlb_stage2_run_env.staging.json -> mlb_stage2_run_env.json.
+Stage-3 v2 promotion: no alerts.
+Auto-daemon: auto_daemon mode=preview cooldown_days=14 active_date=2026-05-17
+Stake scaling: verdict=need_more_data (5/30 sessions, 43 filled bets)
+Walk-forward certification: PRELIMINARY (88 filled / 27 dates); gates: 5 KEEP, 0 RETUNE, 0 RETIRE
+WARNING Artifact lineage freshness: status=warning, 30 ok / 16 warning / 0 error, stale_mtime=5, stale_max_date=0
+  - stage2_run_env_cache: output_older_than_newest_input_mtime
+  - candidate_universe_table: output_older_than_newest_input_mtime
+  - calibration_opportunity_training_table: output_older_than_newest_input_mtime
+  - unified_signals_table: output_older_than_newest_input_mtime
+  - model_baseline_signal_win: generated_at_utc_missing
+2026-05-17 14:30:26,091 INFO daily_refresh Startup refresh health summary:
+Step roll-up: 57/57 ok
+Latest daily review (2026-05-17): 0 active drift alerts (calibration=0, fill_rate=0, signal_qual=0, regime_mix=0, reconciler=0)
+Walk-forward: 13/14 windows, baseline cumulative profit $-23.77, max DD $-42.47
+Model freshness alerts:
+  - ALERT Stage-2 staging REGRESSES validation Brier by 0.0014 (0.1639 vs 0.1625). Promote with: copy mlb_stage2_run_env.staging.json -> mlb_stage2_run_env.json.
+Stage-3 v2 promotion: no alerts.
+Auto-daemon: auto_daemon mode=preview cooldown_days=14 active_date=2026-05-17
+Stake scaling: verdict=need_more_data (5/30 sessions, 43 filled bets)
+Walk-forward certification: PRELIMINARY (88 filled / 27 dates); gates: 5 KEEP, 0 RETUNE, 0 RETIRE
+WARNING Artifact lineage freshness: status=warning, 30 ok / 16 warning / 0 error, stale_mtime=5, stale_max_date=0
+  - stage2_run_env_cache: output_older_than_newest_input_mtime
+  - candidate_universe_table: output_older_than_newest_input_mtime
+  - calibration_opportunity_training_table: output_older_than_newest_input_mtime
+  - unified_signals_table: output_older_than_newest_input_mtime
+  - model_baseline_signal_win: generated_at_utc_missing
+2026-05-17 14:30:26,115 INFO live_engine Startup artifact refresh complete: max_refresh_date=2026-05-16 steps_ok=58 steps_failed=0 manifest=C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\startup_refresh\2026-05-17_startup_refresh.json
+2026-05-17 14:30:26,130 INFO mlb_poly_monitor Pitcher cache loaded: 74 pitchers from C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\pitcher_cache.json
+2026-05-17 14:30:26,138 INFO signal_engine Weather v2 cache loaded: games=15 path=C:\Users\micha\Desktop\github\NHL-BOT\baseball\cache\weather\game_weather_2026-05-17.json
+2026-05-17 14:30:26,195 INFO signal_engine Cache loaded: 4298 cells
+2026-05-17 14:30:26,198 INFO signal_engine Stage-2 run-env model loaded: lines=['6.5', '7.5', '8.5', '9.5', '10.5', '11.5']  max_delta=1.10
+2026-05-17 14:30:26,221 INFO team_offense_model TeamOffenseModel loaded (TR20 Model 3, compiled_defaults): 31 teams, mlb_avg_rpg=4.448  betas=(prior=-0.1514 season=+0.1407 mom10=+0.1503)
+2026-05-17 14:30:26,222 INFO signal_engine Team offense model loaded: mlb_avg_rpg=4.448  mlb_avg_total=8.895  window=10 games
+2026-05-17 14:30:26,224 INFO signal_engine Probability calibrator loaded: mode=shadow method=platt path=C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\analysis_output\calibration\signal_win_calibration.json
+2026-05-17 14:30:26,225 INFO signal_engine Ledger: C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\live_trading\master_ledger.jsonl
+2026-05-17 14:30:26,225 INFO signal_engine Session: C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\live_trading\sessions\2026-05-17_session.json
+2026-05-17 14:30:26,226 INFO signal_engine TR10 params: min_ask=0.55(std)/0.60(hi)  min_edge=0.15(std)/0.16(hi)  runs_needed_max=3.5  close_game_rn=4.0(lead<2)  inn5_rn_max=2.5  inn6_rn_max=2.5  min_total=4  min_total_relax=shadow(i=4,t=3,ask>=0.60,lead<=4,rn<=4.50)  blowout_relax=enforce(inn<=7,ask>=0.74,rn<=2.50)  ask_edge_ramp=on(start=0.75,end=0.90,max=0.050)  prob_calibration=shadow  min_inning_high_line=5(>=8.5)  confirm=3  dedup=60s  inning_dedup=2(per-line)  capture=120s  stage2=loaded  stage3=loaded
+2026-05-17 14:30:26,231 INFO live_engine EV policy runtime loaded (mode=shadow): min_ev_per_stake=-0.020  min_p_fill=0.000
+2026-05-17 14:30:26,249 INFO polymarket_client Loaded .env from C:\Users\micha\Desktop\github\NHL-BOT\baseball\.env
+2026-05-17 14:30:27,355 DEBUG rlp.codec Consider installing rusty-rlp to improve pyrlp performance with a rust basedbackend. Not currently functional for Python 3.11
+2026-05-17 14:30:27,818 INFO polymarket_client CLOB init: EOA=0x69062fB5f98aFF1bB7f79322f650eCbd61f67dAa  funder=0xD53b2Cd1f1b681dE5160F43D02A6df508906fc94  sig_type=2  maker_address=0xD53b2Cd1f1b681dE5160F43D02A6df508906fc94  dry_run=False (set POLY_USE_DEPOSIT_WALLET=1 + POLY_DEPOSIT_WALLET=0x... to migrate)
+2026-05-17 14:30:28,041 INFO polymarket_client API key derived: d194305c...
+2026-05-17 14:30:28,044 INFO polymarket_client CLOBOrderClient initialized OK
+2026-05-17 14:30:28,217 INFO live_engine CLOB health check passed -- ready to trade.
+2026-05-17 14:30:28,217 INFO live_engine LiveTradingEngine initialized | stake=flat $10 | budget=$100 | ev_policy=shadow | fv_cancel_min_edge=0.03 | fv_decay_min_age=90s
+2026-05-17 14:30:28,217 INFO live_engine RESUMED session from C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\live_trading\sessions\2026-05-17_session.json: 0 bet(s) loaded  deployed=$0.00  remaining=$100.00 of $100
+2026-05-17 14:30:28,217 INFO mlb_poly_monitor Monitor date=2026-05-17 tz=America/Toronto output=C:\Users\micha\Desktop\github\NHL-BOT\baseball\data\polymarket\mlb_ou
+2026-05-17 14:30:28,251 INFO mlb_poly_monitor Sleep prevention active (SetThreadExecutionState). Screen may still dim.
+2026-05-17 14:30:28,301 INFO mlb_poly_monitor Auto-detected i7-12700K: pinning to P-cores (logical CPUs 0-15)
+2026-05-17 14:30:28,302 INFO mlb_poly_monitor CPU affinity set to logical CPUs: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+2026-05-17 14:30:28,302 INFO mlb_poly_monitor Windows process priority set to HIGH_PRIORITY_CLASS
+2026-05-17 14:30:28,418 INFO mlb_poly_monitor Schedule refreshed for 2026-05-17: 15 games (11 live, 0 final)
+2026-05-17 14:30:29,039 INFO mlb_poly_monitor Mapped BAL@WSH (game 822738) -> mlb-bal-wsh-2026-05-17 (7 O/U lines)
+2026-05-17 14:30:29,686 INFO mlb_poly_monitor Mapped MIA@TB (game 822982) -> mlb-mia-tb-2026-05-17 (7 O/U lines)
+2026-05-17 14:30:30,299 INFO mlb_poly_monitor Mapped KC@STL (game 823058) -> mlb-kc-stl-2026-05-17 (7 O/U lines)
+2026-05-17 14:30:30,954 INFO mlb_poly_monitor Mapped SD@SEA (game 823138) -> mlb-sd-sea-2026-05-17 (7 O/U lines)
+2026-05-17 14:30:31,527 INFO mlb_poly_monitor Mapped PHI@PIT (game 823381) -> mlb-phi-pit-2026-05-17 (7 O/U lines)
+2026-05-17 14:30:32,053 INFO mlb_poly_monitor Mapped NYY@NYM (game 823628) -> mlb-nyy-nym-2026-05-17 (7 O/U lines)
+2026-05-17 14:30:32,600 INFO mlb_poly_monitor Mapped MIL@MIN (game 823708) -> mlb-mil-min-2026-05-17 (7 O/U lines)
+2026-05-17 14:30:33,321 INFO mlb_poly_monitor Mapped LAD@LAA (game 824034) -> mlb-lad-laa-2026-05-17 (7 O/U lines)
+2026-05-17 14:30:33,850 INFO mlb_poly_monitor Mapped TEX@HOU (game 824192) -> mlb-tex-hou-2026-05-17 (7 O/U lines)
+2026-05-17 14:30:34,353 INFO mlb_poly_monitor Mapped TOR@DET (game 824279) -> mlb-tor-det-2026-05-17 (7 O/U lines)
+2026-05-17 14:30:35,468 INFO mlb_poly_monitor Mapped CIN@CLE (game 824436) -> mlb-cin-cle-2026-05-17 (7 O/U lines)
+2026-05-17 14:30:36,157 INFO mlb_poly_monitor Mapped CHC@CWS (game 824599) -> mlb-chc-cws-2026-05-17 (7 O/U lines)
+2026-05-17 14:30:36,693 INFO mlb_poly_monitor Mapped BOS@ATL (game 824923) -> mlb-bos-atl-2026-05-17 (8 O/U lines, 7 ready, 1 still deploying)
+2026-05-17 14:30:37,253 INFO mlb_poly_monitor Mapped SF@ATH (game 825006) -> mlb-sf-oak-2026-05-17 (7 O/U lines)
+2026-05-17 14:30:37,254 INFO mlb_poly_monitor START monitoring game 822982 (MIA@TB, state=Live) — 7 lines ready, 0 deploying
+2026-05-17 14:30:37,254 INFO mlb_poly_monitor START monitoring game 822738 (BAL@WSH, state=Live) — 7 lines ready, 0 deploying
+2026-05-17 14:30:37,255 INFO mlb_poly_monitor START monitoring game 823381 (PHI@PIT, state=Live) — 7 lines ready, 0 deploying
+2026-05-17 14:30:37,255 INFO mlb_poly_monitor START monitoring game 824923 (BOS@ATL, state=Live) — 7 lines ready, 1 deploying
+2026-05-17 14:30:37,255 INFO mlb_poly_monitor START monitoring game 824436 (CIN@CLE, state=Live) — 7 lines ready, 0 deploying
+2026-05-17 14:30:37,255 INFO mlb_poly_monitor START monitoring game 824279 (TOR@DET, state=Live) — 7 lines ready, 0 deploying
+2026-05-17 14:30:37,255 INFO mlb_poly_monitor START monitoring game 823628 (NYY@NYM, state=Live) — 7 lines ready, 0 deploying
+2026-05-17 14:30:37,255 INFO mlb_poly_monitor START monitoring game 824192 (TEX@HOU, state=Live) — 7 lines ready, 0 deploying
+2026-05-17 14:30:37,255 INFO mlb_poly_monitor START monitoring game 824599 (CHC@CWS, state=Live) — 7 lines ready, 0 deploying
+2026-05-17 14:30:37,255 INFO mlb_poly_monitor START monitoring game 823708 (MIL@MIN, state=Live) — 7 lines ready, 0 deploying
+2026-05-17 14:30:37,255 INFO mlb_poly_monitor START monitoring game 823058 (KC@STL, state=Live) — 7 lines ready, 0 deploying
+2026-05-17 14:30:37,255 DEBUG mlb_poly_monitor Polling 154 token books (11 active games)
+2026-05-17 14:30:46,640 DEBUG signal_engine tick_buffer health: 73 line_states, 73 nonempty, len min/median/max=1/1/1, newest_age max=0.0s, oldest_age max=0.0s
+2026-05-17 14:30:46,640 DEBUG mlb_poly_monitor Wrote 154 tick snapshots
+2026-05-17 14:31:06,574 DEBUG mlb_poly_monitor Schedule state-change rollup for 2026-05-17: changes_total=1 changes_since_last_log=1 games=15 live=11 final=0 states=live=11|final=0:1
+2026-05-17 14:32:34,561 INFO mlb_poly_monitor Market discovery no-new-mapping rollup: cycles_since_last=1 games_attempted_since_last=1 total_cycles=1 total_games_attempted=1
+2026-05-17 14:34:41,674 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 14:36:49,108 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 14:38:56,137 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 14:41:03,283 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 14:43:10,761 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 14:45:19,133 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 14:47:26,214 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 14:49:33,700 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 14:51:40,619 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 14:53:08,507 DEBUG mlb_poly_monitor Schedule state-change rollup for 2026-05-17: changes_total=25 changes_since_last_log=24 games=15 live=12 final=0 states=live=11|final=0:15, live=12|final=0:10
+2026-05-17 14:53:47,760 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 14:55:55,152 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 14:58:02,134 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 15:00:09,178 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 15:00:47,802 WARNING signal_engine tick_buffer health: 73 line_states, 73 nonempty, len min/median/max=65/120/120, newest_age max=1175.2s, oldest_age max=1801.2s
+2026-05-17 15:02:16,625 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 15:04:23,674 INFO mlb_poly_monitor Market discovery no-new-mapping rollup: cycles_since_last=15 games_attempted_since_last=15 total_cycles=16 total_games_attempted=16
+2026-05-17 15:06:30,699 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 15:08:38,193 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 15:10:06,072 INFO mlb_poly_monitor STOP monitoring game 822982 (MIA@TB, state=Final)
+2026-05-17 15:10:14,585 INFO live_engine === GAME SUMMARY (2026-05-17) -- 0 bets placed | 1 games final | 5/7 listed lines went over ===
+2026-05-17 15:10:14,585 INFO live_engine   MIA@TB  final=3-6 (total=9) | no bet
+2026-05-17 15:10:41,851 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 15:12:46,771 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 15:13:40,323 DEBUG mlb_poly_monitor Schedule state-change rollup for 2026-05-17: changes_total=50 changes_since_last_log=25 games=15 live=10 final=1 states=live=12|final=0:26, live=11|final=0:18, live=10|final=1:6
+2026-05-17 15:14:52,271 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 15:16:57,148 DEBUG mlb_poly_monitor Market discovery attempted on 1 games; no new mappings this cycle.
+2026-05-17 15:18:35,264 DEBUG mlb_poly_monitor Polling 140 token books (10 active games)
+2026-05-17 15:18:43,771 DEBUG mlb_poly_monitor Wrote 140 tick snapshots

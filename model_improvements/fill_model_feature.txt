@@ -1,0 +1,482 @@
+================================================================================
+FILL-MODEL FEATURE DESIGN — Queue Position & Adverse-Selection Proxy
+Author: Claude  •  Date: 2026-04-27
+================================================================================
+
+PURPOSE
+-------
+Design a feature set (and the data-capture and modeling work behind it) that
+attacks the Winner's-Curse gap directly: the 40pp difference between
+filled-bet win rate (54.5%) and cancelled-bet counterfactual win rate
+(94.7%).
+
+The thesis: the orders that get filled are not a random subset of the
+orders we attempt to place. They are the subset that informed
+counterparties chose to sell to us. We need features that distinguish
+"likely-uninformed fill" from "likely-informed fill" BEFORE we place the
+order, so the EV policy can either skip the trade or reprice it.
+
+
+================================================================================
+PART 1 — WHAT WE ARE ACTUALLY MODELING
+================================================================================
+
+The decision-time question is NOT "will my order get filled?" alone. It is:
+
+   E[realized_pnl | place order at limit L] =
+        p_fill(L) * E[pnl | filled at L]
+      + (1 - p_fill(L)) * 0
+
+The Winner's Curse means E[pnl | filled at L] is systematically lower than
+the unconditional E[pnl] from our signal model. The fill itself is
+information: we got filled because someone wanted to sell at L.
+
+So we need TWO probabilities that depend on book state at decision time:
+
+   p_fill        = P(order at limit L fills within N seconds)
+   p_adverse     = P(fill is from an informed counterparty | filled)
+
+Equivalently, we can collapse them into:
+   E[pnl | filled at L]  =  p_win_uninformed * uninformed_pnl
+                          + (1 - p_win_uninformed) * adverse_pnl
+
+We do not need to identify counterparties to estimate this. We need
+features that correlate with the joint event "this order was filled AND
+the bet lost". That is what the model learns directly from filled-bet
+outcomes.
+
+
+================================================================================
+PART 2 — DATA WE ALREADY CAPTURE
+================================================================================
+
+Per the current pipeline (signal_pipeline.py + monitor + book captures):
+
+  Pre-signal / decision-time:
+    - bid, ask, spread, mid (per tick, ~2.5s cadence)
+    - LTP (last traded price) at signal time — already logged
+    - inning, outs, runners, scores
+    - FV (Stage-1/2/3), edge, runs_needed
+    - venue, weather (via Stage-2 inputs)
+
+  Post-signal book captures (capture-duration, capture-interval, capture-depth):
+    - Snapshots of bid/ask + depth at top N levels for ~2 minutes
+    - Captured every 1 second by default with depth=5
+    - Stored in data/live_trading/book_captures/
+
+  Order lifecycle (live_engine):
+    - decision_ask, posted_limit, fill_price (if filled)
+    - order_placed_at, filled_at, cancelled_at
+    - ask_5s, ask_drop_5s (ask reversal detection)
+    - cancel_reason
+
+  Outcome:
+    - final_total, won, payout, profit
+
+
+================================================================================
+PART 3 — DATA WE NEED TO ADD
+================================================================================
+
+The book captures snapshot the BOOK but not the TAPE. The tape (sequence
+of executed trades) is the most direct evidence of informed flow. To
+build a credible adverse-selection proxy we need:
+
+  1. TRADE TAPE CAPTURE
+     - Time, price, size of each executed trade in a rolling window
+       around signal placement (e.g. 60s pre-signal + 120s post)
+     - Source: Polymarket trades endpoint (per token_id)
+     - Persist to data/live_trading/tape_captures/<date>/<bet_id>.json
+
+  2. TRADE TAPE DELTA — "what happened in the last X seconds before signal"
+     - Pre-signal trade count, volume, signed flow (buy vs sell aggressor)
+     - This is the single most important new feature.
+
+  3. BOOK SNAPSHOT AT EXACT SIGNAL INSTANT
+     - We currently grab depth post-signal. We need a synchronous
+       snapshot at the moment _process_tick fires the signal so the
+       feature reflects what we saw, not what was there 1 second later.
+     - Source: extend signal_pipeline to call book_depth() inline before
+       calling _place_order().
+
+  4. ORDER BOOK HISTORY — track depth movement, not just current state
+     - Keep a rolling 60-second buffer of (bid, ask, top-N-depth) per
+       monitored token, so velocity / drift features are computable.
+     - Lives in monitor or pipeline-side cache, not on disk.
+
+
+================================================================================
+PART 4 — FEATURE CATALOG
+================================================================================
+
+Six families, ranked by expected leverage on the Winner's-Curse problem.
+Each feature should be computable AT DECISION TIME using only data
+available before the order is placed.
+
+----- FAMILY A: TAPE / RECENT FLOW (highest priority) -----
+
+A1. trades_last_5s_count
+    Number of trades executed on this token in the last 5 seconds.
+    High = active market, informed flow likely present.
+    Low = stale book, fills are likely from market makers.
+
+A2. trades_last_30s_count
+    Same, longer window. Captures regime, not just micro-burst.
+
+A3. signed_volume_last_30s
+    Sum of (size * sign), where sign = +1 if trade hit ask (aggressor buy),
+    -1 if trade hit bid (aggressor sell). Computed by comparing trade
+    price to prevailing book at trade time (use closest preceding tick).
+    Negative = sellers leaning in = adverse fill risk for our buy.
+
+A4. ltp_minus_ask_last_3_trades
+    Average of (last_3_trades_price - ask_at_trade_time).
+    Negative = recent prints below ask = sellers crossing the spread.
+    This is one of the cleanest informed-flow signals available.
+
+A5. seconds_since_last_trade
+    Staleness of the tape. Very long gap → our fill, if it happens, is
+    likely from a market maker rebalancing rather than informed flow.
+
+----- FAMILY B: BOOK STATE AT DECISION (high priority) -----
+
+B1. ask_depth_at_touch
+    Size resting at best ask. Thin = either uninformed taker about to
+    clear it, or market maker quote we can lift cleanly. Thick = either
+    inventory dump or informed seller waiting.
+
+B2. bid_depth_at_touch
+    Size resting at best bid. Compared with ask depth gives imbalance.
+
+B3. book_imbalance_top1
+    bid_depth_at_touch / (bid_depth_at_touch + ask_depth_at_touch).
+    > 0.6 = pressure upward (good for our over-buy).
+    < 0.4 = pressure downward (sellers stacked, beware).
+
+B4. book_imbalance_top5
+    Same metric across top 5 levels. Captures deeper resting interest,
+    less manipulable by single-quote spoofing.
+
+B5. depth_below_our_limit
+    Total ask-side size at prices <= our intended limit L.
+    This is the closest thing to "queue position" we get on Polymarket:
+    it is the volume that would clear before our order is at the front.
+    Feeds directly into a "time-to-fill" expectation.
+
+B6. depth_at_limit_L
+    Specifically size resting at L (if L >= ask). Tells us whether
+    posting AT the level adds queue depth (we go to back of FIFO at L)
+    or whether L is empty (we set the new top of book).
+
+----- FAMILY C: BOOK VELOCITY / DRIFT (high priority) -----
+
+C1. ask_velocity_5s
+    (ask_now - ask_5s_ago) / 5. Negative = ask falling toward us.
+    Falling fast = either we're about to get a great fill, or sellers
+    are pushing because they know something. The model learns which.
+
+C2. ask_velocity_30s
+    Longer window, captures regime.
+
+C3. mid_drift_30s
+    (mid_now - mid_30s_ago). Sign and magnitude of price movement
+    through the candidate window.
+
+C4. spread_now_vs_spread_30s_avg
+    Spread compression around our entry can mean liquidity arriving
+    (good), or it can mean MMs widening and tightening as they
+    rebalance (neutral). Model learns separator.
+
+C5. ask_volatility_30s
+    Stdev of ask over 30s. High vol = unstable book, fills are noisy.
+
+----- FAMILY D: PRICING POSITION (medium priority) -----
+
+D1. limit_minus_bid
+    Where our limit sits relative to best bid. Larger = more aggressive
+    (faster fill, less queue) but pays more.
+
+D2. limit_minus_ask
+    Negative if we're below ask (passive); zero if at touch; positive
+    if we're crossing (taker-style limit). The number directly
+    parameterizes our trade-off.
+
+D3. spread_normalized_limit
+    (limit - bid) / spread. The current spread_factor (0.65) is
+    exactly this feature, hard-coded. Including it explicitly lets the
+    model learn the right value as a function of regime.
+
+D4. ltp_minus_limit
+    LTP - L. Positive = our limit is below recent traded price (we want
+    a discount). Negative = our limit is above LTP (we're chasing).
+
+----- FAMILY E: SIGNAL INTERACTION (medium priority) -----
+
+E1. fv_minus_ask
+    Already captured as edge. Repeat for completeness.
+
+E2. fv_minus_ltp
+    Model FV vs last traded price. Large positive = market is selling
+    below our model's value, i.e., either we found alpha or we are
+    wrong and the market knows. Bucketed, this is the core
+    edge-vs-adverse-selection separator.
+
+E3. inning, runs_needed, runners_state
+    Already captured. Include in fill model so it can learn that, e.g.,
+    inning-7 large-edge fills are systematically adverse (our existing
+    fv_ask_gap_max gate is a hand-coded version of this).
+
+----- FAMILY F: GAME-CLOCK PRESSURE (lower priority) -----
+
+F1. innings_remaining
+    More remaining = more variance = more informed advantage on
+    short-term moves.
+
+F2. estimated_seconds_until_next_pitch
+    Hard to compute reliably from StatsAPI; defer unless cheap.
+
+F3. is_commercial_break
+    Half-inning transitions are when book turns over and stale quotes
+    update. Fills during commercials are systematically different.
+
+
+================================================================================
+PART 5 — MODELING ARCHITECTURE
+================================================================================
+
+OPTION 1 — Two-stage decomposition (preferred)
+----------------------------------------------
+Train two separate models:
+
+  M_fill: P(filled within N seconds | book features at decision)
+    Training data: all signals (filled + cancelled), label = filled
+    Features: A, B, C, D
+    Loss: log loss
+
+  M_win_if_filled: P(bet wins | filled, all features at decision)
+    Training data: filled signals only, label = won
+    Features: A, B, C, D, E, F + signal model features
+    Loss: log loss
+
+Then at decision time:
+    EV_realized(L) = p_fill(L) * (p_win * payout - (1 - p_win) * cost)
+
+Pros:
+  - Interpretable. We can see whether p_fill or p_win is dragging EV.
+  - p_fill is well-defined; p_win conditional on fill captures Winner's
+    Curse as a model artifact, not a hidden assumption.
+  - Already aligns with backtest_ev_policy.py architecture.
+
+Cons:
+  - Two models to maintain.
+  - Joint estimation is more sample-efficient than two independent fits.
+
+OPTION 2 — Single direct model
+------------------------------
+Train one model: E[realized_pnl | place at L, features].
+Loss: regression on realized_pnl (= 0 if cancelled, payout-cost if won,
+-cost if lost).
+
+Pros:
+  - One model, less infrastructure.
+  - Optimizes the actual decision target directly.
+
+Cons:
+  - Sample-inefficient: the realized_pnl signal is sparse and noisy.
+  - Loses interpretability.
+  - Cannot diagnose "is this a fill problem or a selection problem".
+
+Recommendation: OPTION 1. Already matches the EV policy scaffold; gives
+us actionable diagnostics by source.
+
+CALIBRATION
+-----------
+Both models must be calibrated, not just discriminative. AUC of 0.7
+with miscalibrated probabilities will produce mis-sized Kelly bets.
+
+Apply Platt scaling or isotonic regression on the validation split
+(probability_calibration.py already supports both). Reliability
+diagrams per edge bucket and per inning are required diagnostics.
+
+
+================================================================================
+PART 6 — VALIDATION METHODOLOGY
+================================================================================
+
+The Winner's-Curse fingerprint gives us a built-in evaluation metric:
+the gap between filled WR and cancelled-counterfactual WR.
+
+Define:
+   gap_baseline = WR_filled_baseline - WR_cancelled_baseline   (~ -40pp today)
+   gap_with_M  = WR_filled_with_M   - WR_cancelled_with_M
+
+The model is doing useful work iff gap_with_M > gap_baseline, i.e., if
+the orders the model says to place have a smaller (less negative)
+adverse-selection gap than the orders the current rule places.
+
+PRIMARY METRICS
+---------------
+  1. Calibration: Brier score and reliability diagram per probability
+     bucket. Required: max calibration error < 5pp.
+
+  2. Discrimination: AUC of M_fill and M_win_if_filled on test split.
+     Target: AUC > 0.60. (Higher is suspicious — would indicate leakage.)
+
+  3. Realized EV improvement: backtest the policy decision rule
+       trade if EV_realized(M) > 0
+     on the test split and compare realized PnL vs current rule.
+
+  4. Adverse-selection gap shrinkage: as defined above. The single
+     most informative top-line metric.
+
+WALK-FORWARD VALIDATION
+-----------------------
+Per Roadmap #7, train on dates < D, validate on D, test on D+1..D+7,
+roll forward. Aggregate test-window metrics across all rolls.
+
+Without walk-forward, any improvement is plausibly overfitting to
+session-level idiosyncrasies (lineup, weather, even a single phantom
+score event).
+
+
+================================================================================
+PART 7 — LIVE INTEGRATION PLAN
+================================================================================
+
+Mirror the existing EV policy gating mechanism (--ev-policy-mode
+off|shadow|enforce). Add:
+
+   --fill-model-path        path to saved M_fill artifact
+   --win-model-path         path to saved M_win_if_filled artifact
+   --fill-model-mode        off|shadow|enforce|ab
+   --fill-ev-min            decision threshold on EV_realized
+
+PHASE 1: SHADOW (4-6 weeks)
+  - Compute EV_realized on every candidate
+  - Log model prediction next to actual decision
+  - Do NOT change trading behavior
+  - Build calibration evidence
+
+PHASE 2: AB (2-4 weeks)
+  - Randomize each candidate to control (current rule) or treatment
+    (EV-policy rule), 50/50
+  - Compare realized PnL between arms
+  - Sufficient if the EV policy treats >= 30% of candidates differently
+
+PHASE 3: ENFORCE
+  - Treatment rule wins AB statistically AND adverse-selection gap
+    closes by >= 10pp in shadow
+  - Cut over fully
+
+KILL SWITCH
+  - If during enforce phase, realized PnL falls 1.5x below shadow-period
+    expected value over a 20-bet window, auto-revert to current rule
+    and alert.
+
+
+================================================================================
+PART 8 — IMPLEMENTATION MILESTONES
+================================================================================
+
+M1. Tape capture infrastructure (1 week)
+    - Add trade-tape fetcher to monitor or signal_pipeline
+    - Persist to data/live_trading/tape_captures/
+    - Backfill: write a one-off that pulls historical trades from
+      Polymarket for past sessions where we have signals
+    Files: scripts/monitor/monitor_mlb_polymarket_ou.py (new method),
+           scripts/trading/signal_pipeline.py (call at decision time)
+
+M2. Synchronous decision-time book snapshot (2 days)
+    - Replace post-signal capture-only with pre-signal inline grab
+    - Persist alongside existing book_captures
+    Files: scripts/trading/signal_pipeline.py
+
+M3. Feature builder (1 week)
+    - New module: scripts/analysis/build_fill_features.py
+    - Reads tape captures + book captures + unified signals table
+    - Emits one-row-per-signal table with all Family A-F features
+    - Writes to data/analysis_output/fill_features/
+    Files: new file
+
+M4. Train M_fill and M_win_if_filled (1 week)
+    - Extend train_baseline_models.py or new ev_policy variant
+    - Include Family A-F features alongside existing pre-signal features
+    - Calibrate, save artifacts under data/analysis_output/fill_policy/
+    Files: scripts/analysis/train_baseline_models.py or new trainer
+
+M5. Walk-forward backtest harness (1 week)
+    - Per Roadmap #7
+    - Required before any live integration beyond shadow
+    Files: new scripts/analysis/walk_forward_runner.py
+
+M6. Shadow integration (3 days)
+    - Load artifacts in live_engine, compute EV_realized per candidate
+    - Log alongside current decision; do not gate
+    Files: scripts/trading/live_engine.py, scripts/trading/ev_policy.py
+           (extend LogisticJsonScorer or add new FillModelScorer class)
+
+M7. AB and enforce phases (controlled, weeks of running)
+
+
+================================================================================
+PART 9 — RISKS AND OPEN QUESTIONS
+================================================================================
+
+R1. Polymarket tape API rate limits
+    Tape pulls per signal could hit rate limits. Need to design with a
+    rolling cache and conservative fetch cadence. Investigate before M1
+    starts.
+
+R2. Tape signedness inference
+    "Was this trade an aggressor buy or sell?" requires comparing trade
+    price to prevailing book at trade time. If trade timestamps are
+    coarser than tick timestamps, signedness is noisy. May need to use
+    next-best heuristic (price relative to mid).
+
+R3. Sample size for M_win_if_filled
+    Conditional on filled, our training sample is currently ~11 events.
+    M_win_if_filled cannot be reliably trained on this. We need ~50+
+    fills before this model is meaningful. Until then, M_fill alone
+    plus the baseline win model is the operational policy.
+
+R4. Feature stationarity
+    Tape and book microstructure can shift if Polymarket liquidity
+    changes (new market makers, volume growth). Plan to retrain M_fill
+    on a rolling window (e.g., last 8 weeks), not a fixed historical
+    set.
+
+R5. Adversarial response
+    If our policy successfully avoids adverse fills, sophisticated
+    counterparties may eventually adapt their quoting to fool the
+    features (e.g., posting fake depth to manipulate book_imbalance).
+    Watch for sudden feature-distribution shifts in live data.
+
+
+================================================================================
+SUMMARY
+================================================================================
+
+The Winner's-Curse gap (40pp filled-vs-cancelled WR difference) is the
+single largest source of leakage in the current strategy. It cannot be
+closed by gate tuning because the issue is which orders FILL, not which
+orders we place.
+
+Closing it requires features that proxy for informed-counterparty
+presence at decision time. The strongest such features are tape-derived
+(recent signed flow, LTP-vs-ask gap, trade frequency), followed by
+book-state (depth imbalance, depth below our limit) and book-velocity
+(ask falling fast). All are computable from Polymarket public data with
+modest infrastructure additions.
+
+The recommended modeling approach is a two-stage decomposition (M_fill
+and M_win_if_filled) feeding the existing EV policy scaffold. The
+recommended rollout is shadow → AB → enforce, mirroring the existing EV
+policy gating pattern.
+
+Highest-leverage milestone is M1 (tape capture). Without trade tape,
+none of the Family A features exist and the rest of the pipeline is
+half-blind. Start there.
+
+================================================================================
+END
+================================================================================

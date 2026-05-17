@@ -1,0 +1,298 @@
+TEST RUN 3 EVALUATION + TEST RUN 4 CHANGES
+==========================================
+Date evaluated: 2026-04-10
+Source data: 2026-04-09 session (paper_trading/sessions/2026-04-09_session.json)
+
+--------------------------------------------
+TEST RUN 3 RESULTS SUMMARY
+--------------------------------------------
+  Bets placed : 2
+  Win/Loss    : 2W / 0L
+  Win rate    : 100%
+  Total staked: $200 (notional)
+  Net profit  : +$108.86
+  ROI         : +54.4%
+
+Params used (TR3 — all 5 new filters active):
+  edge_threshold         = 0.10
+  jump_threshold         = 0.06
+  max_spread             = 0.20
+  min_inning             = 4        (7.5 lines)
+  min_inning_high_line   = 5        (lines >= 8.5)
+  min_entry_ask          = 0.55     (raised from 0.45)
+  min_current_total      = 4        (new)
+  confirmation_ticks     = 3
+  event_dedup_secs       = 60.0
+  inning_dedup_gap       = 3        (new)
+  inning_dedup_edge_gap  = 0.05     (new)
+  stake                  = $100
+
+Games tracked on 2026-04-09:
+  ATH@NYY: final 1-0 (low scoring — correctly skipped)
+  CIN@MIA: final 1-8 (2 bets placed — both won)
+  COL@SD:  final 3-7 (extra innings — monitor had stopped by start time)
+  CWS@KC:  final 2-0 (low scoring — correctly skipped)
+  DET@MIN: final 1-3 (low scoring — correctly skipped)
+
+--------------------------------------------
+CUMULATIVE LEDGER ACROSS ALL RUNS
+--------------------------------------------
+  Run  | Date       | Bets | W  | L  | Profit    | ROI
+  -----|------------|------|----|----|-----------|---------
+  TR1  | 2026-04-06 |   11 |  7 |  3 |  +$194.14 | +19.4%
+  TR2  | 2026-04-08 |   12 |  5 |  7 |  -$289.63 | -24.1%
+  TR3  | 2026-04-09 |    2 |  2 |  0 |  +$108.86 | +54.4%
+  -----|------------|------|----|----|-----------|---------
+  ALL  |            |   25 | 14 | 11 |   +$13.37 |  +0.6%
+
+Note: Ledger groups by placed_at date, so ATH@NYY (TR2 bet placed at 00:14 UTC
+on 2026-04-09) appears in the ledger's "2026-04-09" bucket as a loss (-$100)
+but is counted in TR2's session file. Isolated TR3 session profit = +$108.86.
+
+Overall: 25 bets, 14W/11L (56% win rate), near-breakeven total ROI.
+This is still too small a sample for significance — see note at end.
+
+--------------------------------------------
+VALIDATION: TR3 FILTER AUDIT
+--------------------------------------------
+
+The TR3 filters all fired correctly. Below is every signal the model
+evaluated on CIN@MIA and why each was accepted or blocked:
+
+  TIME   EVENT      LINE  ASK   WHY BLOCKED / ACCEPTED
+  17:17  4B 0->3    7.5   0.59  BLOCKED: total=3 < min_current_total=4
+  17:20  4B 0->4    7.5   0.61  PLACED (bet 1) — total=4, ask>=0.55, gap OK
+  17:20  4B 0->4    8.5   0.51  BLOCKED: ask=0.51 < 0.55
+  17:34  5T CIN+1   7.5   0.65  BLOCKED: inning_dedup gap=1 inning (need 3)
+  17:34  5T CIN+1   8.5   0.52  BLOCKED: ask=0.52 < 0.55
+  17:59  6B MIA+1   7.5   0.68  BLOCKED: inning_dedup gap=2 innings (need 3)
+  17:59  6B MIA+1   8.5   0.51  BLOCKED: ask=0.51 < 0.55
+  18:20  7B MIA+1   7.5   0.90  BLOCKED: event_dedup — 8.5 had higher edge
+  18:20  7B MIA+1   8.5   0.69  PLACED (bet 2) — inning gap=3, edge wins dedup
+
+All filters are operating as designed. The system produced 0 false positives.
+
+--------------------------------------------
+ANALYSIS: THE 2 BETS PLACED
+--------------------------------------------
+
+BET 1: CIN@MIA O/U 7.5 OVER | Entry 0.61 | Edge 0.293 | Inn: Bot4 1out
+  Score at entry: CIN 0, MIA 4 (total=4) | Inferred: MIA scored again
+  FV = 0.903 (very high — MIA leads big, 5+ innings left for over)
+  Final: 1-8 (total=9 >> 7.5) — dominant win
+  Payout: $163.93 | Profit: +$63.93
+
+BET 2: CIN@MIA O/U 8.5 OVER | Entry 0.69 | Edge 0.197 | Inn: Bot7 1out
+  Score at entry: CIN 1, MIA 6 (total=7) | Inferred: MIA scored again
+  FV = 0.887 (high — only 1.5 runs needed, 2+ innings left)
+  Pace check: (7/7)*9 = 9.0 >= 7.0 (line-1.5) — passes
+  Final: 1-8 (total=9 > 8.5) — win
+  Payout: $144.93 | Profit: +$44.93
+
+Both bets were on the same game, different lines, placed 60 minutes apart
+(inning gap = 7-4 = 3, exactly meeting the threshold). The game was a
+clear structural winner: MIA led 4-0 in inning 4 with a lopsided score
+suggesting the over was structurally likely.
+
+--------------------------------------------
+WHAT THE MODEL MISSED (FORGONE PROFIT ANALYSIS)
+--------------------------------------------
+
+The inning_dedup_gap=3 blocked 2 additional signals that would have won:
+
+  5T (17:34): CIN 1, MIA 4, total=5, inn=5 → 7.5 line ask=0.65
+    Payout if taken: $153.85 | Profit: +$53.85 | Final: WON (total=9>7.5)
+    Blocked by: inning_dedup gap=1 (last bet was inn=4, need gap=3)
+
+  6B (17:59): CIN 1, MIA 5, total=6, inn=6 → 7.5 line ask=0.68
+    Payout if taken: $147.06 | Profit: +$47.06 | Final: WON (total=9>7.5)
+    Blocked by: inning_dedup gap=2 (last bet was inn=4, need gap=3)
+
+Total forgone profit: +$100.91 across 2 blocked bets that would have won.
+
+IMPORTANT CAVEAT: Both blocked bets were on the same underlying game.
+We can only know they "should" have won in hindsight. The inning_dedup
+was designed specifically to prevent over-exposure to a single game.
+This is the core tension: be aggressive on high-scoring games vs avoid
+correlated risk. With 25 total bets, this is a genuine design question.
+
+The 8.5 line at 5T and 6B was blocked by ask<0.55 — this is correct.
+The market was pricing 8.5 at only 0.51-0.52 even when total=5-6, which
+reflects the market's correct assessment that 3+ more runs were unlikely.
+Only after total=7 did ask rise to 0.69, making 8.5 viable. This validates
+the min_entry_ask=0.55 filter for high-line bets.
+
+--------------------------------------------
+SIGNAL QUALITY ON 2026-04-09
+--------------------------------------------
+
+Analysis script results (15 scoring events across 5 games):
+  FADE_UNDER events: 9/15 = 60%
+  FADE_OVER  events: 6/15 = 40%
+
+  CIN@MIA  7.5: 3 events, 100% FADE_UNDER (avg edge -0.162)
+  CIN@MIA  8.5: 6 events, 100% FADE_UNDER (avg edge -0.122)
+  COL@SD   8.5: 2 events, 50/50 (mixed — low-scoring early innings)
+  CWS@KC   9.5: 1 event,  100% FADE_OVER
+  DET@MIN  8.5: 3 events, 67% FADE_OVER
+
+FADE_UNDER continues to dominate on high-scoring games (CIN@MIA) and
+appears less consistent on low-scoring or late-game events. This is expected:
+the signal is strongest when there are still many innings for more scoring.
+
+Historical FADE_UNDER consistency:
+  2026-04-06: 61% FADE_UNDER  (data from TR1 analysis day)
+  2026-04-08: 74% FADE_UNDER  (TR2 analysis)
+  2026-04-09: 60% FADE_UNDER  (TR3 analysis — lower, fewer events)
+
+Average: ~65% FADE_UNDER across all data. The underlying signal is real
+and persistent. The betting challenge is distinguishing structural vs noise.
+
+--------------------------------------------
+KEY FINDINGS — TR3 EVALUATION
+--------------------------------------------
+
+1. TR3 FILTERS ELIMINATED FALSE POSITIVES ENTIRELY
+   Zero noise-spike bets (0/2 = 0% false positive rate vs 3/11 in TR1).
+   The combination of confirmation_ticks=3 + min_entry_ask=0.55 +
+   min_current_total=4 cleanly separated real scoring events from noise.
+   This represents a structural improvement in signal quality.
+
+2. VOLUME IS THE NEW PROBLEM
+   TR3 produced only 2 bets despite tracking 5 games. The strict filters
+   correctly identified 4 of 5 games as low-scoring (final totals: 1, 3, 2, 3)
+   and fired only on the one genuinely high-scoring game (final total: 9).
+   However, on that game, the inning_dedup_gap=3 prevented 2 additional
+   valid bets. Volume is now the binding constraint, not precision.
+
+3. inning_dedup_gap=3 IS TOO CONSERVATIVE
+   The rationale was to prevent correlated risk from betting the same game
+   twice. But analysis shows: on a game like CIN@MIA where the market is
+   consistently underpricing the over (9 consecutive FADE_UNDER events),
+   betting multiple times is precisely what we WANT to do. The game state
+   after each scoring event is genuinely new information.
+   Evidence: both forgone bets at inn5 and inn6 were structurally valid
+   (high ask: 0.65, 0.68; game clearly trending toward high total; final=9).
+
+   Proposed fix: reduce to inning_dedup_gap=2.
+
+4. THE 8.5 LINE IS HARD TO BET ON CIN@MIA-TYPE GAMES
+   Even with MIA dominating, the 8.5 ask stayed at 0.51-0.52 through innings
+   4-6. min_entry_ask=0.55 correctly blocked these — the market was pricing
+   8.5 correctly (game was 0-4, 1-4, 1-5 — total only 4-6, still far from 8.5).
+   The 8.5 bet only became viable at inn=7 when total=7 and ask=0.69.
+   This is expected behavior. For high-line bets, we naturally require more
+   game state evidence before the market moves the ask above 0.55.
+
+5. MONITOR RUNTIME COVERAGE
+   COL@SD started at 01:25 UTC (evening Pacific time) and ended in the 12th
+   inning at 10 runs total — an ideal betting game that was missed because
+   the monitor wasn't running overnight. If we want to capture these games,
+   we need to ensure the monitor runs continuously, especially for West Coast
+   games which end late.
+
+6. SMALL SAMPLE — INTERPRET WITH CAUTION
+   25 total settled bets is well below the minimum for statistical confidence.
+   At this sample size, a 60% win rate is statistically indistinguishable from
+   50% (null hypothesis cannot be rejected). The positive signs are:
+   - Signal direction is consistent (FADE_UNDER ~65% across all data)
+   - TR3 filters correctly identified the high-scoring game
+   - No structural false positives in TR2 or TR3
+   We need 50-100 more settled bets before drawing firm ROI conclusions.
+
+--------------------------------------------
+TEST RUN 4 CHANGES
+--------------------------------------------
+
+CHANGE 1: REDUCE inning_dedup_gap FROM 3 TO 2
+  Problem: A gap of 3 is preventing valid follow-on bets on high-scoring
+    games. On CIN@MIA, innings 5 and 6 both had valid signals that would
+    have won, blocked by the 3-inning requirement.
+  Fix: Change DEFAULT_INNING_DEDUP_GAP = 2. This allows re-entry after 2
+    innings instead of 3. The 60-second same-event dedup still prevents
+    duplicate bets on the same scoring play.
+  Expected effect: On a 9-inning game where we bet at inning 4, we can
+    now re-enter at inning 6 (gap=2) instead of inning 7 (gap=3).
+    Adds roughly 1 extra bet per high-scoring game. For CIN@MIA type games
+    this would have added +$53.85 profit (5T bet at ask=0.65).
+  Risk: Slight increase in correlated exposure. Mitigated by the fact that
+    each new signal represents genuinely new game state.
+
+CHANGE 2: ADD SEPARATE PER-LINE inning_dedup TRACKING
+  Problem: The current inning_dedup tracks the LAST BET on any line per
+    game. So if we bet 7.5 at inn=4, neither 7.5 nor 8.5 can re-enter
+    until inn=7 (gap=3). But 8.5 at inn=4 would be on a different
+    line with different risk profile.
+  Fix: Track last_bet_inning per (game_pk, line) separately, not just
+    per game_pk. This allows the 7.5 line to have its own dedup window
+    independent of the 8.5 line.
+  Expected effect: More granular dedup. On CIN@MIA, if 7.5 bets at inn=4
+    and 8.5 never bets (ask<0.55 early), 8.5 can fire independently at
+    inn=7 without the 7.5's dedup clock affecting it.
+  Note: The 60s same-event dedup still applies per game_pk, so two lines
+    firing at exactly the same scoring event still chooses the highest edge.
+
+CHANGE 3: NO NEW MAJOR FILTER CHANGES
+  The TR3 filters are working correctly. The remaining TR3 filters should
+  be kept unchanged for TR4 to isolate the impact of Changes 1 and 2:
+    - min_entry_ask = 0.55    (keep — correctly blocks thin books)
+    - min_current_total = 4   (keep — correctly blocks pitcher's duels)
+    - runs_pace_filter        (keep — correctly blocks stalled games)
+    - min_inning_high_line=5  (keep — prevents premature high-line bets)
+    - confirmation_ticks = 3  (keep — successfully prevents noise spikes)
+
+--------------------------------------------
+UPDATED PARAMS FOR TEST RUN 4
+--------------------------------------------
+  edge_threshold           = 0.10    (unchanged)
+  jump_threshold           = 0.06    (unchanged)
+  max_spread               = 0.20    (unchanged)
+  min_inning               = 4       (unchanged)
+  min_inning_high_line     = 5       (unchanged)
+  min_entry_ask            = 0.55    (unchanged)
+  min_current_total        = 4       (unchanged)
+  confirmation_ticks       = 3       (unchanged)
+  event_dedup_secs         = 60.0    (unchanged)
+  inning_dedup_gap         = 2       (REDUCED from 3)
+  inning_dedup_edge_gap    = 0.05    (unchanged)
+  per_line_inning_dedup    = True    (NEW — track per game_pk+line)
+  stake                    = $100    (unchanged)
+  lookback_ticks           = 5       (unchanged)
+  stable_window            = 35      (unchanged)
+  cooldown_ticks           = 50      (unchanged)
+
+--------------------------------------------
+PROJECTED IMPACT OF TR4 CHANGES
+--------------------------------------------
+
+Retroactive application to TR3 (2026-04-09):
+  - 5T signal (7.5, inn=5): gap=1 still blocked by gap=2 rule. UNCHANGED.
+  - 6B signal (7.5, inn=6): gap=2, now PASSES (was blocked at gap<3).
+    Additional bet: +$47.06 profit → Total TR3 profit would be +$155.92 (+77.9% ROI)
+
+  Only 1 of the 2 forgone bets gets unlocked by gap=2. The 5T bet (gap=1)
+  remains blocked. This is the right balance — one follow-on per game per
+  2-inning period, not unlimited re-entry.
+
+Retroactive application to TR2 (2026-04-08):
+  LAD@TOR: bet at inn=4 (LOSS), re-entry at inn=6 blocked by gap=2
+           (gap=2 exactly = threshold → would PASS). But score was 0-1 at inn=4,
+           and 3-3 at inn=7. The inn=6 signal is new state (total=6 at 8.5 line)
+           but still has low total for 8.5 line. min_current_total=4 would pass
+           (total=6). This is a neutral change for TR2 — same outcome.
+
+  Bottom line: TR4 change is minimal and targeted. It adds ~1 bet per
+  high-scoring game. The risk increase is bounded.
+
+--------------------------------------------
+DATA COLLECTION NOTE
+--------------------------------------------
+
+Priority for future runs: We need 50+ additional settled bets before the ROI
+signal is statistically meaningful. The current 56% win rate across 25 bets
+has a 95% confidence interval of roughly [36%, 75%] — too wide to conclude
+anything. Recommend running the monitor continuously including overnight games
+to capture West Coast late-game opportunities (COL@SD was a missed 10-run game).
+
+The signal is structurally sound. The challenge now is running enough volume
+to confirm it in the data.

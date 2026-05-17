@@ -1,0 +1,418 @@
+Handover -- 2026-05-07 work session
+====================================
+
+Date: 2026-05-07
+Audience: Codex (review + next steps)
+Context: Following on from 2026-05-06 live session review, the user
+         flagged Stage-3 as potentially over-aggressive based on a single
+         losing trade (TEX@NYY O8.5 inning 6). This kicked off a full
+         Stage-3 recalibration that ended with the v1 model deleted and
+         a new model deployed (TR20).
+
+
+SESSION OVERVIEW
+================
+
+Three pieces of work, in order:
+
+1. **2026-05-06 session log review** -- post-mortem of yesterday's live
+   trading session.
+
+2. **Team-offense Stage-3 V2 calibration** -- full Phases 1-5 of the
+   plan in `model_improvements/team_offense_v2_plan_2026_05_07.txt`.
+   Built a leakage-free residual training table, fit a new Model 3,
+   confirmed coefficient stability across sub-windows, and ran a
+   dollar test against 2026 placed bets.
+
+3. **TR20 deployment** -- v1 team-offense model deleted; v2 (Model 3)
+   installed under the same filename + class name; README updated with
+   a "fresh testing window" marker; tests verified.
+
+
+PART 1: 2026-05-06 SESSION REVIEW
+==================================
+
+Source data:
+  data/live_trading/sessions/2026-05-06_session.json
+  data/live_trading/candidate_universe/2026-05-06_*
+
+Top-line: 3 placed bets, all filled. 2W/1L. Realized -$2.94 on $29.97
+stake (ROI -9.81%) at flat $10 sizing.
+
+Decision funnel: 71,239 candidate attempts -> 16k written -> 207 score-
+event evaluations -> 3 trades. Pre-FV gates do the heavy lifting; no
+errors in the log.
+
+KEY FINDINGS:
+
+  (a) `shadow_phantom_risk_band` is doing real work as a discriminator.
+      Across 94 score-confirmation rows:
+        - high phantom: 0/35 confirmed score within 60s (0%)
+        - medium:       6/7 (86%)
+        - low:          7/52 (13%)
+      Currently the phantom band is purely diagnostic; it suppresses
+      indirectly via `gate_min_edge`. Worth a multi-day audit.
+
+  (b) Empirical-state edge disagreed with the model on 76/111 (68.5%) of
+      post-FV opportunities. All 3 placed trades had NEGATIVE empirical
+      edge (-0.014, -0.156, -0.054). Mean across all opps: -0.17.
+      Stage-1 empirical lookups are systematically more bearish than
+      Poisson + Stage-2 + Stage-3.
+
+  (c) The day's loss (TEX@NYY O8.5, inning 6) had:
+        base_fv (Stage-1): 0.9473
+        +Stage-2 delta:    +0.0275
+        +Stage-3 delta:    +0.1069     <-- decisive contribution
+        final FV:           0.9536
+        edge (vs ask 0.75): +0.204
+      Without Stage-3 the edge would have been ~+0.097 -- below the
+      0.15 trigger. NYY scored 1 run total (final 6-1). Stage-3 was the
+      reason this bet was placed. This single observation motivated
+      Part 2.
+
+  (d) `shadow_p_score_event_proxy = 0.0` on all 3 placed trades --
+      no ask-jump confirmed any of them. 2 still won. Small sample
+      noise on the proxy gate.
+
+  (e) EV policy reported `missing_runtime_features` for all 3 placed
+      bets. Feature plumbing gap; can't shadow-evaluate placed trades
+      until fixed.
+
+
+PART 2: TEAM-OFFENSE V2 CALIBRATION (Phases 1-5)
+=================================================
+
+Plan: model_improvements/team_offense_v2_plan_2026_05_07.txt
+
+Data scope: 12,457 final regular-season games over 2021-2026.
+
+Phase 1 -- Build leakage-free residual training table
+------------------------------------------------------
+Builder:    scripts/analysis/build_team_offense_calibration_table.py
+Reports:    scripts/analysis/report_team_offense_residuals.py
+            scripts/analysis/report_team_offense_mle_deltas.py
+Output:     data/analysis_output/team_offense_calibration/
+              training_table.jsonl              (1,129,081 rows)
+              manifest.json
+              phase1_residual_report.json
+              phase1_mle_deltas.json
+
+For each (game_pk, half-inning boundary, line) in 2021-2026 with
+Stage-1 cell coverage, computed Stage-1 + Stage-2 FV (Stage-3 OFF) and
+joined the realized over_hit outcome. The residual `over_hit -
+base_fv_stage1_plus_stage2` is the Stage-3 calibration target.
+
+HEADLINE: Empirical per-run logit slope is +0.062 (MLE). Current
+production v1 used 0.20. **Current Stage-3 is ~3.2x too aggressive.**
+
+Other findings:
+  - Stage-1+2 alone has near-zero overall residual (-0.0001) but the
+    bias the current Stage-3 targets is real and monotonic in offense-
+    diff (-0.167 logit at <=-1.5 runs vs MLB total, +0.102 at >=+1.5).
+  - Asymmetric: low-offense matchups need larger absolute correction
+    than high-offense.
+  - Per-inning MLE deltas are roughly FLAT from innings 1-6, then drop
+    sharply at 7-9 -- NOT a linear ramp. v1's `(9-inn)/8` weight dials
+    the prior down too aggressively in mid-innings.
+
+Phase 2 -- Feature library
+---------------------------
+Builder:    scripts/analysis/build_team_offense_features.py
+Report:     scripts/analysis/report_team_offense_features.py
+Output:     team_features.jsonl (23,980 rows, leakage-free per-(team,date))
+            phase2_feature_report.json
+
+Computed all candidate offense windows per (team, date), strictly
+before-date: prior_season_rpg, season_rpg_to_date, momentum_5/10/20,
+rolling_50, decay_weighted (half-life 15), home_rpg_30, road_rpg_30,
+plus derived `momentum_minus_season` and `season_minus_prior`.
+
+Sanity finding: short-window momentum (5-10 games) is essentially
+anti-predictive of next-game runs (momentum_5 MSE is 20% WORSE than
+predicting the league mean). Long windows (50, decay-weighted, season)
+carry the actual signal. Single-feature Pearson r at next-game level
+is < 0.10 across all features -- single-game runs are very noisy, but
+the SUM across both teams + game-state conditioning is what matters
+for over_hit prediction.
+
+Phase 3+4 -- EB shrinkage + walk Models 1-5 up complexity ladder
+-----------------------------------------------------------------
+Script:     scripts/analysis/calibrate_team_offense_v2.py
+Output:     phase4_models.json
+
+Time-respecting split:
+  Train      2021-2024  (654,173 rows)
+  Validation 2025       (202,729 rows)
+  Test       2026       (2,932 rows -- partial season, dollar-test only)
+
+EB shrinkage parameters estimated from training years:
+  sigma_within^2 = 10.001 (single-game runs variance around team RPG)
+  tau_sq:  rolling_50=0.179, season=0.237, prior_season=0.171, mom10=0.198
+  shrinkage_k (equivalent prior games):  rolling_50=55.7, season=42.1,
+                                         prior_season=58.4, mom10=50.5
+
+Models scored on validation Brier (with logit(base_fv_stage1_plus_stage2)
+entered as offset, so we measure incremental Stage-3 contribution):
+
+  Baseline A    no Stage-3
+  Baseline B    current v1 (LOGIT_DELTA_PER_RUN=0.20, hard clamp,
+                            linear ramp) -- reproduced for comparison
+  Model 1       same shape as B, refit constant on training data
+                  -> beta_diff = +0.1125  (0.56x v1's 0.20)
+  Model 2       Model 1 with EB-shrunk rolling_50 instead of clamped raw
+                  -> beta_diff = +0.2376 (higher because shrinkage already
+                                           pulls extreme values toward mu)
+  Model 3       Linear blend of (prior_season, season_to_date, momentum_10),
+                EB-shrunk per window, refit
+                  -> beta_prior   = -0.1514     <-- NEGATIVE
+                     beta_season  = +0.1407
+                     beta_momentum= +0.1503
+  Model 4       Model 3 + per-inning multiplicative weights
+                  -> Fit shape [1.0, 0.90, 0.78, 0.79, 0.58, 0.49, 0.31,
+                                0.11, 0.24, 0.67]
+                     overfits on validation; ties Model 3 on test.
+
+  Model 5 (gradient-boosted residual): SKIPPED (deemed unnecessary).
+
+Brier scores:
+  model                       VAL_brier   TEST_brier   TEST vs B
+  baseline_A_no_stage3        0.171341    0.151769     -0.07%
+  baseline_B_v1               0.171409    0.151665     0.00%
+  model_1_refit_const         0.171240    0.151621     +0.03%
+  model_2_eb_shrunk           0.171240    0.151621     +0.03%
+  model_3_blend               0.171204    0.150326     **+0.88%**
+  model_4_blend_per_inn       0.171198    0.150388     +0.84%
+
+Headline: Model 3 reduces Brier 0.88% on holdout test, 0.12% on val
+(tiny absolute but ~20-sigma significant on 202k rows).
+
+KEY structural finding: NEGATIVE coefficient on prior_season_rpg.
+Once you condition on current-season pace and recent momentum, last
+year's offense is a regression-to-mean correction term, not an
+additive prior. A team that was elite last year but is now merely
+average should LOSE Stage-3 lift, not gain it.
+
+Phase 4.5 -- Sub-window stability check
+----------------------------------------
+Script:     scripts/analysis/phase45_stability_check.py
+Output:     phase45_stability.json
+
+Refit Model 3 on rolling sub-windows of the training data (2022 alone,
+2023 alone, 2024 alone, 2021+2022, 2022+2023, 2023+2024,
+2021+2022+2023, full 2021-2024).
+
+Stability:
+  b_prior negative in 8/8 sub-windows (range -0.10 to -0.23, mean -0.15)
+  b_season positive in 8/8 (range +0.06 to +0.21)
+  b_momentum positive in 7/8 (the one negative is the 2023-alone fit,
+                              n=214k; small-sample artifact)
+  Model 3 beats Baseline B on val Brier in 5/8 sub-windows (losses
+                              cluster around 2024-as-validation)
+
+The negative b_prior is structural, not noise. Greenlit Phase 5.
+
+Phase 5 -- Dollar test (shadow replay)
+---------------------------------------
+Runtime:    scripts/analysis/team_offense_model.py (formerly
+            team_offense_model_v2.py; renamed in TR20 deployment)
+Replay:     scripts/analysis/team_offense_v2_shadow_replay.py
+            (DELETED in TR20 deployment; was used once to produce
+             phase5_shadow_replay.json before the v1 module was removed)
+Output:     phase5_shadow_replay.json
+
+Replayed all 119 placed bets in 2026 (live + paper) under v1 vs v2
+with current gate config (edge_threshold=0.15/0.16, extreme_edge=0.22).
+
+Distribution of v2 - v1 logit-delta change across 119 bets:
+  mean      -0.005
+  abs_mean   0.067   (substantial swing per bet, in either direction)
+  range     [-0.250, +0.250]
+
+Decision changes (gate_min_edge + gate_extreme_edge only):
+  56 bets: both v1 and v2 trade (no change)
+   4 bets: v1 trades, v2 BLOCKS:
+            DET@BOS O8.5 inn7 (won, $0 -- missed fill)
+            BAL@KC  O10.5 inn8 (won, +$13.40)
+            MIN@WSH O9.5  inn6 (won, +$3.89)
+            SF@BAL  O8.5  inn5 (LOST, -$100)
+   2 bets: v1 blocks (under current gates), v2 TRADES:
+            STL@WSH O8.5 inn4 (lost -$100; v1 blocked by min_edge,
+                               v2 raised edge above threshold)
+            ATH@NYY O8.5 inn4 (lost -$100; v1 blocked by extreme_edge
+                               at 0.223, v2 reduced edge to 0.166)
+  57 bets: neither would trade under current gates (placed in production
+           under earlier gate config -- TR16 era 0.30 cap, etc.)
+
+Per-inning |stage3_delta| audit:
+  inn 4-6: v2 |delta| smaller (PASS)
+  inn 7:   v2 |delta| LARGER (+26%, but absolute 0.006 logit, n=27)
+  inn 8-9: v2 |delta| smaller (PASS)
+  Strict criterion #4 fails at inning 7 but practically immaterial.
+
+True bidirectional P&L impact under naive v1->v2 swap:
+  v2 blocks 4 bets v1 trades:  net +$82.71 (mostly the SF@BAL save)
+  v2 trades 2 bets v1 blocks:  net -$200.00
+  ----------------------------
+  NET P&L CHANGE under v2 + current gates:  -$117.29
+
+THE INTERACTION PROBLEM that emerged:
+The TR19 extreme_edge_max=0.22 cap was empirically tuned against
+v1's edge distribution. v2 produces a different distribution (the
+ATH@NYY case: v1 edge 0.223 was over the cap, v2 edge 0.166 is under).
+Naive v1->v2 swap loses the protective effect of gate_extreme_edge on
+those matchups.
+
+Phase 7 promotion criteria status:
+  1. Brier improves >= 0.5% on test:    PASS test (0.88%), FAIL val (0.12%)
+  2. No subgroup degrades >= 2%:        Not checked (moot given #3)
+  3. P&L neutral or better:             FAIL (-$117 under naive swap)
+  4. Avg |delta| not larger at any inn: FAIL at inning 7 (tiny absolute)
+
+
+PART 3: TR20 DEPLOYMENT
+========================
+
+The user reviewed Phase 5 findings and chose to TRUST V2 OVER TR19'S
+EMPIRICAL CALIBRATION on the grounds that TR19 is itself a small-sample
+calibration. Decision: deploy v2 as the sole Stage-3, delete all v1
+code, mark a fresh-testing window starting 2026-05-07.
+
+Files MODIFIED:
+  - README.md
+      * Stage-3 description rewritten
+      * TR19 row annotated as "superseded as of 2026-05-07 (TR20)"
+      * NEW TR20 row in Gate Evolution table
+      * NEW "Fresh Testing Window (2026-05-07 onward)" section above
+        Evidence Snapshot, calling out that all pre-2026-05-07 evidence
+        (cohort win rates, gate audits, walk-forward results) is no
+        longer apples-to-apples
+  - scripts/analysis/team_offense_model.py
+      * Replaced v1 contents with v2/Model-3 design.
+      * Class name preserved as `TeamOffenseModel`.
+      * Public surface unchanged (.adjust_fv, .get_matchup_delta,
+        .mlb_avg_rpg, .mlb_avg_total, .n_games, .load).
+      * Production constants: b_prior=-0.1514, b_season=+0.1407,
+        b_momentum_10=+0.1503, plus EB shrinkage parameters.
+      * NEW: .feature_breakdown(...) for diagnostics.
+  - scripts/analysis/AGENT_CONTEXT.md
+      * Stage-3 description updated; calibration pipeline scripts
+        listed; last-checked date bumped to 2026-05-07.
+
+Files DELETED:
+  - scripts/analysis/team_offense_model_v2.py (renamed to team_offense_model.py)
+  - scripts/analysis/team_offense_v2_shadow_replay.py (compared v1 vs v2;
+    moot once v1 was deleted)
+
+Files NEW (built today):
+  - scripts/analysis/build_team_offense_calibration_table.py
+  - scripts/analysis/build_team_offense_features.py
+  - scripts/analysis/calibrate_team_offense_v2.py
+  - scripts/analysis/phase45_stability_check.py
+  - scripts/analysis/report_team_offense_residuals.py
+  - scripts/analysis/report_team_offense_mle_deltas.py
+  - scripts/analysis/report_team_offense_features.py
+
+Plan + findings docs (model_improvements/):
+  - team_offense_v2_plan_2026_05_07.txt
+  - team_offense_v2_phase1_findings_2026_05_07.txt
+  - team_offense_v2_phase4_findings_2026_05_07.txt
+  - team_offense_v2_phase45_stability_2026_05_07.txt
+  - team_offense_v2_phase5_findings_2026_05_07.txt
+  - handover_2026_05_07.txt    <- this file
+
+Verification (after deploy):
+  - python -m compileall -q scripts cache    PASS
+  - python -m pytest tests/                   116/116 PASS
+  - Smoke: TEX@NYY 2026-05-06 inn 6 -> delta +0.0099 (vs v1's +0.107).
+    The bet that motivated this work would now produce essentially no
+    Stage-3 lift; its edge would drop from 0.204 to ~0.10, well below
+    the 0.15 trigger.
+
+
+WHAT CODEX SHOULD REVIEW
+=========================
+
+A. **Code review**
+   1. `scripts/analysis/team_offense_model.py` -- the new runtime. Look
+      especially at:
+        - `_windowed_rpg()` correctness (leakage-free strict-less bisect;
+           min-support fallbacks).
+        - Shrinkage formula `_shrink()` and the per-window `tau_sq`
+           constants.
+        - The `n_games` compatibility shim (set to DEFAULT_N_MOMENTUM=10
+           because legacy callers log it).
+        - `feature_breakdown()` -- new diagnostic surface.
+   2. `scripts/analysis/calibrate_team_offense_v2.py` -- the optimizer.
+      Check:
+        - `_fit_logistic_offset()` correctness (Newton + L-BFGS).
+        - `fit_model_4()` reparameterization (w_1 fixed to 1.0 for
+           identifiability; betas global, weights per inning).
+        - Time-respecting split semantics.
+   3. `scripts/analysis/build_team_offense_calibration_table.py` --
+      check the half-inning boundary iteration (top/bottom yields)
+      against the cache builder's state-key shape.
+
+B. **Sanity checks worth running**
+   1. Spot-check 10-20 (away, home, date, inning) cases by hand and
+      compare `team_offense_model.feature_breakdown()` output against
+      raw windowed averages from `cache/team_game_log.json`.
+   2. Run `python scripts/analysis/team_offense_model.py --away NYY
+      --home BOS --date 2026-05-07 --inning 1 --base-fv 0.5` and
+      sanity-check the magnitude.
+   3. Re-run pytest after pulling. 116 tests should pass.
+   4. Diff `scripts/analysis/team_offense_model.py` against git history
+      to confirm the v1 -> v2 swap is clean (no orphan v1 code).
+
+C. **Open issues / next steps for whoever picks this up**
+   1. `gate_extreme_edge` (currently 0.22, TR19) was tuned against v1's
+      edge distribution. Under v2 the distribution is different. After
+      ~30 days of post-TR20 data, recalibrate this threshold by:
+         - Measuring v2 edge percentile distribution
+         - Finding the equivalent percentile for v1's 0.22
+         - Or doing a fresh win-rate audit on edge cohorts
+      Likely target: somewhere in 0.17-0.20.
+   2. `gate_min_edge` (0.15 std / 0.16 high) was also tuned around v1.
+      The Phase 5 STL@WSH case showed v2 can flip a borderline v1-block
+      into a v2-trade. After 30 days re-audit and possibly tighten.
+   3. The 2024-as-validation anomaly (Model 3 doesn't beat Baseline B
+      on val Brier in 3/8 sub-windows, all involving 2024) is worth a
+      deep dive. Possible: roster turnover, scoring environment shift.
+      Could motivate year fixed-effects in a future v3.
+   4. Pitcher quality interaction was deferred from Phase 4 (Model 6).
+      Worth revisiting once post-TR20 data accumulates.
+   5. The 2026-05-06 review surfaced two other research threads not
+      acted on:
+         (a) Empirical-state edge disagreed with Stage-1+2+3 on 68.5%
+             of post-FV opps. Could be a soft veto gate or sizing input.
+         (b) `shadow_phantom_risk_band` is a clean discriminator on
+             score-event confirmation rate (high band: 0/35 confirms).
+             Currently diagnostic; could become an enforced gate after
+             multi-day audit.
+   6. `ev_policy_missing_runtime_features=3` was reported on all 3
+      placed bets 2026-05-06. Feature plumbing gap; chase before any
+      EV-policy promotion attempt.
+
+D. **Things explicitly NOT done in this session**
+   - No live engine code changes. The signal_engine still
+     `from team_offense_model import TeamOffenseModel` and constructs
+     it the same way; behavior changes only because the underlying
+     module's coefficients are different.
+   - No `--use-team-offense-v2-shadow` flag. The user chose to swap
+     v2 in directly rather than run shadow comparison.
+   - No gate-threshold changes. The TR19 0.22 cap is unchanged in
+     code; it's flagged as superseded in README only.
+   - Per-inning weights: NOT shipped (Model 4 overfit; Model 3 with
+     linear ramp is the production model).
+   - Model 5 (gradient-boosted): SKIPPED.
+   - Pitcher-quality interaction (Model 6): out of scope for this work.
+
+E. **Critical data integrity notes**
+   - `cache/team_game_log.json` is REQUIRED by the new model. If absent
+     or stale (>1 day), it auto-rebuilds via subprocess. The runtime
+     init path now also depends on this file.
+   - `data/analysis_output/team_offense_calibration/` contains the full
+     calibration audit trail; do NOT delete without preserving copies.
+     1.13M-row training table is ~250MB.
+
+
+END OF HANDOVER.

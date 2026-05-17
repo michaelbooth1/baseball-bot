@@ -1,0 +1,944 @@
+Current Gates Reference
+=======================
+Updated: 2026-04-27
+Sessions covered: 2026-04-16 through 2026-04-25 (10 sessions)
+First live fills: 2026-04-25 — 5 fills, 3W/2L, -$14.05 ROI -18.7%
+Overall live P&L: -$84.77 (includes pre-fill losses through Apr 21 + Apr 25 fills)
+
+NOTE: Files were refactored 2026-04-22. Old references:
+  paper_trader.py  → signal_engine.py
+  real_trader.py   → live_engine.py
+All gate logic lives in signal_engine.py _process_tick().
+All order lifecycle logic lives in live_engine.py.
+
+This file documents every gate in the signal pipeline and the order-lifecycle gates,
+with the data justification for each. Gates are listed in execution order.
+Parameters are the current defaults; all are CLI-configurable.
+
+Key aggregate split — all filled+settled bets (through Apr 25):
+  edge>0.25 (filled+settled): 0W/4L  -$105.29  -100% ROI  <-- catastrophic (pre-gate era)
+  edge<=0.25 (filled+settled): 9W/3L  +$20.52   +13.1% ROI <-- profitable
+
+Apr 25 fills (first real fills, 5 bets at $15 flat):
+  BOS@BAL O8.5 inn=5 score=7-0  FV=0.987 ask=0.81  WIN  final=18  +$3.99
+  CLE@TOR O7.5 inn=7 score=2-4  FV=0.939 ask=0.68  WIN  final=8   +$7.73
+  CLE@TOR O8.5 inn=7 score=2-5  FV=0.917 ask=0.67  LOSS final=8   -$15.00
+  ATH@TEX O8.5 inn=6 score=3-4  FV=0.957 ask=0.76  LOSS final=7   -$15.00
+  PHI@ATL O8.5 inn=6 score=3-4  FV=0.978 ask=0.80  WIN  final=13  +$4.23
+  Fill win rate: 60% (3/5). Break-even at avg fill 0.72 requires 72%. n=5, very small sample.
+  No FV decay cancellations. No ask reversals. P0 fixes validated end-to-end.
+
+===========================================================================
+PART 1: SIGNAL PIPELINE GATES (signal_engine.py _process_tick)
+===========================================================================
+
+---------------------------------------------------------------------------
+GATE 1: Inning filter
+  File: signal_engine.py
+  Param: --min-inning (default 4), --min-inning-high-line (default 5)
+  Param: --high-line-cutoff (default 8.5)
+---------------------------------------------------------------------------
+
+Rule:
+  Standard lines (<8.5): skip signal if inning < 4.
+  High lines (>=8.5): skip signal if inning < 5.
+
+Why:
+  Early-inning signals have too many remaining scoring opportunities, producing
+  noisy ask jumps from baserunner situations that don't score, pitching changes,
+  etc. The Poisson FV at inning 2-3 is insensitive to inferred single runs
+  because there are 12-14 half-innings still to play. Edge detection works best
+  when the game state is specific enough to produce meaningful FV changes.
+
+  High-line cutoff (>=8.5): lower base probabilities mean one more inning of
+  data (inning 5) filters out games where the offense has stalled.
+
+Data:
+  No live data below inning 4 (gate in place from session 1).
+  Backtest showed inning 1-3 signals had win rates below 60%, well short of
+  the ~76% break-even for typical ask levels.
+  Shadow data (2026-04-22 to 2026-04-24): Gate 1 session-level counts show
+  moderate volumes of early-inning blocks.
+  Apr 27 instrumentation update: Gate 1 now writes skip candidate rows before
+  returning, including effective inning threshold and shadow-relaxed metadata.
+
+
+---------------------------------------------------------------------------
+GATE 2: Inactive inning state
+  File: signal_engine.py
+  No CLI param (hardcoded: {"end", "middle"})
+---------------------------------------------------------------------------
+
+Rule:
+  Skip if inning_state is "end" or "middle" (between-half transitions).
+
+Why:
+  During "middle" and "end" states no active at-bat is happening, so no run
+  can be scored. A price jump during these states reflects market participants
+  reacting to the score that JUST happened (already priced in), not an active
+  event we can trade on.
+
+
+---------------------------------------------------------------------------
+GATE 3: Minimum entry ask
+  File: signal_engine.py
+  Param: --min-entry-ask (default 0.55), --min-entry-ask-high-line (default 0.60)
+---------------------------------------------------------------------------
+
+Rule:
+  Standard lines: skip if ask < 0.55.
+  High lines (>=8.5): skip if ask < 0.60.
+
+Why:
+  Low-probability markets (ask < 0.55) have thin order books, making limit
+  orders more vulnerable to adversarial selection. The ask floor also prevents
+  entering long-shot positions where even a win generates marginal EV.
+
+Data:
+  Live sessions: ask~0.6 bucket: 1W/3L, 25% WR, -67.7% ROI.
+  ask~0.7: 3W/1L, 75% WR. ask~0.8: 2W/1L, 67% WR.
+  Shadow data Apr 22-24: gate blocks moderate volume.
+  Apr 27 instrumentation update: Gate 3 now writes skip candidate rows before
+  returning, including effective ask floor and relaxed ask-floor metadata.
+
+
+---------------------------------------------------------------------------
+GATE 4: Spread filter
+  File: signal_engine.py
+  Param: --max-spread (default 0.20)
+---------------------------------------------------------------------------
+
+Rule:
+  a) Crossed/locked book: skip if bid >= ask.
+  b) Wide spread: skip if (ask - bid) > 0.20.
+
+Why:
+  Crossed book = data error or anomaly. Wide spread = no consensus on fair
+  value, amplifying limit-price positioning error. Our formula
+  (bid + spread * 0.65) places us inside the spread, but if spread=0.30
+  we could end up 10-15c above informed participants' estimate of fair value.
+
+Data:
+  All profitable historical fills had spreads of 0.02-0.06.
+  DET@CIN 2026-04-24: spread=0.060 (bid=0.73, ask=0.79) — clean book.
+  PHI@CHC 2026-04-23: spread=0.040 (bid=0.65, ask=0.69) — clean book.
+
+
+---------------------------------------------------------------------------
+GATE 5: Confirmed sustained ask jump
+  File: signal_engine.py
+  Param: --jump-threshold (default 0.06), --confirmation-ticks (default 3)
+  Param: --lookback-ticks (default 5)
+---------------------------------------------------------------------------
+
+Rule:
+  Fire only when the ask has risen >= 0.06 (6c) over the last 5 ticks AND
+  the ask has stayed elevated for 3 consecutive ticks (confirmation window).
+  If the ask drops below 50% of the original jump magnitude during those 3
+  ticks, the pending signal is cancelled.
+
+Why:
+  A 6c jump over 5 ticks corresponds to a meaningful probability shift.
+  Confirmation (3 ticks) prevents flash spikes. The 50% retain fraction
+  (CONFIRM_RETAIN_FRACTION = 0.5) prevents a spike-and-fall from counting.
+
+Data:
+  Signal win rate since live trading began: 5/5 correct direction (Apr 22-24).
+  Historical: 22/28 = 79% correct across all paper and live sessions.
+  TR2: adding confirmation reduced false signals by ~40% vs TR1.
+
+
+---------------------------------------------------------------------------
+GATE 6: Minimum current total
+  File: signal_engine.py
+  Param: --min-current-total (default 4)
+---------------------------------------------------------------------------
+
+Rule:
+  Skip if (away_score + home_score) < 4.
+
+Why:
+  Very low totals (0-3 runs) indicate a pitcher's duel. The Poisson model
+  uses average-game lambda values which overestimate P(over) when scoring
+  has been suppressed. Scoring pace is correlated — low-scoring games tend
+  to stay low-scoring.
+
+Data:
+  Paper backtests: total < 4 at signal → WR clustered 55-60%, below break-even.
+  Shadow data (2026-04-24): gate_min_current_total shadow outcomes: 2W/0L
+  (100% win rate for shadow-would-pass). Small sample (n=2 resolved); not
+  enough to justify relaxing. Continue monitoring.
+
+
+---------------------------------------------------------------------------
+GATE 7: Runs pace filter
+  File: signal_engine.py
+  Formula: (current_total / inning) * 9 >= float(line) - 1.5
+---------------------------------------------------------------------------
+
+Rule:
+  Skip if the game's scoring pace (extrapolated to 9 innings) is more than
+  1.5 runs below the line.
+
+Why:
+  Complements Gate 6: filters pace relative to the specific line. The 1.5-run
+  buffer accounts for late-inning acceleration (bullpen fatigue, pinch hitters).
+
+Data:
+  Paper sessions: 8 blocked signals; 7 finished under the line.
+  Shadow data (2026-04-24): gate_runs_pace shadow outcomes: 0W/2L (0% win
+  rate for would-be passes). GATE IS CORRECTLY CALIBRATED. Do not relax.
+
+
+---------------------------------------------------------------------------
+GATE 8: Runs-needed maximum
+  File: signal_engine.py
+  Param: --runs-needed-max (default 3.5)
+---------------------------------------------------------------------------
+
+Rule:
+  Skip if (line - current_total) > 3.5.
+
+Why:
+  When 4+ more runs are needed, a single inferred run barely moves P(over).
+  Sustained offensive effort across multiple innings is required — a high-risk
+  bet context. Updated from 4.0 to 3.5 in TR10.
+
+Data:
+  Live data rn=3.5 bucket pre-TR10: 1W/2L -40.5% ROI.
+
+
+---------------------------------------------------------------------------
+ASK EDGE RAMP — Dynamic min-edge modifier on Gate 8
+  File: signal_engine.py  _ask_edge_boost() at line ~251, applied at line ~1944
+  Param: --ask-edge-ramp-enabled (default True)
+  Param: --ask-edge-ramp-start (default 0.75)
+  Param: --ask-edge-ramp-end   (default 0.90)
+  Param: --ask-edge-ramp-max-boost (default 0.05)
+  Added: Codex (2026-04-25)
+---------------------------------------------------------------------------
+
+Rule:
+  The base minimum edge (0.15 std / 0.16 high-line) is raised linearly as the
+  market ask increases above the ramp-start threshold:
+
+    boost = ((ask - start) / (end - start)) * max_boost   [clamped 0-max_boost]
+    effective_min_edge = base_min_edge + boost
+
+  At key ask levels with default params (base=0.15):
+    ask <= 0.75: boost=0.000  effective_min_edge=0.150  (no change)
+    ask = 0.79:  boost=0.013  effective_min_edge=0.163
+    ask = 0.85:  boost=0.033  effective_min_edge=0.183
+    ask >= 0.90: boost=0.050  effective_min_edge=0.200  (maximum)
+
+  The boost value is recorded in the candidate payload as min_edge_ask_boost
+  and min_edge_effective, so every signal log shows the effective threshold used.
+
+Why:
+  When the market is already pricing the over at 75-90 cents, market participants
+  broadly agree the over is likely. In this regime, our model edge (FV - ask)
+  shrinks toward zero because both sides of the market are converging. A small
+  nominal edge at ask=0.85 carries less information than the same edge at ask=0.65
+  — the market is nearly as confident as we are, leaving little room for genuine
+  model advantage. Requiring more edge in high-ask regimes filters signals where
+  we might be riding market momentum rather than model insight.
+
+  Additionally, high-ask signals where the LTP is far below the ask (a common
+  pattern: ask=0.81, LTP=0.17 as in BOS@BAL Apr 25) indicate the market
+  repriced rapidly after a scoring event. At ask=0.81, we need edge=0.17 vs
+  the base 0.15 — a small but meaningful additional filter on these high-ask
+  fast-reprice situations.
+
+  The ramp is linear (not step) to avoid creating a hard cliff at a single
+  threshold. Marginal signals near the ramp boundary fail gradually rather
+  than all at once.
+
+Data:
+  Apr 25 fills:
+    BOS@BAL ask=0.81: boost=+0.020pp, effective_min=0.170, edge=0.177 — PASSES (barely)
+    PHI@ATL ask=0.80: boost=+0.017pp, effective_min=0.167, edge=0.178 — PASSES
+    CLE@TOR O7.5 ask=0.68: boost=0, no ramp (below start=0.75)
+    CLE@TOR O8.5 ask=0.67: boost=0, no ramp
+    ATH@TEX ask=0.76: boost=+0.003pp, effective_min=0.153, edge=0.196 — PASSES easily
+  The ramp filtered at the margins on the two high-ask bets. Both won.
+  No signals were blocked entirely by the ramp in the Apr 25 session.
+  Accumulate 20+ sessions to determine if the ramp thresholds need adjustment.
+
+Shadow verdict:
+  No shadow data yet. The ramp modifies gate_min_edge's threshold rather than
+  adding a separate skip reason — ramp-affected blocks still appear as
+  gate_min_edge in the candidates JSONL, but the min_edge_ask_boost field
+  identifies whether the ramp was the deciding factor.
+
+
+---------------------------------------------------------------------------
+GATE 8b: Close game + high runs-needed dead zone
+  File: signal_engine.py
+  Param: --min-close-game-rn (default 4.0)
+---------------------------------------------------------------------------
+
+Rule:
+  Skip if lead < 2 AND runs_needed >= 4.0.
+
+Why:
+  Both managers deploy best defense in tied/1-run games: closers early,
+  small-ball offense. This suppresses total scoring specifically in close games
+  — high-lead games at same rn are NOT blocked (3/4 wins, +74% ROI).
+
+Data:
+  Close game + rn>=4: 1/8 wins (-74% ROI).
+  High-lead games same rn: 3/4 wins (+74% ROI).
+
+
+---------------------------------------------------------------------------
+GATE 8c: Inning 5 bullpen-transition dead zone
+  File: signal_engine.py
+  Param: --inn5-rn-max (default 2.5)
+---------------------------------------------------------------------------
+
+Rule:
+  Skip if inning == 5 AND runs_needed >= 2.5.
+
+Why:
+  Inning 5 has maximum scoring suppression: starters approaching pitch count,
+  cold middle relievers entering. The bullpen transition effect is specific to
+  inning 5 — same rn at inning 4 produces 6W/0L.
+
+Data:
+  TR8: inn5+rn>=3.0: 0W/3L -$300.
+  TR10: inn5+rn=2.5: 2W/5L 29% WR -$375.
+  Shadow data (2026-04-24): gate_inning5_runs_needed shadow: 2W/0L (100%
+  win rate for would-be passes, n=2 resolved). Promising but small sample;
+  maintain current threshold pending more data. Revisit at n=10+.
+
+
+---------------------------------------------------------------------------
+GATE 8d: Inning 6 setup-reliever dead zone
+  File: signal_engine.py
+  Param: --inn6-rn-max (default 2.5)
+---------------------------------------------------------------------------
+
+Rule:
+  Skip if inning == 6 AND runs_needed >= 2.5.
+
+Why:
+  Inning 6 = weakest bullpen arms (bridge relievers), intentionally deployed
+  in low-leverage spots. Games needing 2.5+ runs from these arms are
+  structurally bad bets. Distinct from Gate 8c: danger is QUALITY, not
+  transition.
+
+Data:
+  Backtest 2021-2025: inn6+rn=2.5: 66.6%T/60.4%B WR — both below break-even.
+  Shadow data (2026-04-24): gate_inning6_runs_needed shadow: 2W/6L (25%
+  win rate for would-be passes, n=8 resolved). GATE IS CORRECTLY CALIBRATED.
+  Do not relax. Current 2.5 threshold is validated by live shadow outcomes.
+
+
+---------------------------------------------------------------------------
+GATE 8e: Blowout shutout / blowout-adjacent gate
+  File: signal_engine.py
+  Param: --blowout-lead-min (default 6), --blowout-adj-lead-min (default 4)
+  Param: --gate-blowout-relax-mode (default enforce)
+  Param: --blowout-relax-max-inning (default 7)
+  Param: --blowout-relax-min-ask (default 0.74)
+  Param: --blowout-relax-max-runs-needed (default 2.5)
+  Param: --blowout-relax-near-line-runs-needed (default 0.5)
+  Param: --blowout-relax-near-line-min-ask (default 0.55)
+  TR11 (full blowout), TR13 (blowout-adjacent)
+---------------------------------------------------------------------------
+
+Rule (two strict conditions, either enters blowout review):
+  Condition A — full blowout (TR11):
+    trailing_runs <= 1 AND lead >= 6 AND inning >= 6
+  Condition B — blowout-adjacent (TR13):
+    trailing_runs <= 1 AND lead >= 4 AND inning >= 7
+
+  Apr 27 rework:
+    The strict blowout state still identifies danger cases, but the default
+    conditional relax mode is now enforce. A strict blowout candidate is allowed
+    to continue when either:
+      - near-line escape: runs_needed <= 0.5 AND ask >= 0.55, or
+      - high-conviction early-late escape: inning <= 7 AND ask >= 0.74
+        AND runs_needed <= 2.5.
+    Otherwise the candidate is skipped as gate_blowout with conditional-relax
+    diagnostics attached.
+
+Why (A): Poisson inflated +11-30pp vs empirical in blowout states. Dominant
+  pitcher/bullpen selected via survivorship bias; lineup manipulation likely.
+
+Why (B): At lead=4 in inning 7+, trailing team has scored ≤1 run in 6+
+  innings against a still-pitching ace (selection bias). Same dynamics,
+  slightly earlier threshold.
+
+Data:
+  Condition A: SD@LAA O9.5 2026-04-17 — 0-8 blowout, LOSS -$25.
+  Condition B: PIT@TEX O7.5 2026-04-21 — 1-5 inn=7, LOSS -$25.46.
+  Opposite: MIL@MIA 2026-04-21 — 1-5 inn=6 (lead=4), WIN. Confirms inn=6
+  is too early for lead=4 blowout-adjacent.
+  Shadow data (2026-04-24): gate_blowout shadow: 1W/0L (n=1). Gate 8e
+  block of PIT@TEX series (score=1-6, inn=7-8, asks falling 0.82→0.55)
+  confirmed correct — market agreed with the gate.
+  Apr 27 audit: available labeled candidate sample had gate_blowout blocking
+  more eventual win value than loss value (3/3 eventual overs in primary
+  market-reason rows), so the gate was reworked to preserve protection for
+  dangerous blowouts while avoiding near-line/high-confidence over-blocking.
+
+
+---------------------------------------------------------------------------
+GATE 8f: FV saturation skip
+  File: signal_engine.py
+  Param: --max-base-fv (default 0.99)
+  TR12 (2026-04-22), threshold corrected TR13 (0.98 -> 0.99)
+---------------------------------------------------------------------------
+
+Rule:
+  Skip if Stage-1 base_fair_value >= 0.99.
+
+Why:
+  The Poisson model hits its ceiling (FV → 1.0) when the inferred run lands
+  exactly on the line in a late inning with 0 outs. This is the primary
+  phantom run fingerprint:
+  1. MLB API sends temporary score update.
+  2. Model fires at FV~1.0.
+  3. Informed Polymarket participants (with faster feeds) sell into our signal.
+  4. API corrects — game ends under the line: LOSS.
+
+  Market context matters for interpretation:
+  - ask < 0.70: market CONTRADICTS the model (classic phantom — block is critical)
+  - ask > 0.85: market CONFIRMS (likely real run, but edge is usually too small
+    to bet profitably since edge = FV - ask ~ 0.15 or less; Gate 8 also blocks)
+  - ask 0.70-0.85: AMBIGUOUS
+
+  The 0.99 threshold (not 0.98): base_fv=0.9814 fill on 2026-04-20 was a WIN.
+  Only near-exact 1.0 saturation is the true phantom fingerprint.
+
+  New logging (2026-04-25): Gate 8f now logs the market ask level and context
+  in the skip message so every session shows phantom vs confirmed-run character.
+
+Data:
+  STL@MIA O8.5 2026-04-21: base_fv=1.0, ask=0.58, LTP=0.39, LOSS -$31.24.
+    Market strongly contradicted model. Largest single live loss.
+  2026-04-24 session: 33 gate_fv_saturation blocks. Sample asks: 0.85-0.97.
+    Most have base_fv=1.0 exactly. High-ask blocks are market-confirmed real
+    runs, but the ask is so high that edge (= FV - ask) is < 0.15, and Gate 8
+    (min_edge) would block them anyway. Gate 8f fires first in the pipeline.
+  Shadow data: gate_fv_saturation shadow: 0W/0L resolved (1 unknown).
+    Shadow relaxed threshold (1.0) blocks all currently blocked signals since
+    all have base_fv=1.0 exactly — shadow V2 (0.995) is equally blocked.
+
+
+---------------------------------------------------------------------------
+GATE 8g: Large FV/ask gap in late innings
+  File: signal_engine.py
+  Param: --fv-ask-gap-max (default 0.28), --fv-ask-gap-min-inning (default 7)
+  TR12 (2026-04-22), threshold tightened TR13 (0.30 -> 0.28)
+---------------------------------------------------------------------------
+
+Rule:
+  Skip if (fair_value - entry_ask) > 0.28 AND inning >= 7.
+
+Why:
+  Large model-to-market gaps in late innings indicate the market is better
+  informed (phantom run not yet corrected in our feed). All 5 confirmed losses
+  in edge>0.25 territory had inning >= 7. PIT@TEX (edge=0.294, inn=7) was
+  the specific case motivating the 0.30→0.28 tightening.
+
+Data:
+  STL@MIA: edge=0.40, inn=9 — LOSS -$31.24.
+  PIT@TEX: edge=0.294, inn=7 — LOSS -$25.46. Now blocked at 0.28.
+  No wins at edge>0.25 in inning>=7 across full dataset.
+  Shadow data (2026-04-24): gate_fv_ask_gap shadow: 0W/3L (0% win rate for
+    would-be passes). GATE IS CORRECTLY CALIBRATED AND MAY BE TOO LOOSE.
+    All 3 shadow-would-pass cases (edge 0.30-0.34, inn>=7) went under.
+    Current testing with 0.26 on 2026-04-25 to probe whether further
+    tightening is warranted.
+
+
+---------------------------------------------------------------------------
+GATE 8h: Stage-2 extreme suppression skip
+  File: signal_engine.py
+  Param: --s2-suppress-max (default -0.20), --s2-suppress-min-inning (default 6)
+  TR13 (2026-04-22)
+---------------------------------------------------------------------------
+
+Rule:
+  Skip if stage2_run_env_delta <= -0.20 AND inning >= 6.
+
+Why:
+  Extreme park/weather suppression (logit delta <= -0.20) means the Stage-2
+  correction is near its capacity. Oracle Park SF, Wrigley CHC wind-in are
+  primary cases. The correction likely underestimates total suppression.
+
+Data:
+  PHI@CHC 2026-04-20: S2=-0.200, inn=6, LOSS. Gate fires.
+  Shadow data (2026-04-24): gate_stage2_suppression shadow: 0W/1L (0% win
+    rate for would-be passes). GATE IS CORRECTLY CALIBRATED. Do not relax.
+
+
+---------------------------------------------------------------------------
+GATE 8i: Stage-4 pitcher quality edge boost
+  File: signal_engine.py
+  Param: --sp-era-threshold (default 3.75), --sp-era-max-inning (default 6)
+  Param: --sp-era-edge-boost (default 0.03)
+  TR13 (2026-04-22)
+  Pitcher cache now AUTO-LOADED: built from MLB Stats API on startup if missing
+  or older than 24 hours. No --pitcher-cache-path flag needed.
+---------------------------------------------------------------------------
+
+Rule:
+  If defense pitcher ERA < 3.75 AND inning <= 6:
+    require edge >= min_edge + 0.03 (boosted minimum).
+  Gate is always active; pitcher cache is rebuilt automatically each session.
+
+Why:
+  Stage-3 adjusts for team-average RPG but not today's specific starter. A
+  quality ace (ERA < 3.75) means future scoring is suppressed beyond what
+  team averages imply. The edge boost requires more model conviction before
+  betting into a good pitcher.
+
+Data:
+  Theory-motivated; no shadow outcomes yet. Pitcher cache now loads ~80
+  pitchers automatically per session. ERA threshold 3.75 = 1 std below
+  2026 MLB avg. Accumulate session data to calibrate.
+
+
+---------------------------------------------------------------------------
+GATE 9: Same-event dedup window
+  File: signal_engine.py
+  Param: --event-dedup-secs (default 60.0)
+---------------------------------------------------------------------------
+
+Rule:
+  Within 60 seconds of a bet on game_pk X, skip new signals on game_pk X
+  UNLESS the new signal has strictly higher edge.
+
+Why:
+  One scoring event moves multiple lines simultaneously. Without dedup, we
+  take double exposure on a single (potentially phantom) event. Higher-edge
+  escape hatch: the best signal on the event wins.
+
+Data:
+  2026-04-21 BAL@KC: O8.5 (cancelled, ask reversal) then O10.5 (won +$13.40)
+  from same underlying event. Correct: took the better-edge signal.
+
+
+---------------------------------------------------------------------------
+GATE 10: Cross-inning same-line dedup
+  File: signal_engine.py
+  Param: --inning-dedup-gap (default 2), --inning-dedup-edge-gap (default 0.05)
+---------------------------------------------------------------------------
+
+Rule:
+  For the same (game_pk, line): skip if fewer than 2 innings since last bet,
+  unless new edge exceeds previous by at least 0.05.
+
+Why:
+  Prevents chasing the same market across innings if the first bet was wrong
+  (phantom run, suppressed scoring likely to persist).
+
+
+===========================================================================
+PART 2: ORDER-LIFECYCLE GATES (live_engine.py — after order placement)
+===========================================================================
+
+These gates run after a limit order has been posted to the Polymarket CLOB
+and monitor it for cancellation signals.
+
+---------------------------------------------------------------------------
+LIMIT PRICE INVARIANTS
+  File: live_engine.py _compute_limit_price()
+  Param: --spread-factor (default 0.65)
+---------------------------------------------------------------------------
+
+Rule (applied in order):
+  1. Crossed/locked book (bid >= ask): return None — cannot place.
+  2. Raw limit = bid + spread * spread_factor (0.65).
+  3. Cap at fv - min_edge (preserve model edge at fill).
+  4. Cap at ask - 0.01 (must be inside spread).
+  5. Floor at bid + 0.01 (must improve on best bid).
+  6. Round to 2dp (Polymarket minimum tick).
+  7. Final: if limit >= ask, return None.
+  8. Final: if (fv - limit) < min_edge, return None.
+
+Data:
+  DET@CIN 2026-04-24: bid=0.73, ask=0.79, limit=0.77. Ask fell to 0.66
+  within 5 seconds (would have been filled at 0.66, better than our limit).
+  Order never reached CLOB due to API bug (fixed 2026-04-25).
+
+
+---------------------------------------------------------------------------
+ASK REVERSAL GATE
+  File: live_engine.py _check_ask_reversal()
+  Param: --ask-reversal-drop (default 0.08), --ask-reversal-window (default 5.0s)
+---------------------------------------------------------------------------
+
+Rule:
+  Within 5 seconds of order placement, if market ask drops >= 8c: cancel.
+  After 5 seconds: record ask_5s and ask_drop_5s on all orders for analytics.
+
+Why:
+  Phantom runs cause immediate ask reversal as fast participants correct.
+  8c threshold calibrated from: wins show ask_drop_5s = -0.14 to +0.05;
+  phantom losses show +0.09 to +0.11+.
+
+Data:
+  2026-04-21 BAL@KC O8.5: drop=+0.09 → cancelled (game went over anyway).
+    Acceptable false positive. One miss for many phantom-run catches.
+  2026-04-23 PHI@CHC: ask_drop_5s=+0.03 — did not trigger (correct hold).
+  2026-04-24 DET@CIN: ask_drop_5s not recorded (CLOB bug prevented placement).
+
+
+---------------------------------------------------------------------------
+FV DECAY CANCELLATION
+  File: live_engine.py _check_fv_decay()
+  Param: --fv-cancel-min-edge (default 0.03)   [P0: lowered from 0.05]
+  Param: --fv-decay-min-age-secs (default 90s) [P0: extended from 30s]
+  Param: --fv-decay-min-ask-drop (default 0.03)
+  P0 fixes applied 2026-04-24 based on book-capture analysis of Apr 22 session
+---------------------------------------------------------------------------
+
+Rule (four conditions — all required before cancelling):
+  0. [NEW P0] Score guard: if current_score_total > bet.line, NEVER cancel.
+     The bet has effectively won. Hold until fill or game Final.
+  1. Age gate: order must be >= 90 seconds old before FV decay fires.
+  2. Model gate: current_fv - limit_price < 0.03 (model edge collapsed to 3pp).
+  3. Market gate: entry_ask - current_ask >= 0.03 (ask has confirmed decay).
+
+  If all four pass: cancel. Otherwise hold and log reason.
+
+Why:
+  [Score guard] If total already exceeds the line, the bet is a mathematical
+  winner. Cancelling would discard realized profit.
+
+  [90s age] Book capture analysis (2026-04-22): the inning-ending repricing
+  window — bid collapses at ~13s, LTP resets at ~19s, new equilibrium by
+  ~25-45s — takes 60-90 seconds. At 30s the FV decay was firing in the middle
+  of that chaos. 90s ensures evaluation happens after market re-equilibrates.
+  Evidence: TOR@LAA O6.5 bid collapsed at 13s and stabilized by 25s. TOR@LAA
+  O7.5 cancelled at 34s (4s past old minimum) — would be held at 90s.
+
+  [3pp edge] MIL@DET 2026-04-22 cancelled at edge_at_limit=0.045 (4.5pp below
+  old 5pp threshold) — game ended 16 total, would have won. 3pp still requires
+  real positive expected value at the fill price.
+
+  [Market gate] If ask is rising or flat, market confirms the signal. Only
+  cancel when BOTH model AND market weaken simultaneously.
+
+Data:
+  2026-04-22: 3 signals, all FV-decayed, all were correct direction.
+    TOR@LAA O6.5: cancelled at 1:52. Would have won (final=10 vs 6.5 line).
+    TOR@LAA O7.5: cancelled at 34s. Would have won (final=10 vs 7.5 line).
+    MIL@DET O6.5: cancelled at 5:09. Would have won (final=7 vs 6.5 line).
+  All three represent the problem the P0 fixes address.
+  2026-04-21 MIL@DET: ask rose +0.29 from entry 0.69 → ask_drop=-0.29 < 0.03
+    hold gate fires → order would survive → would have won final=16.
+
+
+===========================================================================
+PART 3: POST-SIGNAL FILTERS (live_engine.py _place_bet)
+===========================================================================
+
+---------------------------------------------------------------------------
+LTP (LAST TRADED PRICE) — DIAGNOSTIC SIGNAL, NOT YET A GATE
+  Field: ltp_at_signal (added TR13, 2026-04-25)
+  Logged in LIVE BET message as: ltp=X.XXX(gap=+/-X.XXX)
+---------------------------------------------------------------------------
+
+The ltp_ask_gap = entry_ask - ltp is now recorded on every placed bet.
+Interpretation:
+  ltp_ask_gap < 0: buying BELOW last traded price → favorable (market last
+    traded higher than we're paying; low adversarial-selection risk)
+  ltp_ask_gap 0-0.08: neutral
+  ltp_ask_gap > 0.10: buying ABOVE last traded price → potentially risky
+    (market hasn't recently confirmed this price; could be stale LTP)
+  ltp_ask_gap > 0.30: LTP is likely stale (early-game trade vs current price).
+    In this case, LTP is informative — it's just old, not contradictory.
+
+Data (observed cases):
+  PHI@CHC 2026-04-23: ltp=0.72, ask=0.69 → gap=-0.03 (buying below LTP).
+    Game ended 15 total. Signal was favorable — market confirmed at higher price.
+  DET@CIN 2026-04-24: ltp=0.13, ask=0.79 → gap=+0.66 (STALE LTP).
+    Game ended 17 total. LTP from early innings, not adversarial selection.
+    High ask (0.79) with FV=0.968 correctly interpreted as valid signal.
+  MIL@DET 2026-04-22: ltp=0.63, ask=0.78 → gap=+0.15 (buying above LTP).
+    Was a phantom-run-adjacent situation. The gap signaled risk correctly.
+
+Action: accumulate more LTP data before gating on it. A future gate could
+trigger when gap > 0.10 AND LTP is recent (e.g., gap > 0.10 AND
+ltp_freshness < 5 minutes). Not yet implemented.
+
+
+---------------------------------------------------------------------------
+KELLY SIZING + EDGE CAP
+  Param: --stake-mode kelly (default), --kelly-fraction 0.25
+  Param: --kelly-max-edge 0.25, --kelly-max-bet-fraction 0.33
+---------------------------------------------------------------------------
+
+Formula:
+  f* = (fair_value - limit_price) / (1 - limit_price)
+  effective_edge = min(edge, kelly_max_edge=0.25)
+  stake = effective_f* * daily_budget * kelly_fraction
+  stake = clamp(stake, min_order_size, daily_budget * kelly_max_bet_fraction)
+
+Current testing uses --stake-mode flat --stake 15 to isolate fill behavior
+from sizing complexity. Switch to Kelly after 15+ fills validate the pipeline.
+
+
+---------------------------------------------------------------------------
+DAILY BUDGET + PER-GAME CAP
+  Param: --daily-budget, --per-game-budget-fraction (default 0.35)
+---------------------------------------------------------------------------
+
+Rule:
+  deployed + reserved must not exceed daily_budget.
+  Same-game exposure must not exceed daily_budget * per_game_budget_fraction.
+
+Current testing uses --per-game-budget-fraction 0.40 to allow 2-3 fills per
+game while preventing one game from consuming the full session budget.
+
+NOTE: Bug fixed 2026-04-25 — budget tracking previously used live_args.stake
+(defaulted to $25) instead of trade_args.stake. This caused DET@CIN session
+(2026-04-24) to reserve $25 from a $30 budget after one failed CLOB call,
+blocking all 11 subsequent signals with budget_exhausted.
+
+
+===========================================================================
+SUMMARY TABLE
+===========================================================================
+
+Gate        Name                          Default          Notes / Shadow verdict
+----------  ----------------------------  ---------------  ------------------------------
+1           Inning filter                 >=4 (std)        No per-signal outcomes yet
+                                          >=5 (high)
+2           Inactive inning state         end,middle       N/A
+3           Min entry ask                 0.55/0.60        No recent shadow data
+4           Spread filter                 max 0.20         N/A
+5           Confirmed ask jump            0.06 / 3 ticks   10/10 correct Apr 22-25
+6           Min current total             >=4 runs         100% shadow (n=2, watch)
+7           Runs pace filter              line-1.5         0% shadow (0W/2L) CORRECT
+8           Runs-needed max               <=3.5            No recent shadow data
+[8-ramp]    Ask edge ramp (NEW Apr 25)    +0-5pp           Active, marginal filtering
+                                          ask 0.75-0.90      BOS@BAL/PHI@ATL just cleared
+8b          Close game + high rn          rn>=4,lead<2     No recent shadow data
+8c          Inning 5 bullpen              rn>=2.5          100% shadow (n=2, watch)
+8d          Inning 6 setup-reliever       rn>=2.5          25% shadow (2W/6L) CORRECT
+8e          Blowout shutout (TR11) +      trail<=1,        Confirmed correct Apr 24-25
+            blowout-adjacent (TR13)       lead>=6,inn>=6
+                                          OR lead>=4,inn>=7
+8f          FV saturation                 base_fv<0.99     No shadow outcomes yet
+8g          Large gap late innings        edge<=0.26       0% shadow (0W/3L) CORRECT
+                                          inn>=7             Tightened to 0.26 Apr 25
+8h          S2 extreme suppression        S2<=-0.20        0% shadow (0W/1L) CORRECT
+                                          inn>=6
+8i          Pitcher quality edge boost    ERA<3.75         No outcomes yet
+                                          inn<=6, +0.03
+9           Same-event dedup              60s window       N/A
+10          Cross-inning same-line dedup  2 innings        N/A
+[order]     Score-over-line guard [P0]    NEVER cancel if  Validated Apr 25 (no fires
+                                          current > line     needed, all filled cleanly)
+[order]     Ask reversal gate             drop>=8c/5s      All 5 Apr 25 fills flat (0.00)
+[order]     FV decay cancellation [P0]    edge<0.03        Zero fires Apr 25
+                                          age>=90s           P0 fixes validated
+                                          ask_drop>=0.03
+[bet]       Kelly edge cap                max 0.25         Not active (using flat)
+[bet]       Daily budget / per-game cap   varies / 0.40    Working correctly Apr 25
+
+
+===========================================================================
+SHADOW METRICS: WHAT WE'VE LEARNED (2026-04-22 through 2026-04-24)
+===========================================================================
+
+The shadow relaxed-gate system tracks signals blocked by each gate and
+evaluates whether they would pass under slightly relaxed thresholds. After
+3 sessions with outcomes.jsonl, the data is clear on several gates.
+
+Summary of shadow_relaxed_would_pass outcomes (resolved cases only):
+
+  Gate                         Passes  Win%   Verdict
+  ---------------------------  ------  -----  -----------------------------
+  gate_fv_ask_gap              3       0%     GATE IS CORRECT — KEEP/TIGHTEN
+  gate_inning6_runs_needed     8       25%    GATE IS CORRECT — KEEP
+  gate_runs_pace               2       0%     GATE IS CORRECT — KEEP
+  gate_stage2_suppression      1       0%     GATE IS CORRECT — KEEP
+  gate_inning5_runs_needed     2       100%   Watch — small sample
+  gate_min_current_total       2       100%   Watch — small sample
+  gate_min_edge                3       67%    Borderline — watch
+  gate_blowout                 1       100%   n=1 only, ignore
+
+Key findings:
+  1. gate_fv_ask_gap 0W/3L for shadow passes → Gate 8g is calibrated correctly
+     and potentially needs further tightening (testing 0.26 now).
+  2. gate_inning6_runs_needed 2W/6L (25%) → Gate 8d is correctly protective.
+     The 25% win rate is well below break-even; do not relax.
+  3. gate_runs_pace 0W/2L and gate_stage2_suppression 0W/1L → both correct.
+  4. gate_inning5_runs_needed 2W/0L → could potentially be relaxed (rn=3.0
+     from 2.5), but n=2 is too small to act on. Revisit at n=10+.
+  5. gate_min_current_total 2W/0L → similar situation; watch and wait.
+
+EV policy (shadow mode): 177 evaluated, 113 allow, 64 block (36% block rate).
+  The EV policy has blocked every signal in Apr 22-24 (all of which would have
+  won). The model lacks inning as a feature — it overapplies the historical
+  "edge>0.25 = bad" pattern to inning-6 signals where the data is different.
+  DO NOT switch to enforce mode until model is retrained with inning as a
+  key feature dimension.
+
+gate_fv_saturation (33 blocks in one session):
+  All had base_fv=1.0 exactly. Asks ranged 0.85-0.97 (market-confirmed real
+  runs). Gate 8 (min_edge=0.15) would also block most of these since
+  edge = 1.0 - 0.85 = 0.15 or less. Gate 8f therefore has limited marginal
+  impact on opportunity cost — it mostly fires before Gate 8 can. The new
+  per-signal ask logging ("market CONFIRMS / CONTRADICTS") allows tracking
+  the phantom vs real-run character across sessions.
+
+
+===========================================================================
+IDENTIFIED GAPS — STATUS
+===========================================================================
+
+Closed gaps (fully implemented and validated):
+
+Gate 8f saturation threshold: 0.98 → 0.99 (TR13, Apr 22)
+  2026-04-20 fill at base_fv=0.9814 was a WIN; corrected threshold avoids
+  false blocking while preserving phantom-run protection at true ceiling.
+
+Gate 8g threshold: 0.30 → 0.28 (TR13, Apr 22)
+  PIT@TEX edge=0.294 inn=7 LOSS blocked. Shadow data: 0W/3L for would-be
+  passes confirms tightening direction. Testing 0.26 on 2026-04-25.
+
+Gate 8e blowout-adjacent (TR13, Apr 22):
+  PIT@TEX 2026-04-21 correctly blocked by trailing<=1, lead>=4, inn>=7.
+
+FV decay P0 fixes (Apr 22-24 data, implemented Apr 24):
+  min_edge 0.05 → 0.03: MIL@DET cancelled at 0.045, would have won.
+  min_age 30s → 90s: inning-ending repricing takes 60-90s; 30s fired in chaos.
+  Score-over-line guard: never cancel if current_total > line.
+  All three validated by book capture analysis; live validation pending.
+
+Pitcher cache auto-loading (Apr 25):
+  build_pitcher_cache.py logic inlined into MLBStatsClient. Cache now auto-
+  rebuilt on startup if missing or older than 24 hours. No manual step needed.
+
+
+Open gaps (candidates for future action):
+
+Gap A: LTP gap filter
+  Priority: P2 (accumulating data)
+  ltp_at_signal now recorded on every bet. Pattern emerging:
+  - Large gap (>0.10) and LTP is recent → potential adversarial selection
+  - Large gap (>0.30) and LTP is stale → informational, not adversarial
+  Need 15+ fills with LTP data to calibrate a gate. Currently diagnostic only.
+
+Gap B: Oracle Park / extreme park early inning
+  Priority: P2 (1 data point only)
+  LAD@SF 2026-04-21: S2=-0.230, inn=4, LOSS. Gate 8h requires inn>=6 so
+  doesn't fire at inn=4. BAL@CLE (S2=-0.225, inn=4) WON — contradicts gating.
+  Insufficient data to distinguish. Revisit after 3+ Oracle Park observations.
+
+Gap C: Gate 8g further tightening
+  Priority: In progress (testing 0.26 on 2026-04-25)
+  Shadow data: 0W/3L for relaxed passes (edge 0.29-0.34, inn>=7).
+  Testing whether 0.26 is the right threshold or if 0.28 is already optimal.
+  Will resolve this gap once 2026-04-25 session data is analyzed.
+
+Gap D: EV policy inning calibration
+  Priority: P1 (blocked signals include winning ones)
+  EV policy blocks 36% of signals (shadow mode). PHI@CHC Apr 23 and
+  DET@CIN Apr 24 would have been blocked — both correct signals.
+  Root cause: model trained on data that conflates inning-6 and inning-8
+  high-edge signals. Inning 7+ high-edge signals are bad; inning 6 is different.
+  Action: retrain with inning as explicit feature once 20+ fills are available.
+
+
+===========================================================================
+2026-04-25 AUDIT ADDENDUM: GATE LOGIC + DOLLAR EV CHECK
+===========================================================================
+
+Scope and method:
+  1) Code recheck:
+     - scripts/trading/signal_engine.py _process_tick() gate order and thresholds
+     - scripts/trading/live_engine.py order lifecycle gates (_check_ask_reversal, _check_fv_decay)
+  2) Data used:
+     - data/analysis_output/day1_review_2026_04_22_candidate_labels.jsonl
+     - data/live_trading/candidate_universe/2026-04-23_candidates.jsonl (+ outcomes)
+     - data/live_trading/candidate_universe/2026-04-24_candidates.jsonl (+ outcomes)
+     - Outcome coverage: 2492 / 2557 candidate rows (97.5%)
+  3) Dollar metric (normalized to $1 stake):
+     - If blocked candidate would LOSE (over_hit=false): gate saves +$1.00
+     - If blocked candidate would WIN at ask A: gate gives up +(1/A - 1)
+     - Net gate EV = loss_dollars_prevented - win_dollars_prevented
+       Positive net = gate is helping. Negative net = gate is over-blocking.
+  4) Independence control:
+     - Primary unit = first occurrence per (session_date, game_pk, line, decision_reason)
+       to avoid overweighting repeated ticks in the same market state.
+
+
+Code confirmation results:
+  - Gate ordering and default thresholds in current_gates.txt match current code.
+  - Gate 8f strict + secondary shadow (gate_fv_saturation_v2) is implemented as documented.
+  - FV decay P0 logic (score-over-line guard, min-age=90s, min-edge=0.03, ask-drop confirm)
+    is implemented exactly as documented.
+  - Apr 27 instrumentation update:
+    Gate 1/2/3/4/5 failures now create candidate skip rows before returning.
+    This closes the early-gate dollar-audit gap once new sessions/outcomes are
+    collected.
+
+
+Primary EV check (market-reason unique rows, n=77):
+  gate_min_edge               n=13  W/L=9/4   net=+2.00   POSITIVE
+  gate_inning6_runs_needed    n=8   W/L=4/4   net=+2.28   POSITIVE
+  gate_runs_pace              n=4   W/L=2/2   net=+1.38   POSITIVE (small n)
+  gate_fv_ask_gap             n=2   W/L=0/2   net=+2.00   POSITIVE (small n)
+  gate_runs_needed_max        n=2   W/L=1/1   net=+0.65   POSITIVE (small n)
+  gate_stage2_suppression     n=2   W/L=1/1   net=+0.57   POSITIVE (small n)
+  inference_no_match          n=4   W/L=3/1   net=+0.73   POSITIVE (fallback still valuable)
+  gate_inning5_runs_needed    n=13  W/L=9/4   net=+0.61   BORDERLINE
+  gate_fv_saturation          n=11  W/L=10/1  net=-0.35   NEGATIVE/BORDERLINE
+  gate_min_current_total      n=6   W/L=5/1   net=-1.87   NEGATIVE
+  gate_blowout                n=3   W/L=3/0   net=-1.34   NEGATIVE
+
+Interpretation of the negatives:
+  - gate_min_current_total:
+    blocked 5 wins / 1 loss in this sample, mostly inning=4 with asks around 0.60-0.75.
+    This gate is currently over-blocking high-conviction inning-4 rebounds.
+  - gate_blowout:
+    blocked 3/3 eventual overs (MIN@TB 7.5, LAA@KC 8.5, ATH@TEX 7.5).
+    Current blowout logic is not positive EV on available labeled sample.
+  - gate_fv_saturation:
+    mixed. In this sample it is slightly negative overall, but near break-even.
+    It likely needs an ask-conditioned treatment rather than hard global blocking.
+
+
+Shadow-relaxed EV check (2026-04-23/24 only, would-pass rows):
+  gate_inning6_runs_needed   n=8  W/L=2/6  net=+5.31  STRONG KEEP
+  gate_fv_ask_gap            n=3  W/L=0/3  net=+3.00  STRONG KEEP
+  gate_runs_pace             n=2  W/L=0/2  net=+2.00  KEEP
+  gate_stage2_suppression    n=1  W/L=0/1  net=+1.00  KEEP (low n)
+  gate_min_edge              n=3  W/L=2/1  net=+0.56  KEEP (low n)
+  gate_min_current_total     n=2  W/L=2/0  net=-1.08  RELAX CANDIDATE
+  gate_inning5_runs_needed   n=2  W/L=2/0  net=-0.35  RELAX CANDIDATE
+  gate_blowout               n=1  W/L=1/0  net=-0.64  RELAX/REWORK CANDIDATE
+
+
+Order-lifecycle gate reality check (sessions through 2026-04-24):
+  - fv_decay cancels: 5, all 5 were eventual over wins (counterfactual +$54.70 on $118.63 staked)
+  - ask_reversal cancels: 1, eventual over win (counterfactual +$10.71)
+  - game_final cancels: mostly execution misses (not a signal-quality gate)
+  This supports the existing conclusion that pre-P0 fv_decay was too aggressive.
+  Need post-P0 sample before finalizing fv_decay/ask_reversal thresholds.
+
+
+Recommendations from this audit:
+  1) Rework Gate 8e (blowout) first:
+     - Implemented Apr 27: default conditional relax is enforce, with near-line
+       and high-conviction escape hatches. Re-evaluate after >=20 labeled
+       market-reason cases under the new logic.
+  2) Soften Gate 6 (min current total) in shadow testing:
+     - Test min_current_total=3 when inning=4 and ask>=0.60; keep strict for other contexts.
+  3) Keep Gate 8d and Gate 8g unchanged for now:
+     - Both show strong positive protection in shadow and primary EV views.
+  4) Keep Gate 8c but split by ask band in analysis:
+     - Current sample suggests protection is better at lower asks; high-ask cases are more mixed.
+  5) Instrumentation priority:
+     - Implemented Apr 27: labeled candidate logging for early gate exits
+       (Gate 1-5) so all gates can be evaluated on the same dollar-EV standard
+       after fresh labeled sessions accrue.

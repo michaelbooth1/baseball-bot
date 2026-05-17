@@ -1,0 +1,296 @@
+================================================================================
+SESSION REVIEW — 2026-04-27
+Question: are we capturing data properly, and what can we learn?
+================================================================================
+
+HEADLINE
+--------
+The bot ran cleanly for ~7.6 hours (21:48 UTC -> 05:23 UTC) and placed
+**ZERO bets**. No errors, no warnings, no API problems — gates plus the
+day's market structure produced no actionable signals. The five new
+fill-model feature families (A-E) collected **ZERO data points** for the
+same reason: they only fire on the trade-decision path.
+
+This session is a clean operational success and a weak data-capture
+event simultaneously. The most actionable finding is in Part 5 below.
+
+
+================================================================================
+PART 1 — WHAT THE LOGS / DATA SHOW
+================================================================================
+
+Run window:        2026-04-27 21:48 UTC -> 2026-04-28 05:23 UTC  (~7.6 h)
+Log file:          logs/real-logs/2026-04-27.log  (18.6 MB, 105K lines)
+Log levels:        INFO=22,439  DEBUG=83,483  WARN=0  ERROR=0
+Markets watched:   10 distinct (game, line) pairs across 8 games
+
+Candidate rows:    7,681 total — every single one is `decision=skip`
+Trade rows:        0
+Bets placed:       0
+Family A-E rows:   0  (these only attach on the trade path)
+
+Per-game candidate volume — bot was actually attentive:
+   TB@CLE 8.5    1,365 ticks observed
+   MIA@LAD 8.5     867
+   NYY@TEX 7.5     852
+   TB@CLE 7.5      831
+   STL@PIT 8.5     780
+   LAA@CWS 8.5     774
+   BOS@TOR 7.5     770
+   LAA@CWS 9.5     677
+   SEA@MIN 8.5     412
+   CHC@SD 8.5      353
+
+The 10-market universe is small. We only watched 8 games (some games
+got multiple lines tracked). Either the slate was light, or our market-
+filtering is being aggressive — worth a separate look (Part 6).
+
+
+================================================================================
+PART 2 — WHY ZERO BETS (TOP SKIP REASONS)
+================================================================================
+
+Skip-reason breakdown of all 7,681 candidate rows:
+
+   3,423  gate_min_entry_ask       (45%)
+   3,300  gate_min_inning          (43%)
+     476  gate_inactive_inning_state
+     206  gate_wide_spread
+     111  gate_inning6_runs_needed
+      69  gate_min_edge            <-- closest near-misses
+      30  gate_inning5_runs_needed
+      21  gate_fv_saturation
+      20  gate_runs_pace
+      14  gate_ask_jump_unconfirmed
+       6  gate_crossed_book
+       5  gate_min_current_total
+
+88% of skips are from the two earliest gates (ask floor, min inning).
+This is overwhelmingly "watching, not yet ready" — the bot polling
+before the legitimate trade window opens for each market.
+
+The only gate that represents a "real" near-miss is gate_min_edge: 69
+candidates passed everything else but had insufficient edge.
+
+
+================================================================================
+PART 3 — JUST HOW NEAR WERE THE NEAR-MISSES?
+================================================================================
+
+For the 69 gate_min_edge skips:
+
+   max edge:     +0.0866   (10pp short of the 0.18-0.21 effective threshold)
+   p90:          +0.0566
+   median:       -0.0034   (negative — the calibrated FV was BELOW the ask)
+   min:          -0.2695
+
+Only ONE of the 69 came within striking distance of the threshold, and
+even that one was 10pp short. **The day produced no genuine near-trades.**
+This is good news — it means the gates didn't reject anything obviously
+profitable, they were just dry on opportunities.
+
+A spot-check of one near-miss:
+   LAA@CWS 8.5, top of 7th, 5-1 game, runners on 1+2+3
+   Stage-1 base FV: 0.9089, Stage-2/3 nudges +0.07 -> calibrated FV: 0.917
+   ask = 0.91 -> raw edge = +0.007
+   ask-edge ramp boost active (ask >= 0.75) -> min_edge_effective = 0.21
+   Outcome: skip — correctly. No alpha to take, market fairly priced
+   the high-runners-and-late blowout context.
+
+Conditional blowout-relax (the user's recent rework) DID classify this
+candidate as "would pass blowout gate," but it still failed at min_edge.
+The relax is doing its job; the day just had no edge to capture.
+
+
+================================================================================
+PART 4 — DATA CAPTURE INFRASTRUCTURE — IS IT WORKING?
+================================================================================
+
+Confirmed working (or at minimum, "no bug detected"):
+  - Candidate rows continue to write per-tick to the JSONL
+    (15.8 MB of rows is large because of the new family-feature scaffolding
+    being attached on the TRADE path — but no trade rows fired, so the
+    extra payload is mostly absent here. Yesterday's 15.8 MB vs prior days'
+    ~130 KB seems suspicious. Verify in Part 4.1.)
+  - Shadow-relaxed gates: 6,979 evaluations, 1,260 would-pass.
+    Framework is generating data.
+  - Conditional-relax (blowout-rework): 13 enforcements, all 13 would
+    have passed. Tiny sample, functional.
+  - Probability calibrator: scored 238 rows in shadow, applied 0
+    (correct for shadow + identity-method).
+  - No log errors, no warnings. Network polling stable.
+
+Confirmed NOT working as hoped:
+  - Family A-E features: 0 rows captured (zero bets).
+  - tape_captures/, book_decision_snapshots/, velocity_snapshots/
+    directories were never created (only created on first bet of the day).
+  - book_captures/ for 2026-04-27 also never created (no bets).
+  - EV policy: 0 candidates scored (only fires on trade path).
+
+4.1 The candidate file size mystery
+-----------------------------------
+2026-04-27_candidates.jsonl is 15.8 MB; 2026-04-26 was 138 KB. That is
+a 100x increase on a no-bet day vs another no-bet day. This suggests
+that the new family-feature scaffolding is adding payload OUTSIDE the
+trade path too — possibly on the per-tick base candidate rows. Worth a
+deeper look but NOT urgent (data is being written, not lost). May want
+to slim candidate-row schema if disk grows unmanageable.
+
+
+================================================================================
+PART 5 — THE SINGLE MOST ACTIONABLE FINDING
+================================================================================
+
+We have spent four work sessions building Families A, B, C, D, E into the
+runtime. The features are technically correct, well-tested, and sit on
+the trade-decision path. **But because trade-decision events are rare
+(zero yesterday, ~5/week on a good week), we are accumulating fill-model
+data at a glacial pace.**
+
+At the current rate of fills (~5/week), we need ~10-20 weeks before any
+of the Family A-E reliability diagrams have enough data to inform model
+training. The fill-model design doc specifically calls this out as an
+open risk.
+
+Recommendation: **capture Family A-E features on a SAMPLE of the skip
+path too.** Specifically, on every candidate that passes through the
+"final-stretch" gates (gate_min_edge, gate_fv_saturation, gate_fv_ask_gap,
+gate_blowout, gate_s2_suppress) but ultimately skips. These are the rows
+that look LIKE potential trades and would give us labeled "did this
+signal end up over the line?" data — the same data we get from the
+existing outcomes JSONL.
+
+Concretely: in signal_pipeline.py, after a skip caused by one of those
+specific late-stage gates, also call _start_tape_capture, _start_family_b
+_capture, _start_family_c_capture, and the inline D/E computations.
+Persist with a "decision=skip_with_features" marker on the candidate row.
+
+Performance impact: the early-gate skips (gate_min_inning, gate_min_entry
+_ask) which represent 88% of skips would NOT trigger feature capture —
+so we don't add 7,000+ HTTP calls per day. Only the ~250-300 late-stage
+skips per day would, adding ~50 seconds of HTTP load over the full
+session — trivial.
+
+Data benefit: we'd jump from ~5 fill-model-relevant rows per week to
+~250-300 per day. That changes the fill-model training timeline from
+"6 months" to "2 weeks."
+
+Caveat: Family A-E on skip rows are not perfect substitutes for fill
+data — we don't observe a fill outcome, just a counterfactual ("would
+have won if filled"). But:
+  (a) the existing outcomes pipeline already tracks counterfactuals
+  (b) the fill-model needs both filled AND non-filled examples — skip
+      rows ARE non-filled examples by construction
+  (c) for M_win_if_filled, we can still use only the filled subset
+      (slow accumulation), but for M_fill we now have a much larger
+      training set
+
+
+================================================================================
+PART 6 — SECONDARY FINDINGS / SMALLER IMPROVEMENTS
+================================================================================
+
+6.1 Universe is small (10 markets). Investigate market filter.
+    Yesterday only 8 games / 10 (game, line) pairs got monitored. MLB
+    typically has 15+ games per night. Either:
+       (a) Sunday slate is genuinely smaller (plausible — Sunday is
+           often only afternoon games)
+       (b) some games started before the bot launched (21:48 UTC =
+           17:48 ET, after first pitch for east-coast games)
+       (c) market filter is excluding too aggressively
+    Resolution: log INFO at startup with the full list of (game, line)
+    pairs the bot decided to monitor and WHY any were excluded.
+
+6.2 Calibrator is loaded as identity-method.
+    fair_value_calibration_method='identity' on all 238 shadow scores.
+    Means the calibrator JSON loaded successfully but contains no actual
+    Platt/isotonic transformation. Check whether the calibration training
+    job (analyze_polymarket_calibration or similar) is actually producing
+    a non-trivial model. If not, calibration is a placeholder consuming
+    log lines but doing nothing.
+
+6.3 Tick-buffer health is unknown.
+    Family C reads from LineState.tick_buffer which I wired to populate
+    every tick (before the early returns). With no bets fired, we can't
+    confirm from outputs alone that the buffer is being maintained.
+    Easy fix: add an INFO log every 10 minutes per LineState showing
+    `tick_buffer length, oldest age, newest age`. If buffer is stuck at
+    1 entry or empty, we have a wiring bug.
+
+6.4 The 15.8 MB candidate-row file size deserves investigation.
+    100x growth vs prior days on a similarly-zero-bet day. Suggests
+    either:
+       (a) shadow_relaxed_* fields were added as nested dicts on every
+           skip row (~14 new keys per row * 7,681 rows = significant)
+       (b) something else is bloating per-row payload
+    Not blocking — but if disk fills up over a week, we'll regret not
+    investigating. Spot-check row sizes when convenient.
+
+6.5 Conditional-relax sample of 13 is too small to learn from.
+    The blowout-relax rework only fired 13 times yesterday. Need many
+    more cases before we can evaluate whether it's letting through good
+    signals or bad ones. Continue running, evaluate after ~50-100 cases.
+
+
+================================================================================
+PART 7 — THINGS THAT ARE GOING WELL (worth keeping)
+================================================================================
+
+  + Operational stability: zero errors, zero warnings over 7.6 hours
+    of continuous polling against a live API. The post-refactor
+    codebase is stable.
+  + Schedule + budget infrastructure works: budget remained at $160
+    intact, no leakage, no orphaned state.
+  + Shadow framework (calibration + relaxed gates + conditional relax)
+    is producing data even on zero-bet days. We can analyze the
+    "what would have happened" counterfactuals offline.
+  + Gate logic correctly rejected obvious non-trades (e.g. the LAA@CWS
+    7th-inning case had near-zero edge after adjustment for the 91-cent
+    ask — correctly skipped).
+  + Performance mode and ~2.5s polling cadence holds across 10 markets
+    without rate-limiting issues from Polymarket.
+
+
+================================================================================
+PART 8 — IMMEDIATE NEXT STEPS (ranked)
+================================================================================
+
+T1.  CRITICAL TODAY (Apr 28):  V2 cutover is at 11:00 UTC. Per the
+     migration plan, complete CP-3 (USDC.e -> pUSD wrap) BEFORE the
+     cutover. CP-2 (code) is done; the wallet step is the only hard
+     blocker for first V2 trade.
+
+T2.  HIGH (this week):  Implement Part 5's recommendation — capture
+     Family A-E features on late-stage skip rows. Single biggest data-
+     accrual lever in the codebase.
+
+T3.  MEDIUM (this week):  Add tick-buffer health log per Part 6.3 so
+     we can verify Family C substrate is alive.
+
+T4.  MEDIUM (next week):  Investigate market-filter behavior per 6.1.
+     If we can monitor 15-20 markets instead of 10, signal volume
+     roughly doubles for free.
+
+T5.  LOW (anytime):  Inspect candidate-row size growth per 6.4. Trim
+     or factor into sidecar if it gets unwieldy.
+
+T6.  LOW (anytime):  Verify calibrator artifact is non-trivial per 6.2.
+     If it's identity, retrain or remove the shadow scoring overhead.
+
+
+================================================================================
+SUMMARY
+================================================================================
+
+Yesterday's session was a quiet, clean no-bet day. The infrastructure is
+healthy — no errors, gates working as designed, shadow frameworks
+generating counterfactual data. The data-capture story is, however,
+weaker than it looks: Families A-E captured nothing because they only
+fire on placed bets, and zero bets fired. The single highest-leverage
+code change available is to extend feature capture to late-stage skip
+rows (Part 5), which would jump our fill-model training data accumulation
+from ~5/week to ~250+/day.
+
+================================================================================
+END
+================================================================================

@@ -1,0 +1,205 @@
+Team Offense Model V2 — Calibration & Re-Weighting Plan
+========================================================
+
+Date: 2026-05-07
+Owner: agent + user
+Status: approved, Phase 1 starting
+
+WHY THIS WORK
+-------------
+Today's Stage-3 (`scripts/analysis/team_offense_model.py`) uses a single
+50-game rolling RPG window per team, a single empirically-fit constant
+`LOGIT_DELTA_PER_RUN = 0.20`, and a linear inning-weight ramp (1.0 at
+inning 1 -> 0.0 at inning 9). The constant was fit on 4,875 holdout games
+from 2024-2025, but not under a time-respecting walk-forward discipline
+and with no inning/line/regime interactions tested.
+
+The 2026-05-06 session review surfaced a concrete instance where Stage-3
+was the deciding factor for a losing trade: TEX@NYY O8.5, where Stage-3
+contributed +0.107 to FV (Stage-2 contributed only +0.028). Without
+Stage-3 the bet would not have triggered (edge 0.097 < 0.15 threshold).
+NYY scored 1 run total. One game does not warrant tuning, but it does
+warrant asking whether the magnitude is right.
+
+Three questions in priority order:
+  1. Is `LOGIT_DELTA_PER_RUN = 0.20` the right magnitude after Stage-1 +
+     Stage-2 are already applied?
+  2. Is a single 50-game rolling RPG the right summary of team offense,
+     or should we decompose into prior-season / season-to-date / momentum?
+  3. Is the linear inning-weight decay the right shape?
+
+
+CHOICE POINTS (DECIDED 2026-05-07)
+-----------------------------------
+- Calibration table: per-half-inning grain. Live-replay validation in
+  Phase 5 uses per-PA grain.
+- Holdout split: 2026-only for the dollar-test replay; full 2025+2026
+  for the statistical test.
+- Pitcher adjustment: OUT OF SCOPE. Note for future work below.
+- Output target: new `team_offense_model_v2.py` opt-in via CLI flag.
+  No in-place refit of the current model. Shadow comparison until
+  promoted.
+
+
+PHASE 1 — Leakage-free residual training table
+------------------------------------------------
+Replay every regular-season game in 2021-2026 and emit one row per
+`(game_pk, half_inning_boundary, line)` at the START of each half-inning
+(outs=0, bases=0, score-known) with:
+  - `base_fv_stage1_emp`: Stage-1 empirical Over probability for that
+    cell + line, if cell support is sufficient
+  - `base_fv_stage1_po`: Stage-1 Poisson Over probability for that cell + line
+  - `stage2_delta`: Stage-2 logit delta given park / temp / wind context
+  - `base_fv_stage1_plus_stage2`: sigmoid(logit(stage1) + stage2_delta).
+    Stage-3 is deliberately OFF here — that's the residual target.
+  - `final_total`, `over_hit` per line (binary outcome)
+  - team-offense features (Phase 2 feature library)
+  - meta: `season`, `season_to_date_games_*`, `days_into_season`,
+    `home_park_id`, `temp_f`, `wind_text`
+
+Output: `data/analysis_output/team_offense_calibration/training_table.jsonl`
+plus a `manifest.json` with row counts, feature column list, and arg state.
+
+Builder script: `scripts/analysis/build_team_offense_calibration_table.py`
+
+Rough scale: ~12k games x ~18 half-inning boundaries x ~7 lines =
+1.5M rows. Stream rather than load.
+
+Phase 1 deliverable: report on what the residual `over_hit -
+stage1_plus_stage2_fv` looks like — by inning, by line, by team-quality
+regime — BEFORE any modeling. This alone should tell us whether 0.20
+is too hot or too cold and whether the linear inning weight is plausible.
+
+
+PHASE 2 — Feature library
+--------------------------
+Per team per game-date, computed strictly from games BEFORE the target
+date. Goal: stop using one rolling window; let the model decide the mix.
+
+  prior_season_rpg          last full completed season
+  season_rpg_to_date        current season, all games
+  momentum_rpg_5            trailing 5 games
+  momentum_rpg_10           trailing 10 games
+  momentum_rpg_20           trailing 20 games
+  decay_weighted_rpg        last 50 games, exp decay half-life ~15 games
+  home_road_split_rpg       trailing 30 home or 30 road
+  n_games_in_season         scalar, lets model down-weight noisy early-season
+  momentum_minus_season     derived: momentum_10 - season_to_date
+  season_minus_prior        derived: season_to_date - prior_season
+
+NOT INCLUDED (future work):
+  - opponent-pitching-staff-adjusted RPG
+  - starting-pitcher quality interaction
+  - park-adjusted offensive runs (a team's home RPG already reflects park)
+
+
+PHASE 3 — Empirical-Bayes shrinkage
+------------------------------------
+Each team's true RPG modeled as draw from league distribution. Shrinkage
+estimator:
+  rpg_shrunk(team) = (n / (n+k)) * rpg_observed(team) + (k/(n+k)) * mu_league
+Fit `k` per window (5/10/20/50/season-to-date/prior-season) by
+method-of-moments or marginal MLE on across-team variance, computed on
+training years only (2021-2024).
+
+Replaces the current hard-clamp (RPG_CLAMP_LOW_RATIO=0.55, HIGH=1.55)
+with a continuous prior pull. Hot 5-game streaks no longer treated as
+true 6-RPG signals.
+
+
+PHASE 4 — Models, walked up the complexity ladder
+--------------------------------------------------
+All scored on `over_hit ~ logit(base_fv_stage1_plus_stage2) +
+offense_features + interactions`, with the Stage-1+2 logit entered as
+an OFFSET so we measure incremental Stage-3 contribution.
+
+  Baseline A   no Stage-3
+  Baseline B   current Stage-3 (0.20, 50-game, linear decay) reproduced
+  Model 1      same shape as current, refit constant on 2021-2024
+  Model 2      Model 1 with EB-shrunk RPG instead of raw 50-game
+  Model 3      linear blend of (prior-season, season-to-date, momentum_10),
+               weights learned, EB-shrunk
+  Model 4      Model 3 + non-linear inning weight (per-inning constant fit
+               from data, not linear ramp)
+  Model 5      gradient-boosted residual (XGBoost) — upper bound reference
+  Model 6      Model 4 + opponent-pitching adjustment  [DEFERRED to Phase 8]
+
+Each step tells us which decomposition is doing the work. If
+Model 3 ≈ Model 5 on holdout, simple wins.
+
+
+PHASE 5 — Validation
+---------------------
+Time-respecting walk-forward only. NO random splits.
+
+Splits:
+  Train       2021-2024
+  Validation  2025  (hyperparameter selection: shrinkage `k`, blend
+              weights, regularization)
+  Test        2026 OoS
+
+Statistical test (full 2025+2026):
+  - Brier score, log-loss
+  - Calibration reliability (predicted vs realized in deciles)
+  - Subgroup metrics: by inning bucket, by line, by team-quality regime
+    (high-offense vs low-offense matchups), by early-season (<30 games)
+    vs late-season
+
+Dollar test (2026-only, per-PA):
+  - Replay live-engine gate stack on per-PA candidate stream with each
+    candidate Stage-3 swapped in
+  - Realized P&L delta vs current Stage-3
+  - Bet-count delta (does the new model trade more or fewer?)
+
+
+PHASE 6 — Diagnostic outputs
+-----------------------------
+Make the result interpretable:
+  - Fitted feature weights with 95% CIs ("season-to-date weight = 0.6,
+    prior-season = 0.2, momentum_10 = 0.2, momentum_5 not significant")
+  - Inning-weight curve plot: linear baseline vs fitted shape
+  - Per-team example reproductions for the 2026-05-06 TEX@NYY case and
+    a few similar matchups — sanity check
+  - Residual-by-team-quality plot — does v2 still systematically miss
+    any regime?
+
+
+PHASE 7 — Promotion criteria (ALL must hold to ship to enforce)
+----------------------------------------------------------------
+1. Brier improves >= 0.5% relative on 2026 test vs current Stage-3
+2. No (inning x line) subgroup degrades >= 2% relative Brier
+3. Replayed live-engine P&L on 2026 is at least neutral vs current
+4. Average |stage3_delta| not larger than current at any inning
+   (don't accidentally bet bigger)
+
+If 1-2 pass but 3 fails: keep v2 in shadow, revisit gate stack — the
+model is statistically better but the gate is selecting bets where it
+doesn't help.
+
+
+PHASE 8 — Future work (out of scope here)
+------------------------------------------
+- Opponent-pitching-staff adjustment in the RPG features
+- Starting-pitcher-quality interaction with Stage-3
+- Park-adjusted offensive runs
+- Bullpen-quality late-game interaction
+
+
+DELIVERABLES BY PHASE
+---------------------
+Phase 1: training_table.jsonl + manifest + residual diagnostic report
+Phase 2-3: feature builder module + EB-shrinkage helper, unit tested
+Phase 4: trained model artifacts under
+         data/analysis_output/team_offense_calibration/
+Phase 5: walk-forward report + dollar-test report
+Phase 6: diagnostic plots/tables in the same folder
+Phase 7: GO/NO-GO decision recorded in this plan file
+
+
+ARTIFACTS
+---------
+Builder:        scripts/analysis/build_team_offense_calibration_table.py
+Modeling:       scripts/analysis/calibrate_team_offense_v2.py
+Runtime v2:     scripts/analysis/team_offense_model_v2.py  (opt-in via CLI)
+Output root:    data/analysis_output/team_offense_calibration/
+Plan log:       this file

@@ -1,0 +1,400 @@
+================================================================================
+CLOB V2 MIGRATION PLAN
+Source: https://docs.polymarket.com/v2-migration
+Author: Claude  •  Date: 2026-04-27
+================================================================================
+
+URGENCY
+-------
+**Cutover: April 28, 2026 ~11:00 UTC.  ~24 hours from now.**
+
+After cutover:
+  - V1 SDKs (py-clob-client, @polymarket/clob-client) STOP FUNCTIONING.
+  - All open orders are wiped during the ~1 hour cutover window.
+  - V2 takes over the production URL clob.polymarket.com.
+  - No backward compatibility.
+
+This plan is therefore operational, not aspirational. We do not have time
+for deliberate multi-week refactoring. The plan is structured as: (1) what
+must work tomorrow, (2) what can wait.
+
+
+================================================================================
+PART 1 — OUR EXPOSURE
+================================================================================
+
+Files that touch the Polymarket SDK or REST API:
+
+A. AUTHENTICATED SDK (py-clob-client) — must migrate
+   - scripts/trading/polymarket_client.py
+       Uses: ClobClient, ApiCreds, OrderArgs, BUY, TradeParams
+       Methods: derive_api_key, create_order, post_order, cancel,
+                get_order, get_trades
+
+B. PUBLIC REST (no SDK) — likely unaffected, verify only
+   - scripts/monitor/monitor_mlb_polymarket_ou.py
+       GET https://clob.polymarket.com/book?token_id=...
+       GET https://gamma-api.polymarket.com/markets/{market_id}
+   - scripts/trading/signal_engine.py
+       GET https://clob.polymarket.com/book?token_id=...  (depth snapshot)
+   - scripts/trading/tape_capture.py
+       GET https://data-api.polymarket.com/trades?market=...
+
+C. PURE FUNCTIONS / NO API
+   - scripts/trading/{book_features, book_velocity, pricing_features,
+                      signal_interaction_features}.py
+   - scripts/trading/{models, ev_policy, probability_calibration,
+                      signal_pipeline, signal_engine, live_engine,
+                      signal_config, signal_gates}.py (no direct API)
+
+Group A is the critical path. Group B is "should just work" but needs a
+post-cutover smoke test. Group C is unaffected.
+
+
+================================================================================
+PART 2 — WHAT BREAKS
+================================================================================
+
+From the migration doc, the breaking changes that matter to us:
+
+1. SDK PACKAGE
+   pip:  py-clob-client          ->  py-clob-client-v2==1.0.0
+   The V1 package stops working post-cutover.
+
+2. CONSTRUCTOR SIGNATURE
+   TS doc shows positional args -> options object, with chainId -> chain.
+   Python equivalent unknown without inspecting py-clob-client-v2.
+   ASSUMPTION: similar pattern in Python; verify on install.
+
+3. ORDER FIELDS REMOVED
+   - taker        (always zero address now, SDK-handled)
+   - expiration   (not user-settable)
+   - nonce        (replaced by timestamp, SDK-handled)
+   - feeRateBps   (operator-set at match time)
+   We do not currently set any of these in OrderArgs — confirmed by
+   reading polymarket_client.py:place_limit_buy:231-236. Good.
+
+4. ORDER FIELDS ADDED
+   - timestamp    (SDK-handled internally)
+   - metadata     (bytes32, optional, SDK-handled)
+   - builder      (bytes32, for attribution — we do not use)
+   - builderCode  (optional per-order — we do not use)
+
+5. EIP-712 DOMAIN VERSION
+   Domain version: "1" -> "2"
+   verifyingContract addresses change for both standard-risk and neg-risk
+   exchanges. Internal to SDK; not our concern.
+   Note: ClobAuthDomain (L1 API auth) stays at version "1".
+
+6. CANCELLATION SEMANTICS
+   "Onchain cancel replaced with operator-controlled pauseUser/unpauseUser"
+   The SDK should still expose a cancel method, but the underlying
+   mechanism changed. CRITICAL: verify that py-clob-client-v2 still has
+   a callable cancel(order_id) method with similar semantics to V1.
+   If not, our cancel_order() needs reworking.
+
+7. COLLATERAL TOKEN MIGRATION (USDC.e -> pUSD)
+   "API-only traders: call wrap() on Collateral Onramp contract"
+   This is a one-time wallet operation on our funder wallet, NOT a code
+   change. If we skip this, orders may fail to settle post-cutover
+   because our wallet holds USDC.e and the V2 exchange wants pUSD.
+   See: https://polymarket.com/concepts/pusd
+
+8. OPEN ORDERS WIPED AT CUTOVER
+   Operational, not code. Our bot only holds orders briefly (3hr safety
+   timeout, FV-decay cancel) so there are unlikely to be many open at
+   11:00 UTC. We should still pause the bot for the cutover window.
+
+9. BUILDER ATTRIBUTION (HMAC headers REMOVED)
+   We never used these. No work.
+
+
+================================================================================
+PART 3 — WHAT (PROBABLY) DOES NOT BREAK
+================================================================================
+
+Items the doc does NOT call out as changed, but we should verify after
+cutover with a smoke test:
+
+1. PUBLIC GET https://clob.polymarket.com/book?token_id=...
+   Doc says "no endpoint paths change." Should work identically.
+   Used by: monitor, signal_engine._fetch_depth_snapshot (Family B).
+
+2. PUBLIC GET https://data-api.polymarket.com/trades?market=...
+   Doc does not mention data-api.polymarket.com at all.
+   "Presumably stable" per the WebFetch summary.
+   Used by: tape_capture.py (Family A).
+
+3. PUBLIC GET https://gamma-api.polymarket.com/markets/{market_id}
+   Doc does not mention gamma-api. Used as fallback by monitor.
+
+4. WEBSOCKETS (we do not currently use these)
+   Doc says URLs unchanged, payloads mostly unchanged.
+
+The risk here is that the doc is silent on data-api / gamma-api but the
+backend services may share infrastructure that was migrated. The
+post-cutover smoke test must hit all three URLs and confirm 200 + valid
+JSON before we resume live trading.
+
+
+================================================================================
+PART 4 — PRE-CUTOVER WORK (do TODAY, before ~10:30 UTC Apr 28)
+================================================================================
+
+CP-1. Install and inspect py-clob-client-v2  (target: 30 min)
+  - pip install py-clob-client-v2==1.0.0  (in a fresh venv to avoid
+    clobbering the running bot)
+  - Inspect ClobClient signature: positional vs options object
+  - Inspect: derive_api_key, create_order, post_order, cancel, get_order,
+    get_trades — confirm all five method names and signatures
+  - Inspect OrderArgs (or its V2 equivalent) field set
+  - Inspect TradeParams field set
+  - DOCUMENT findings inline in polymarket_client.py as a comment block
+    so the next reader (us tomorrow under pressure) has the answers
+
+CP-2. Side-by-side update polymarket_client.py  (target: 2 hours)
+  - Keep the V1 file as polymarket_client_v1.py.bak for rollback safety
+  - Update imports
+  - Update CLOBOrderClient.__init__ if SDK signature changed
+  - Update initialize() — derive_api_key flow probably identical
+  - Update place_limit_buy() — drop any feeRateBps / nonce / taker /
+    expiration if they are present (currently they are not)
+  - Update cancel_order() — verify cancel(order_id) still exists
+  - Update get_order() and get_trades_for_order() — response shape may
+    drop nonce/expiration/feeRateBps fields; defensive .get() already
+    in place should absorb this
+  - Compile-check after each method update
+
+CP-3. Wrap USDC.e -> pUSD on funder wallet  (target: 30 min)
+  - Read https://polymarket.com/concepts/pusd
+  - Identify Collateral Onramp contract address from the docs
+  - Call wrap() with our USDC.e balance (manual tx via wallet UI is
+    fastest if our funder is a standard EOA; otherwise script it)
+  - Verify pUSD balance shows up in our funder wallet
+  - DO NOT skip this. Without pUSD, V2 orders will not settle.
+
+CP-4. Dry-run test against clob-v2.polymarket.com  (target: 1 hour)
+  - Temporarily override CLOB_HOST = "https://clob-v2.polymarket.com"
+  - Run live_engine.py --dry-run for one cycle
+  - Confirm: client initializes, derive_api_key succeeds, dry-run order
+    placement returns success, get_order on a fake ID returns sensible
+    error
+  - This does not require a real bet — dry_run path bypasses SDK
+    create/post_order calls
+
+CP-5. Operational: pause schedule + comm  (target: 5 min)
+  - Note in our calendar: do NOT start the bot between 10:30 and 12:30
+    UTC on April 28
+  - If a session is already in flight at 10:30 UTC, plan to manually
+    cancel or let timeout/FV-decay clear positions before 11:00 UTC
+
+
+================================================================================
+PART 5 — CUTOVER DAY (April 28, 2026)
+================================================================================
+
+T-30 minutes (10:30 UTC):
+  - Stop any running live_engine session
+  - Verify no open orders via Polymarket UI; manually cancel any leftovers
+  - Confirm pUSD balance on funder wallet (CP-3 verification)
+
+T+0 (11:00 UTC):
+  - Cutover begins. Do not interact with API.
+
+T+90 minutes (12:30 UTC):
+  - Run smoke test:
+      python -c "
+      from polymarket_client import CLOBOrderClient
+      c = CLOBOrderClient.from_env(env_path=Path('.env'), dry_run=False)
+      c.initialize()       # verify auth still works
+      print('OK: V2 client initialized')
+      "
+  - Public REST smoke (book, trades, gamma):
+      curl -s 'https://clob.polymarket.com/book?token_id=<live_token>' | head
+      curl -s 'https://data-api.polymarket.com/trades?market=<live_token>&limit=5' | head
+      curl -s 'https://gamma-api.polymarket.com/markets?active=true&limit=1' | head
+  - If all three return valid 200 JSON, group B is intact.
+
+T+2 hours (13:00 UTC):
+  - Resume live_engine in --dry-run mode for one full cycle
+  - Confirm: tick polling works, signal generation works, dry-run order
+    placement returns success
+  - If clean, proceed to T+ rest of day.
+
+First real trading session:
+  - Start with conservative settings: --stake 5 --daily-budget 25 --max-open-orders 2
+  - Watch logs in real-time for the first hour
+  - If any unexpected SDK errors, kill the bot and roll back to dry-run
+  - Only return to standard config (--stake 20 --daily-budget 160) after
+    one clean session
+
+
+================================================================================
+PART 6 — POST-CUTOVER VERIFICATION
+================================================================================
+
+For the FIRST live filled bet post-cutover, manually verify:
+
+  1. Order placement succeeded and returned an order_id
+  2. get_order(order_id) returns sensible status
+  3. After fill, get_trades_for_order recovers the trade record
+  4. Settled bet writes to ledger correctly
+  5. Family A/B/C/D/E features all populate (no None due to API breakage)
+  6. Realized P&L matches expected fill price
+
+If any of (1)-(4) fail, we have a real V2 bug to fix. Items (5)-(6) are
+sanity checks for the broader system.
+
+
+================================================================================
+PART 7 — RISK REGISTER
+================================================================================
+
+R1. py-clob-client-v2 API surface differs more than expected.
+    Mitigation: CP-1 inspection step is non-negotiable. If signatures
+    diverge significantly from what this plan assumes, allocate more
+    time to CP-2 or accept a few sessions of paper-only operation.
+    Severity: HIGH (blocks all live trading).
+
+R2. cancel_order semantics changed.
+    The doc's "operator-controlled pauseUser/unpauseUser" wording is
+    ambiguous. It MAY mean (a) the SDK still has cancel() but it's
+    routed differently, or (b) cancel is no longer per-order and we now
+    have to pause our entire account. If (b), our FV-decay cancel logic
+    is inoperable.
+    Mitigation: test cancel against a real V2 order in CP-4 dry-run if
+    possible. If broken, temporarily rely on order-timeout-secs alone
+    until we figure out the correct API.
+    Severity: MEDIUM (FV-decay cancel is important for adverse-selection
+    protection but not strictly required for trading).
+
+R3. pUSD wrap not done before first V2 order.
+    Symptom: orders accepted but never settle. Funds stuck.
+    Mitigation: CP-3 is mandatory. Verify pUSD balance > 0 BEFORE first
+    real order.
+    Severity: HIGH (could lose money if filled bets cannot settle).
+
+R4. data-api or gamma-api silently changes.
+    Symptom: tape_capture or monitor fail with HTTP errors after cutover.
+    Mitigation: smoke test in T+90 minutes step. If broken, Family A
+    captures will be empty (already handled gracefully — features dict
+    carries None values, sidecar still written, bet flow unaffected).
+    Severity: LOW (degrades fill-model data collection, not trading).
+
+R5. Open orders wiped at cutover, our session state thinks they exist.
+    Symptom: bot tries to poll an order that the V2 backend has no
+    record of; gets "unknown" status and may try to re-cancel forever.
+    Mitigation: T-30 minute manual cancel step + ensure live session
+    state file is cleared before T+2 restart.
+    Severity: MEDIUM (cosmetic but produces noisy logs).
+
+R6. EIP-712 domain swap exposes a stale signed-payload code path.
+    Symptom: orders rejected with "invalid signature" errors.
+    Mitigation: SDK upgrade should handle this entirely. If we see
+    invalid-signature errors post-cutover, the SDK install is wrong or
+    cached.
+    Severity: LOW (caught immediately by smoke test).
+
+R7. Builder attribution introduced unintentionally.
+    We do not use builder attribution, so there's no risk of a
+    misconfigured builderCode breaking orders. If we ever add it, must
+    use the new per-order field rather than the removed HMAC headers.
+    Severity: NONE today.
+
+
+================================================================================
+PART 8 — DECISION POINTS / OPEN QUESTIONS
+================================================================================
+
+Q1. Does py-clob-client-v2 use options-object or positional args?
+    Resolved by CP-1.
+
+Q2. Is OrderArgs renamed in V2, or kept?
+    Resolved by CP-1.
+
+Q3. Does cancel(order_id) still work, or is it now pauseUser-style?
+    Resolved by CP-1 inspection + CP-4 dry-run.
+
+Q4. Does our existing dry-run code path (which avoids SDK calls) need
+    any changes? Probably not, since dry_run short-circuits before any
+    SDK methods that might have changed.
+    Resolved by CP-4.
+
+Q5. Do we need to ramp our --kelly-max-edge cap during the first few
+    post-cutover sessions to bound model-confidence risk while we learn
+    whether V2 introduces fill-quality differences?
+    User decision. Recommendation: yes — set --stake-mode flat --stake 5
+    for the first session, then standard from session 2 onward.
+
+
+================================================================================
+PART 9 — ROLLBACK PLAN
+================================================================================
+
+If V2 migration breaks something we cannot fix in the post-cutover
+window, our rollback options are LIMITED because V1 stops working.
+
+Realistic rollback = "stop trading, fix offline." Specifically:
+
+  - Stop live_engine.py
+  - Continue running monitor + paper trading (group B endpoints; if
+    those work, signal generation continues uninterrupted)
+  - Continue running signal_pipeline against new market data — Family
+    A/B/C/D/E features keep accumulating in candidate_universe even
+    without bets being placed
+  - Fix polymarket_client.py at leisure
+  - Resume live trading once smoke test passes
+
+Loss in this scenario: trading P&L for the affected session(s). We do
+NOT lose data-collection runway because the public APIs continue
+feeding the candidate universe.
+
+
+================================================================================
+PART 10 — POST-MIGRATION CLEANUP (deferrable to next week)
+================================================================================
+
+After we have a clean V2 session under our belt:
+
+  1. Delete polymarket_client_v1.py.bak
+  2. Update README.md to mention "Polymarket CLOB V2 (>= April 28, 2026)"
+  3. Update requirements.txt to pin py-clob-client-v2 version
+  4. Consider whether to add builderCode for builder attribution
+     (revenue share / rebates depending on Polymarket's program)
+  5. Consider whether the V2 schema changes enable any new fill-model
+     features (e.g., if get_order now returns timestamp_ms, that could
+     improve fill-time modeling for the queue-position work)
+
+
+================================================================================
+SUMMARY
+================================================================================
+
+The migration's blast radius for our codebase is essentially ONE FILE —
+scripts/trading/polymarket_client.py — plus one wallet operation (pUSD
+wrap). Everything else is verify-only or unaffected.
+
+The hard part is not the code change. The hard part is the 24-hour
+deadline and the fact that we cannot test the real API surface until
+py-clob-client-v2 is installed and we read its source.
+
+Recommended sequence for the next 24 hours:
+
+   1. (now)         CP-1: inspect py-clob-client-v2 in fresh venv
+   2. (+1h)         CP-2: rewrite polymarket_client.py per inspection
+   3. (+3h)         CP-3: pUSD wrap on funder wallet
+   4. (+4h)         CP-4: dry-run against clob-v2.polymarket.com
+   5. (Apr 28 10:30 UTC)  Pause bot, manual-cancel any open orders
+   6. (Apr 28 11:00 UTC)  Cutover begins
+   7. (Apr 28 12:30 UTC)  Smoke test all three endpoints
+   8. (Apr 28 13:00 UTC)  Resume in dry-run for one cycle
+   9. (Apr 28 13:30 UTC)  First conservative live session (stake $5)
+  10. (Apr 29)            Return to standard config if clean
+
+If you (the user) sign off on this plan, I can start CP-1 immediately.
+If we hit unforeseen SDK-API issues, we fall back to the rollback path
+described in Part 9 and resume live trading later in the week.
+
+================================================================================
+END
+================================================================================

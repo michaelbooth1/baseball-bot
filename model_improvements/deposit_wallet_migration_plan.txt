@@ -1,0 +1,157 @@
+DEPOSIT WALLET (ERC-1271 / sig_type=3) MIGRATION RUNBOOK
+========================================================
+
+Status: code path implemented + opt-in 2026-05-04
+        on-chain steps + cutover NOT YET PERFORMED
+
+Context
+-------
+Polymarket rolled out "deposit wallets" on 2026-05-04 12:30 UTC. The
+underlying fix is for the ghost-fills issue that was hurting fill quality.
+The new flow signs orders via ERC-1271 (signature_type=3 / POLY_1271)
+through a deterministic smart-account "deposit wallet", instead of an
+EIP-712 signature from an EOA / proxy / Safe.
+
+Existing API keys on the legacy proxy path (sig_type=2) keep working.
+This migration is OPT-IN. Once we cut over we expect:
+  - cleaner fills (no more ghost fills)
+  - new API key + fresh credentials tied to the deposit wallet
+  - pUSD held by the EOA stops counting as CLOB buying power; only the
+    USDC balance held by the deposit wallet counts.
+
+Code state (already merged)
+---------------------------
+  scripts/trading/polymarket_client.py
+    + SIG_TYPE_DEPOSIT_WALLET = 3 constant
+    + Constructor kwargs: use_deposit_wallet=False, deposit_wallet=None
+    + Constructor raises ValueError if use_deposit_wallet=True with no
+      deposit_wallet (and not in dry_run)
+    + from_env reads POLY_USE_DEPOSIT_WALLET + POLY_DEPOSIT_WALLET env
+      vars; explicit kwargs override env
+    + initialize() picks signature_type:
+        3 if use_deposit_wallet else (2 if proxy funder else 0)
+      sets self._sig_type and self._maker_address accordingly
+    + Loud distinct startup log line for the deposit-wallet path
+    + Legacy log line gains a "set POLY_USE_DEPOSIT_WALLET=1 to migrate" hint
+
+  scripts/trading/live_engine.py
+    + --use-deposit-wallet (store_true)
+    + --deposit-wallet 0x... (overrides env var)
+    + Passed through to CLOBOrderClient.from_env(...)
+
+  tests/test_trading_live_execution_fixes.py
+    + DepositWalletInitTests (5 tests, dry-run path coverage)
+
+  No changes to live_order_lifecycle, live_pricing, session_serialization,
+  or any other module. The new flow is fully encapsulated in
+  polymarket_client + the live_engine CLI plumbing.
+
+Pre-flight checklist (do in order)
+----------------------------------
+
+1. Pause live trading.
+   - Stop any running live_engine.py process. Confirm no open orders
+     remain on the legacy path (or accept they will resolve on the
+     legacy keys; the new keys can't see them).
+
+2. Bump SDK to a version that supports signature_type=3.
+       pip install --upgrade "py-clob-client-v2>=1.0.1rc1"
+   Verify:
+       python -c "from py_clob_client_v2 import ClobClient; help(ClobClient.__init__)"
+   Look for signature_type accepting 3 / POLY_1271.
+
+3. Determine the deposit wallet address.
+   The deposit wallet is a deterministic CREATE2 smart account derived
+   from the EOA. Three ways to obtain the address:
+   a) Polymarket dashboard / API: log in with the EOA, dashboard shows
+      the deposit wallet under settings.
+   b) py-clob-client-v2 helper (preferred if available):
+        from py_clob_client_v2 import compute_deposit_wallet_address
+        addr = compute_deposit_wallet_address(eoa="0x69062fB5...")
+   c) Read the docs page:
+        https://docs.polymarket.com/trading/deposit-wallet-migration
+      under the deterministic-address section.
+   Factory contract on Polygon (chain 137):
+        0x00000000000Fb5C9ADea0298D729A0CB3823Cc07
+   RECORD the address; it is permanent for this EOA.
+
+4. Deploy + fund the deposit wallet on-chain (one-time).
+   - Recommended: bridge $X USDC from Coinbase / Bybit / wherever to
+     the deposit wallet address on Polygon. The factory deploys the
+     wallet automatically on the first interaction; sending USDC to
+     the address counts as deployment.
+   - Verify on Polygonscan that the wallet shows non-zero USDC balance.
+   - Note: USDC = native USDC (0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359),
+     NOT bridged USDC.e. Polymarket only counts native USDC.
+
+5. Update .env.
+       POLY_USE_DEPOSIT_WALLET=1
+       POLY_DEPOSIT_WALLET=0x<deposit_wallet_address>
+   Keep POLY_PRIVATE_KEY unchanged (same EOA still signs).
+   Keep POLY_PUBLIC_KEY (legacy proxy funder) for now in case we need
+   to roll back; it is ignored when POLY_USE_DEPOSIT_WALLET=1.
+
+6. Dry-run smoke test.
+       python scripts/trading/live_engine.py --dry-run --use-deposit-wallet \
+              --deposit-wallet 0x<deposit_wallet_address>
+   Expected log line at startup:
+       "CLOB init [DEPOSIT WALLET / ERC-1271]: EOA=0x...  deposit_wallet=0x...
+        sig_type=3  maker_address=0x...  dry_run=True"
+   Confirm no exceptions, derive_api_key is skipped (dry-run).
+
+7. Live derive (real auth, no orders yet).
+   With POLY_USE_DEPOSIT_WALLET=1 in .env, run:
+       python scripts/trading/live_engine.py --use-deposit-wallet --dry-run False
+       (or just run normally; --dry-run defaults False)
+   ... but kill the process after the startup logs print:
+       "API key derived: <prefix>..."
+       "CLOBOrderClient initialized OK"
+   This proves the ERC-1271 derive path works end-to-end against the
+   real CLOB. The API creds are ephemeral (re-derived on every start),
+   so nothing is persisted that we have to clean up.
+
+8. One small real order.
+   Run live_engine for one game with --stake 5 and confirm:
+   - Order posts (status=live in the response)
+   - On fill: bet.fill_price / fill_size / fill_cost populate as before
+   - On cancel: cancel_order returns success
+   - get_trades_for_order returns the fill when polled
+   This proves Family A-E features still attach, FV-decay cancel still
+   fires, etc. -- all of those layers are agnostic to sig_type.
+
+9. Cut over fully.
+   Once step 8 succeeds, run live trading with --use-deposit-wallet
+   from now on. The legacy proxy keys still work in case of regression
+   -- just unset POLY_USE_DEPOSIT_WALLET to roll back without code change.
+
+Validation we have so far
+-------------------------
+  python -m pytest tests/test_trading_live_execution_fixes.py -q
+       21 passed (16 existing + 5 new DepositWalletInitTests)
+  python -m compileall -q scripts/trading      [clean]
+
+Risks
+-----
+  - SDK pin: if py-clob-client-v2 < 1.0.1rc1 is installed, signature_type=3
+    will be rejected by the SDK constructor. Step 2 catches this.
+  - Wrong USDC contract: if you fund the deposit wallet with USDC.e
+    instead of native USDC, balance won't show as CLOB buying power.
+    No code can detect this; verify on Polygonscan.
+  - Address mismatch: if POLY_DEPOSIT_WALLET differs from the actual
+    derived address, derive_api_key may return creds that don't match
+    the funded wallet, and orders will sign to a different account.
+    Always cross-check the address against either the dashboard or the
+    SDK helper.
+  - Old open orders on the legacy proxy: if you switch to deposit-wallet
+    creds while orders are still live on the proxy, the new client cannot
+    see / cancel them. Wait for them to settle, OR cancel them manually
+    via the legacy creds before switching.
+
+Rollback
+--------
+  - Set POLY_USE_DEPOSIT_WALLET=0 (or remove it) in .env.
+  - Restart live_engine. The legacy sig_type=2 path resumes.
+  - Funds in the deposit wallet stay there; they don't auto-sweep back.
+    To return USDC to the EOA you'd need to call the deposit wallet's
+    withdraw function (out of scope; only do this if abandoning the
+    deposit-wallet path entirely).

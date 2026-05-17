@@ -1,0 +1,453 @@
+UNIFIED EVENT-LEVEL TRAINING TABLE DESIGN
+Date: 2026-04-22
+Author: Codex
+
+1) Goal
+Build a canonical event-level dataset that unifies:
+- signal-generation context
+- execution behavior
+- realized and counterfactual outcomes
+
+This dataset becomes the single source of truth for:
+- model calibration
+- fill/execution modeling
+- strategy backtests that separate signal quality from execution quality
+- post-mortems after bad nights
+
+
+2) Scope For This Build
+In-scope (Phase 1):
+- one canonical row per signal event (bet_id)
+- both live and paper sessions
+- session bet fields + ledger lifecycle events + book-capture features
+- robust data quality flags and validation report
+- deterministic reproducible output (sorted and versioned)
+
+Out-of-scope (Phase 1):
+- full candidate universe of non-triggered opportunities from raw ticks
+- tick-level replay engine across all markets
+- model retraining itself
+
+Phase 2 extension (already planned):
+- add candidate non-bet events from monitor ticks for true classifier training.
+
+
+3) Current Data Reality (Observed)
+Data inspected in this repo:
+- live sessions: data/live_trading/sessions/2026-04-16 .. 2026-04-21
+- paper sessions: data/paper_trading/sessions/2026-04-06 .. 2026-04-21
+- live ledger rows: 83 JSONL rows (multiple lifecycle events per bet)
+- paper ledger rows: 48 JSONL rows (mostly final settled records)
+- live book captures: 30 files across 2026-04-16..2026-04-21
+- paper book captures: 5 files on 2026-04-13
+- polymarket tick files: rich side/line orderbook snapshots by game/date
+- historical game truth: 12,476 game JSON files
+
+Observed schema reality that affects design:
+- live ledger is event-stream style (_event in live/filled/cancelled/settled/missed/etc)
+- session JSON has the most complete per-bet state snapshot
+- some settled live rows can have order_status=cancelled and fill_price=null but non-zero payout/profit
+  (must be flagged as data consistency issue, not silently trusted)
+- capture files contain:
+  - header line (signal context)
+  - snapshot lines (t=0 and subsequent intervals)
+
+
+4) Design Principles
+P1. Single canonical key
+- bet_id is the primary key for event-level rows.
+- every merge path resolves through bet_id.
+
+P2. Separation of concerns
+- keep one event-level master table.
+- keep lifecycle events and snapshot time-series in satellite tables.
+- avoid exploding event table with one-to-many records.
+
+P3. Leakage-aware column groups
+- pre_signal features (safe for decision model training)
+- post_signal execution features (safe for fill/cancel models)
+- outcome labels (targets only)
+
+P4. Deterministic rebuild
+- identical inputs produce identical outputs.
+- row sort and field order are stable.
+
+P5. Auditability
+- every row contains source traceability (session file, capture path, ledger events present).
+- consistency flags are explicit.
+
+
+5) Output Artifacts
+Output root:
+- data/analysis_output/unified_signals/
+
+Files:
+1. signals_master.jsonl
+- one row per bet_id (event-level canonical table)
+
+2. signals_master.csv
+- same rows in flat CSV for quick spreadsheet/stat workflows
+
+3. signal_order_events.jsonl
+- one row per lifecycle event record from master ledger
+- keyed by bet_id + event sequence
+
+4. signal_book_snapshots.jsonl
+- one row per capture snapshot
+- keyed by bet_id + seq
+
+5. build_manifest.json
+- run metadata, counts, warnings, validation failures, schema version
+
+
+6) Table Schemas
+6.1 signals_master (one row per bet_id)
+Identity / lineage:
+- schema_version
+- mode (live|paper)
+- bet_id
+- session_date
+- session_path
+- source_has_session_bet (bool)
+- source_has_ledger_events (bool)
+- source_has_capture (bool)
+- capture_path (nullable)
+
+Event timestamps:
+- placed_at
+- order_placed_at
+- filled_at
+- cancelled_at
+- settled_at
+- signal_epoch_s (derived)
+
+Game/market identifiers:
+- game_pk
+- away_abbrev
+- home_abbrev
+- line
+- side
+- over_token_id (nullable on paper)
+
+Signal context (pre-signal):
+- inning
+- inning_state
+- outs
+- runners_on
+- away_score_before
+- home_score_before
+- current_total (derived)
+- lead_abs (derived)
+- runs_needed (line - current_total)
+- inferred_runs
+- inferred_away_after
+- inferred_home_after
+
+Model features (pre-signal):
+- entry_ask
+- fair_value
+- base_fair_value
+- stage2_run_env_delta
+- team_offense_delta
+- edge_at_ask (edge)
+- limit_price (nullable on paper)
+- edge_at_limit (fair_value - limit_price when limit exists)
+
+Execution/sizing:
+- stake
+- stake_mode (live kelly/flat, paper defaults nullable or flat)
+- kelly_full_fraction
+- kelly_fraction_used
+- order_status_final
+- cancel_reason_final
+
+Book-at-signal features (from capture t=0 when available):
+- t0_best_bid
+- t0_best_ask
+- t0_spread
+- t0_mid
+- t0_ltp
+- t0_latency_ms
+- t0_total_bid_depth
+- t0_total_ask_depth
+
+Short-horizon execution features (from capture snapshots):
+- ask_1s, ask_2s, ask_5s, ask_10s, ask_30s
+- bid_1s, bid_2s, bid_5s, bid_10s, bid_30s
+- ask_move_2s (ask_2s - t0_best_ask)
+- ask_move_5s
+- ask_velocity_5s_cents
+- min_ask_30s
+- max_ask_30s
+- min_spread_30s
+- max_spread_30s
+
+Simulated execution labels:
+- sim_fill_time_30s (nullable)
+- sim_filled_30s (bool)
+- sim_cents_saved_vs_taker
+
+Outcome labels:
+- settled (bool)
+- won_counterfactual (bool; would win if filled)
+- final_away
+- final_home
+- final_total
+- realized_executed (bool; order_status_final == filled for live; true for paper)
+- realized_win (bool; realized_executed and won_counterfactual)
+- realized_payout
+- realized_profit
+
+Data quality / consistency flags:
+- flag_missing_settlement
+- flag_missing_capture
+- flag_missing_ledger
+- flag_settled_with_null_fill_price
+- flag_profit_nonzero_without_fill
+- flag_order_status_conflict
+- flag_capture_token_mismatch
+- flag_ts_order_invalid
+- quality_issue_count
+
+Session parameter snapshot (denormalized for experiment slicing):
+- param_edge_threshold
+- param_edge_threshold_high_line
+- param_jump_threshold
+- param_max_spread
+- param_min_inning
+- param_min_inning_high_line
+- param_high_line_cutoff
+- param_min_entry_ask
+- param_min_entry_ask_high_line
+- param_runs_needed_max
+- param_min_current_total
+- param_min_close_game_rn
+- param_inn5_rn_max
+- param_inn6_rn_max
+- param_max_base_fv
+- param_fv_ask_gap_max
+- param_fv_ask_gap_min_inning
+- param_confirmation_ticks
+- param_event_dedup_secs
+- param_inning_dedup_gap
+- param_inning_dedup_edge_gap
+- param_lookback_ticks
+- live params when mode=live:
+  - param_spread_factor
+  - param_order_timeout_secs
+  - param_fv_cancel_min_edge
+  - param_fv_decay_min_age_secs
+  - param_fv_decay_min_ask_drop
+  - param_ask_reversal_drop
+  - param_ask_reversal_window
+  - param_max_open_orders
+  - param_daily_budget
+  - param_per_game_budget_fraction
+  - param_stake_mode
+  - param_kelly_fraction
+  - param_kelly_max_bet_fraction
+  - param_kelly_max_edge
+
+
+6.2 signal_order_events (one row per ledger lifecycle event)
+Columns:
+- mode
+- bet_id
+- event_seq
+- event_type (_event)
+- event_time (best available timestamp from row)
+- raw_order_status
+- raw_cancel_reason
+- fill_price
+- fill_size
+- stake
+- realized_profit_at_event
+- raw_json (optional disabled by default to keep file small)
+
+
+6.3 signal_book_snapshots (one row per capture snapshot)
+Columns:
+- mode
+- bet_id
+- seq
+- elapsed_s
+- ts
+- best_bid
+- best_ask
+- spread
+- mid
+- ltp
+- latency_ms
+- total_bid_depth
+- total_ask_depth
+- ok
+- error
+
+
+7) Join Strategy
+Canonical precedence:
+1. session bet row (primary truth for final per-bet state)
+2. ledger events (event timeline and reconciliation)
+3. capture header/snapshots (microstructure features)
+
+Key joins:
+- primary key: bet_id
+- mode partition applied before joins (live vs paper)
+
+Rules:
+- if session and ledger disagree, keep session values as canonical row fields
+  but set explicit conflict flags and keep ledger-derived diagnostics.
+- final order_status_final:
+  - session value if present
+  - else last ledger event status
+- order lifecycle times come from earliest non-null event-specific timestamps across session/ledger.
+
+
+8) Derived Metrics
+Core derived fields:
+- current_total = away_score_before + home_score_before
+- lead_abs = abs(away_score_before - home_score_before)
+- runs_needed = float(line) - current_total
+- edge_at_limit = fair_value - limit_price (nullable)
+- realized_executed:
+  - live: order_status_final == "filled"
+  - paper: true
+- realized_win = realized_executed and won_counterfactual
+
+Capture-derived metrics:
+- nearest-neighbor extraction at target horizons (1,2,5,10,30 sec)
+- fill simulation:
+  - sim fill when snapshot ask <= limit_price within first 30 sec
+  - sim_fill_time_30s is first elapsed_s satisfying condition
+- ask_velocity_5s_cents = (t0_best_ask - ask_5s) * 100
+  - positive means ask dropped (favorable for passive fill)
+
+
+9) Leakage Controls
+Column groups:
+- pre_signal_features:
+  fields known at signal time only
+- post_signal_execution_features:
+  capture-derived horizons (1s+), order outcomes not included
+- labels:
+  won_counterfactual, realized_* and PnL outputs
+
+Implementation requirement:
+- build_manifest.json includes explicit lists of which columns belong to each group.
+- downstream modeling code should select by group instead of ad-hoc column picking.
+
+
+10) Data Quality Rules
+Hard checks (build fails in strict mode):
+- duplicate bet_id within same mode in signals_master
+- missing mandatory identity fields (mode, bet_id, game_pk, line)
+- non-monotonic snapshot seq within a capture
+
+Soft checks (warnings + flags):
+- settled and realized_executed but fill_price is null
+- non-zero realized_profit while realized_executed is false
+- capture file missing for a bet
+- ledger events missing for live bet
+- order timestamps out of order:
+  order_placed_at > filled_at
+  filled_at > settled_at (when all present)
+
+Manifest summary:
+- total rows by mode/date
+- missing-source counts
+- number of rows with each quality flag
+- pass/fail status
+
+
+11) Script Architecture
+New script:
+- scripts/analysis/build_unified_signal_table.py
+
+Main components:
+- discover_session_files(mode, min_date, max_date)
+- load_session_bets(...)
+- load_ledger_events(...)
+- load_capture_files(...)
+- compute_capture_features(...)
+- merge_to_master_rows(...)
+- apply_quality_checks(...)
+- write_outputs(...)
+- write_manifest(...)
+
+Implementation constraints:
+- Python stdlib only (repo currently has minimal dependencies)
+- JSONL/CSV outputs (no pandas/pyarrow required)
+- deterministic sorting by:
+  mode, session_date, placed_at, bet_id
+
+
+12) CLI Design
+Proposed args:
+- --mode {live,paper,both} (default both)
+- --min-date YYYY-MM-DD (optional)
+- --max-date YYYY-MM-DD (optional)
+- --output-root PATH (default data/analysis_output/unified_signals)
+- --fill-window-secs INT (default 30)
+- --horizons "1,2,5,10,30"
+- --strict (fail on hard checks; default off)
+- --verbose
+
+Example:
+python scripts/analysis/build_unified_signal_table.py --mode both --min-date 2026-04-01 --strict
+
+
+13) Validation Plan Before Use
+Validation A: row count reconciliation
+- number of signals_master rows per session date equals session summary total_bets.
+
+Validation B: PnL reconciliation
+- sum(realized_profit) from signals_master by date/mode matches session total_profit.
+
+Validation C: signal quality reconciliation
+- counterfactual win rate from signals_master matches session signal_win_rate (live) and win_rate (paper baseline).
+
+Validation D: capture consistency
+- live rows with source_has_capture true should approximately match capture file counts by date.
+
+Validation E: anomaly report
+- explicitly list all rows with quality_issue_count > 0 for manual review.
+
+
+14) Future Extensions (After Phase 1)
+Extension 1: candidate event table
+- derive non-bet candidates from raw monitor ticks + gate replay
+- add negative class examples for decision model training.
+
+Extension 2: game-state context enrichment
+- join game JSON for pitcher/bullpen/weather/park context at signal timestamp.
+
+Extension 3: execution regime modeling table
+- feature windows around order placement (0-30s, 30-120s) for cancel/fill policy optimization.
+
+Extension 4: calibration table
+- produce probability calibration bins and rolling reliability stats by line/inning/regime.
+
+
+15) Implementation Sequence (Recommended)
+Step 1
+- implement session/ledger/capture loaders and canonical merge.
+
+Step 2
+- implement capture feature extraction and simulated fill fields.
+
+Step 3
+- implement data quality checks + manifest + strict mode.
+
+Step 4
+- add reconciliation outputs (counts and PnL parity checks).
+
+Step 5
+- freeze schema_version=1 and start training workflows against this table.
+
+
+16) Expected Immediate Value
+- one clean training substrate for both signal and execution modeling
+- explicit separation of model edge vs fill/cancel policy effects
+- faster debugging of bad nights (per-bet feature + lifecycle trace in one place)
+- safer experimentation because parameters are denormalized per row
+

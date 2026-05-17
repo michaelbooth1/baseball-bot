@@ -1,0 +1,508 @@
+================================================================================
+HANDOVER TO CODEX — 2026-04-28
+From: Claude  •  Session ended due to quota
+Read this top-to-bottom before touching anything; ~5 min.
+================================================================================
+
+CONTEXT
+-------
+Yesterday (Apr 27) the bot ran cleanly for 7.6 hours and placed zero bets.
+Today (Apr 28) is V2 CLOB cutover day at 11:00 UTC. I (Claude) completed
+CP-1 + CP-2 of the V2 migration plan, reviewed yesterday's logs, and
+implemented "late-stage skip-with-features" capture so the fill-model has
+training data on no-bet days.
+
+The user has MANUALLY DONE THE USDC.e -> pUSD WALLET WRAP (CP-3 from the
+migration plan). Do NOT ask the user to do this again.
+
+Key reference docs in model_improvements/ (read in this order if you need
+deeper context on any item below):
+  - clob_v2_migration_plan.txt        — overall V2 cutover plan
+  - clob_v2_cp1_findings.txt          — exact V1->V2 SDK API differences
+  - session_review_2026_04_27.txt     — yesterday's data analysis
+  - fill_model_feature.txt            — the master Family A-F design doc
+  - claude_update_2026_04_27.txt      — long-form thesis review
+  - current_gates.txt                 — gate documentation
+
+
+================================================================================
+PART 1 — WHAT YESTERDAY'S SESSION SHOWED
+================================================================================
+
+Run: 2026-04-27 21:48 UTC -> 2026-04-28 05:23 UTC  (~7.6 h)
+Outcome: 0 bets, 0 errors, 0 warnings.
+
+Numbers:
+  Markets watched:       10 (game, line) pairs across 8 games
+  Candidate rows:        7,681 — every single one decision=skip
+  Trade rows:            0
+  Family A-E captures:   0  (these only fired on trade path before today)
+  Settled fills total:   still ~11 across all sessions — no new data
+
+Top skip reasons (8 most common):
+   3,423  gate_min_entry_ask       (ask < 0.55 — early-stage)
+   3,300  gate_min_inning          (before inning 4/5 — early-stage)
+     476  gate_inactive_inning_state
+     206  gate_wide_spread
+     111  gate_inning6_runs_needed
+      69  gate_min_edge            <-- closest near-misses
+      30  gate_inning5_runs_needed
+      21  gate_fv_saturation
+      ...
+
+The 69 gate_min_edge near-misses had max edge of just +0.087 (median
+NEGATIVE -0.003) — far below the 0.15-0.21 effective threshold. So gates
+correctly rejected; the day genuinely had no trade opportunities.
+
+Operational health:
+  + Zero ERROR / zero WARNING in 105K log lines
+  + Polling cadence steady at 2.5s
+  + Shadow frameworks (calibration shadow + relaxed gates + conditional
+    relax) all generating data
+  + Conditional blowout-relax (user's recent rework): 13 firings, all 13
+    "would pass" — small sample, functional
+
+Three small concerns flagged in session review (deferred — see Part 4):
+  - Only 10 markets watched. Possibly Sunday slate, possibly filter too
+    aggressive. Investigate.
+  - Calibrator loaded with method='identity' (no-op transform). Either
+    retrain the calibrator JSON or remove the shadow scoring overhead.
+  - Candidate JSONL is 15.8 MB vs ~140 KB on similar no-bet days. 100x
+    bloat from new shadow_relaxed_* nested fields on every skip row.
+    Not blocking, but worth a structural look later.
+
+
+================================================================================
+PART 2 — CHANGES I MADE TODAY (Apr 28, before quota cap)
+================================================================================
+
+A. V2 CLOB SDK MIGRATION (CP-1 + CP-2 of the migration plan)
+------------------------------------------------------------
+Purpose: V1 SDK stops working after the Apr 28 11:00 UTC cutover.
+
+Files touched:
+  scripts/trading/polymarket_client.py    — rewritten for V2 SDK
+  scripts/trading/polymarket_client.v1.bak — V1 backup for rollback
+  requirements.txt                         — pinned py-clob-client-v2==1.0.0
+
+Diff scope (~10 lines):
+  Imports:
+    from py_clob_client.client       import ClobClient
+    from py_clob_client.clob_types   import ApiCreds, OrderArgs, TradeParams
+    from py_clob_client.order_builder.constants import BUY
+   ->
+    from py_clob_client_v2 import ClobClient, ApiCreds, OrderArgsV2,
+                                    OrderPayload, TradeParams
+    from py_clob_client_v2.order_builder import BUY
+
+  Order placement:
+    OrderArgs(...) -> OrderArgsV2(...)   # same 4 required fields
+
+  Cancellation:
+    self._client.cancel(order_id)
+   ->
+    self._client.cancel_order(OrderPayload(orderID=order_id))
+
+  CLOB host (allows pre-cutover testing):
+    CLOB_HOST = "https://clob.polymarket.com"
+   ->
+    CLOB_HOST = os.environ.get("POLY_CLOB_HOST") or "https://clob.polymarket.com"
+
+The CLOBOrderClient public surface is byte-for-byte identical to V1.
+live_engine.py needs zero changes.
+
+Validation done:
+  + Bytecode compile of polymarket_client.py, live_engine.py, signal_engine.py,
+    signal_pipeline.py
+  + All V2 import paths resolved under isolated venv (c:/tmp/clob_v2_venv)
+  + Constructor + ApiCreds + OrderArgsV2 + OrderPayload + TradeParams all
+    instantiate with our exact call patterns
+  + POLY_CLOB_HOST env override verified to redirect URL correctly
+
+NOT yet done (CP-3 / CP-4 from migration plan — the user MUST run these):
+  + CP-3: USDC.e -> pUSD wrap   *** USER SAYS THIS IS DONE — SKIP ***
+  + CP-4: dry-run smoke against clob-v2 host before resuming live trading
+
+IDE shows 4 "Import 'py_clob_client_v2' could not be resolved" warnings.
+These are because the IDE's Python doesn't have V2 installed. They'll
+disappear once the bot's runtime Python has:
+    pip uninstall -y py-clob-client
+    pip install py-clob-client-v2==1.0.0
+
+The user needs to run those two pip commands in the bot's actual Python
+environment. I did not do this for them — running pip uninstall against a
+running bot's environment can wedge an in-flight import.
+
+
+B. LATE-STAGE SKIP-WITH-FEATURES (the main work today)
+------------------------------------------------------
+Purpose: Family A-E features were only attaching to candidate rows on the
+TRADE path. Yesterday produced 0 trades -> 0 feature captures. At ~5
+fills/week we'd need 6+ months for the fill-model dataset. Now we also
+capture features on the ~50-100 late-stage skip rows per session that
+"look like real candidates" but ultimately get rejected by signal-quality
+gates. This is a ~40x increase in fill-model training data accumulation.
+
+Files touched:
+  scripts/trading/signal_engine.py      — refactored 3 capture methods
+  scripts/trading/signal_pipeline.py    — added LATE_STAGE_SKIP_GATES,
+                                          _attach_skip_features, dispatch
+                                          in _record_skip
+
+Refactor (engine):
+  _start_tape_capture(bet, ...)         -> _start_tape_capture(bet_id, ...)
+  _start_family_b_capture(bet, ...)     -> _start_family_b_capture(bet_id, ...)
+  _start_family_c_capture(bet, ...)     -> _start_family_c_capture(bet_id, ...)
+
+  Sidecar paths now use bet_id directly:
+    data/<paper|live>_trading/tape_captures/<date>/<bet_id>.json
+    data/<paper|live>_trading/book_decision_snapshots/<date>/<bet_id>.json
+    data/<paper|live>_trading/velocity_snapshots/<date>/<bet_id>.json
+  For trade rows, bet_id is the existing bet_id (e.g. "2026-04-28_824609_8.5_0007").
+  For skip rows, bet_id is "skip_<candidate_id>" (e.g. "skip_2026-04-28_824609_8.5_033902").
+
+New dispatch in _record_skip closure:
+  IF reason in LATE_STAGE_SKIP_GATES:
+      dedup_key = (reason, game_pk, line, inning, inning_state, outs, current_total)
+      if dedup_key not in self._skip_features_seen:
+          - synthesize hypothetical_limit_price = bid + spread*spread_factor
+          - call _start_tape_capture, _start_family_b_capture, _start_family_c_capture
+          - compute Family D and E inline
+          - mark payload['decision'] = 'skip_with_features'
+          - add to dedup set
+      else:
+          - increment _skip_features_dedup_suppressed counter
+
+LATE_STAGE_SKIP_GATES (frozenset of 11 gate names):
+   gate_min_edge                gate_close_game_high_rn
+   gate_fv_saturation           gate_inning5_runs_needed
+   gate_fv_ask_gap              gate_inning6_runs_needed
+   gate_runs_needed             gate_blowout
+   gate_runs_pace               gate_blowout_adj
+                                gate_s2_suppress
+
+Excluded (early-stage / environmental — would generate 7,000+ wasted
+HTTP calls per session):
+   gate_min_inning, gate_min_entry_ask, gate_inactive_inning_state,
+   gate_wide_spread, gate_ask_jump_unconfirmed, gate_crossed_book,
+   gate_event_dedup, gate_inning_dedup, gate_min_current_total
+
+Validation done:
+  + Bytecode compile of all touched files
+  + Method signature verification: all three capture methods now use bet_id
+  + Static AST analysis: all closure-captured names (game, market, state,
+    book, best_bid, ask, inning, runners_on, now, self) resolve correctly
+  + Synthetic dispatch + dedup test: first skip captures, identical re-skip
+    suppresses, state advance (outs change) re-captures
+  + Family D test on hypothetical limit reproduces spread_factor=0.65
+    correctly (sanity check that hypothetical limit synth is consistent
+    with live engine)
+  + Family E test on the real LAA@CWS near-miss case from yesterday
+    produces correct fv_minus_ltp + bases-loaded decode
+
+Expected behavior on next live session:
+  + Yesterday's distribution: ~250 late-stage skip events
+  + Post-dedup: ~50-100 unique feature snapshots
+  + ~30 seconds total HTTP load over ~8h (trivial)
+  + Sidecar files: tape_captures/<date>/skip_*.json,
+                   book_decision_snapshots/<date>/skip_*.json,
+                   velocity_snapshots/<date>/skip_*.json
+  + Candidate JSONL gains decision=skip_with_features rows with all five
+    family_*_features dicts populated
+
+Known limitations of skip-path data (real but acceptable):
+  + No "did the order fill?" outcome since no order was placed.
+    Skip-path rows can't strictly train the M_fill component.
+  + They CAN train the broader EV policy via the existing outcomes
+    pipeline (counterfactual won/lost is already tracked).
+  + Family C tick_buffer is the SAME buffer used by trade-path captures
+    so its health applies to both. Still untested empirically — see
+    Part 4 T-3 for the cheap fix.
+
+
+================================================================================
+PART 3 — IMMEDIATE NEXT STEPS (RUN IN ORDER)
+================================================================================
+
+T-1. CRITICAL — Confirm V2 SDK is installed in the bot's runtime Python
+-----------------------------------------------------------------------
+The user must run, in the same Python environment the bot uses:
+    pip uninstall -y py-clob-client
+    pip install py-clob-client-v2==1.0.0
+    python -c "import py_clob_client_v2; print('V2 OK')"
+
+If you (Codex) can verify which Python the bot uses (check shebang,
+launcher script, etc.), do so and report back. Don't run the pip
+commands yourself unless the user explicitly authorizes — uninstalling
+a package that an active process has imported can wedge state.
+
+
+T-2. CRITICAL — Run CP-4 dry-run smoke test against clob-v2 host
+----------------------------------------------------------------
+Per the migration plan, before resuming live trading:
+
+    POLY_CLOB_HOST=https://clob-v2.polymarket.com \
+      python scripts/trading/live_engine.py --dry-run
+
+Expected:
+  + Client initializes (derive_api_key succeeds)
+  + Monitor polls /book on clob-v2 host without errors
+  + Dry-run order placement succeeds (no real order posted)
+  + Cancel of fake order succeeds
+
+If anything fails, halt and investigate before going live. The migration
+plan's Section 9 (rollback) describes the fallback path — keep paper +
+monitor running while polymarket_client.py gets fixed.
+
+
+T-3. CRITICAL — Smoke-test the three public REST endpoints post-cutover
+-----------------------------------------------------------------------
+After 11:00 UTC cutover (today), confirm these still return valid JSON:
+
+    curl -s "https://clob.polymarket.com/book?token_id=<live_token>" | head -c 500
+    curl -s "https://data-api.polymarket.com/trades?market=<live_token>&limit=5" | head -c 500
+    curl -s "https://gamma-api.polymarket.com/markets?active=true&limit=1" | head -c 500
+
+The migration doc said only the SDK-facing /order endpoint changes, but
+silence on data-api and gamma-api means we should verify rather than
+assume. If any return 5xx or weird shape, Family A (tape capture) and the
+monitor (book) will need attention.
+
+
+T-4. HIGH — First conservative live session
+-------------------------------------------
+Once T-1, T-2, T-3 all pass, resume trading with reduced risk for one
+session:
+
+    python scripts/trading/live_engine.py \
+      --stake-mode flat --stake 5 --daily-budget 25 --max-open-orders 2 \
+      --shadow-relaxed-enabled \
+      --pitcher-cache-path cache/pitcher_cache.json
+
+Watch logs in real-time for the first hour. If any unexpected SDK errors,
+kill and roll back to dry-run. ONLY return to standard config (--stake 20
+--daily-budget 160) after one clean session.
+
+
+T-5. POST-SESSION REVIEW — Verify late-stage skip-with-features fired
+---------------------------------------------------------------------
+After tonight's session, before doing anything else:
+
+    ls -la data/live_trading/tape_captures/2026-04-28/skip_*.json | wc -l
+    ls -la data/live_trading/book_decision_snapshots/2026-04-28/skip_*.json | wc -l
+    ls -la data/live_trading/velocity_snapshots/2026-04-28/skip_*.json | wc -l
+
+Expected: each should have ~30-100 sidecar files (assuming MLB games ran).
+Also grep the candidate JSONL:
+
+    python -c "
+    import json
+    n = 0
+    with open('data/live_trading/candidate_universe/2026-04-28_candidates.jsonl') as f:
+        for line in f:
+            row = json.loads(line)
+            if row.get('decision') == 'skip_with_features':
+                n += 1
+    print(f'skip_with_features rows: {n}')
+    "
+
+If n is 0 OR if dispatch fired but family_*_features dicts are empty,
+something's wrong with the new wiring. Spot-check one skip_*.json sidecar
+to confirm it contains a 'features' dict with non-None values.
+
+
+================================================================================
+PART 4 — SECONDARY IMPROVEMENTS (after T-1..T-5 pass)
+================================================================================
+
+T-6. Tick-buffer health log (cheap, ~30 min)
+--------------------------------------------
+Family C's substrate is LineState.tick_buffer. We have NO empirical
+confirmation that it's being maintained correctly because no bets
+fired. Add an INFO log every ~10 minutes to signal_engine that walks
+self._line_states and prints buffer length + age:
+
+    LOGGER.info("tick_buffer health: %d line_states, ranges: ...", ...)
+
+If buffer is stuck at 1 entry or empty, we have a wiring bug — Family C
+features will silently be all-None even on trade rows. Worth catching
+before we accumulate a week of useless skip-path Family C data.
+
+
+T-7. Investigate market filter (~1 hour)
+----------------------------------------
+Yesterday only 10 (game, line) pairs were monitored across 8 games.
+MLB typically has 15+ games per night. Either:
+  (a) Sunday slate was small (plausible — verify against MLB schedule)
+  (b) Some games started before the bot launched at 21:48 UTC
+  (c) Market filter is excluding too aggressively
+
+Add an INFO log at startup that lists the full universe of
+(game, line, token_id) the bot decided to monitor and WHY any were
+excluded (e.g. "filtered N markets: M had no token, K had ask < 0.5",
+etc.). If filter is the culprit, doubling the universe roughly doubles
+signal volume for free.
+
+
+T-8. Verify calibrator artifact (~15 min)
+-----------------------------------------
+Yesterday's session showed fair_value_calibration_method='identity' on
+all 238 shadow scores. The calibrator JSON loaded successfully but
+contains no actual Platt/isotonic transformation. Either:
+  (a) The training job that produces signal_win_calibration.json never
+      ran with non-trivial data, so it defaulted to identity
+  (b) The calibrator was intentionally set to identity for shadow-mode
+      testing
+
+Verify which by inspecting the JSON:
+    python -c "
+    import json
+    cal = json.load(open('data/analysis_output/calibration/signal_win_calibration.json'))
+    print(json.dumps(cal, indent=2))
+    "
+
+If method=='identity' is permanent, remove the shadow scoring overhead
+to clean up logs. If it's because the calibrator wasn't trained on
+enough data, document the threshold for retraining.
+
+
+T-9. Candidate JSONL size investigation (~1 hour)
+-------------------------------------------------
+2026-04-27_candidates.jsonl was 15.8 MB vs ~140 KB on prior no-bet days.
+That's 100x bloat. Either the new shadow_relaxed_* / conditional_relax_*
+fields are bloating per-row payload, or something else changed.
+
+Sample 10 random rows from the new file vs an old one:
+    python -c "
+    import json
+    rows_new = []
+    with open('data/live_trading/candidate_universe/2026-04-27_candidates.jsonl') as f:
+        for i, line in enumerate(f):
+            if i % 768 == 0:  # ~10 samples
+                rows_new.append(line)
+    print(f'avg new row size: {sum(len(r) for r in rows_new)/len(rows_new):.0f} chars')
+    "
+    # Then same for 2026-04-26.
+
+If per-row payload is justifiably larger (genuinely useful new fields),
+fine — leave it. If it's mostly None-valued shadow dicts, factor those
+into a separate sidecar.
+
+
+T-10. M3 — build_fill_features.py (after ~1 week of skip-with-features data)
+----------------------------------------------------------------------------
+Per the original fill_model_feature.txt design doc, M3 is the analysis-
+side script that reads the candidate JSONL + sidecars + outcomes JSONL
+and emits a one-row-per-signal training table. This is the next major
+deliverable for the fill-model work.
+
+Wait until ~7 days of skip-with-features data has accumulated before
+starting — we want enough rows to do a meaningful split. Skeleton:
+
+    scripts/analysis/build_fill_features.py
+      reads:
+        data/<paper|live>_trading/candidate_universe/*_candidates.jsonl
+        data/<paper|live>_trading/{tape,book_decision,velocity}_snapshots/*/*.json
+        data/<paper|live>_trading/candidate_universe/*_outcomes.jsonl
+      writes:
+        data/analysis_output/fill_features/fill_features_table.parquet (or .jsonl)
+        data/analysis_output/fill_features/manifest.json
+
+After ~30 fills (any combination of trade-path and skip-path), do the
+first reliability diagram pass for fv_minus_ltp, signed_volume_last_30s,
+and book_imbalance_top1. Those are the three Family A/B/E features the
+design doc highlights as the most informative for the Winner's-Curse
+problem.
+
+
+================================================================================
+PART 5 — WHAT NOT TO DO
+================================================================================
+
+- DO NOT tune gates or thresholds this week. The original validation
+  plan (Claude's update_2026_04_27.txt) committed to ~30 more fills
+  with stable settings. Tuning mid-stream destroys the experiment.
+
+- DO NOT amend the user's blowout-relax rework. They reworked it on
+  Apr 27; only 13 firings yesterday. Need ~50-100 cases before we can
+  evaluate.
+
+- DO NOT remove the V1 polymarket_client.v1.bak file until at least
+  one clean V2 session is in the books.
+
+- DO NOT attempt to install py-clob-client-v2 in the bot's runtime
+  Python while the bot is running. User-visible action only.
+
+- DO NOT bypass the dry-run smoke (T-2) on first V2 connect. Even with
+  a clean code migration, network and auth surface always has surprises.
+
+
+================================================================================
+PART 6 — STATE OF THE FILL-MODEL DESIGN ROADMAP
+================================================================================
+
+From model_improvements/fill_model_feature.txt:
+
+  Family A — tape / recent flow (highest priority)     ✅ implemented
+  Family B — book state at decision (high priority)    ✅ implemented
+  Family C — book velocity / drift (high priority)     ✅ implemented
+  Family D — pricing position (medium priority)        ✅ implemented
+  Family E — signal interaction (medium priority)      ✅ implemented
+  Family F — game-clock pressure (lower priority)      ⏸ deferred
+
+  M1. tape capture infrastructure                       ✅ done (Apr 27)
+  M2. synchronous decision-time book snapshot           ✅ done (via Family B)
+  M3. feature builder (analysis-side)                   ⏸ wait for data
+  M4. train M_fill / M_win_if_filled                    ⏸ wait for data
+  M5. walk-forward backtest harness                     ⏸ future
+  M6. shadow integration in live_engine                 ⏸ future
+  M7. AB / enforce phases                               ⏸ future
+
+Late-stage skip-with-features capture (today's work, NOT in original
+fill_model_feature.txt) supplements M1-M2 by removing the "we only get
+~5 fills/week" data scarcity blocker. Original Family A-E plan assumed
+trade-path capture only.
+
+
+================================================================================
+SUMMARY OF MINUTES OF WORK FOR CODEX
+================================================================================
+
+Right now (in order):
+  T-1  ~5 min   Verify V2 SDK installed in bot Python (user runs pip)
+  T-2  ~30 min  CP-4 dry-run smoke against clob-v2 host
+  T-3  ~10 min  curl-test public REST endpoints post-cutover
+  T-4  ~3 hr    First conservative live session
+  T-5  ~10 min  Post-session: verify skip-with-features fired
+
+This week:
+  T-6  ~30 min  Add tick-buffer health log
+  T-7  ~1 hr    Investigate market filter
+  T-8  ~15 min  Inspect calibrator JSON
+  T-9  ~1 hr    Diagnose candidate-row size bloat
+
+Next week+:
+  T-10  several hours, after ~30 fills / ~7 days of data:
+                build scripts/analysis/build_fill_features.py
+                first reliability diagrams
+
+Files I changed today:
+  scripts/trading/polymarket_client.py        (V2 SDK migration)
+  scripts/trading/polymarket_client.v1.bak    (NEW — V1 backup)
+  scripts/trading/signal_engine.py            (refactor + dedup state)
+  scripts/trading/signal_pipeline.py          (LATE_STAGE_SKIP_GATES + dispatch)
+  requirements.txt                             (py-clob-client-v2 pin)
+  model_improvements/clob_v2_migration_plan.txt   (NEW)
+  model_improvements/clob_v2_cp1_findings.txt     (NEW)
+  model_improvements/session_review_2026_04_27.txt (NEW)
+  model_improvements/handover_2026_04_28.txt      (NEW — this file)
+
+Files I did NOT touch today:
+  models.py, ev_policy.py, probability_calibration.py, signal_config.py,
+  signal_gates.py, tape_capture.py, book_features.py, book_velocity.py,
+  pricing_features.py, signal_interaction_features.py, live_engine.py
+  (well, I checked live_engine compiles after the engine refactor — it does)
+
+================================================================================
+END
+================================================================================

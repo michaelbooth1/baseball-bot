@@ -1,0 +1,665 @@
+{
+  "coverage": {
+    "fallback_only": 0,
+    "fixed_roof_default": 0,
+    "metadata_matched": 10,
+    "missing_metadata": 0,
+    "provider_disabled": 0,
+    "provider_ok": 10,
+    "retractable_roof_default": 2,
+    "scheduled_games": 10
+  },
+  "date": "2026-05-07",
+  "games": [
+    {
+      "away_abbrev": "TEX",
+      "away_name": "Texas Rangers",
+      "derived": {
+        "air_density_index": 0.987149,
+        "air_density_kg_m3": 1.209258,
+        "density_altitude_ft": 279.1,
+        "weather_active_default": true,
+        "wind_cross_component_mph": 7.7468,
+        "wind_out_component_mph": 5.8376
+      },
+      "game_date_utc": "2026-05-07T16:35:00Z",
+      "game_pk": 823551,
+      "home_abbrev": "NYY",
+      "home_name": "New York Yankees",
+      "mlb_schedule_weather": {
+        "condition": "Sunny",
+        "parsed_wind": {
+          "wind_direction_label": "out",
+          "wind_from_deg": null,
+          "wind_speed_mph": 9.0
+        },
+        "temp_f": 60.0,
+        "venue_roof_type": "",
+        "wind": "9 mph, Out To RF"
+      },
+      "source": {
+        "error": "",
+        "provider": "open-meteo",
+        "selected_offset_minutes": 25.0,
+        "selected_time_utc": "2026-05-07T17:00:00Z",
+        "status": "ok"
+      },
+      "stadium": {
+        "city": "Bronx",
+        "elevation_ft": 55.0,
+        "latitude": 40.8296,
+        "longitude": -73.9262,
+        "mlb_team": "NYY",
+        "outfield_bearing_deg": 75.0,
+        "primary_name": "Yankee Stadium",
+        "roof_type": "open",
+        "stadium_id": "yankee_stadium",
+        "state": "NY",
+        "weather_exposure": "open",
+        "weather_sensitivity": "medium"
+      },
+      "status_abstract": "Live",
+      "status_detailed": "In Progress",
+      "venue_name": "Yankee Stadium",
+      "weather": {
+        "dewpoint_f": 32.0,
+        "precipitation_in": 0.0,
+        "precipitation_probability_pct": 0.0,
+        "pressure_msl_hpa": 1009.4,
+        "relative_humidity_pct": 32.0,
+        "surface_pressure_hpa": 1008.7,
+        "temp_f": 62.2,
+        "weather_code": 0,
+        "wind_from_deg": 308.0,
+        "wind_gust_mph": 19.9,
+        "wind_speed_mph": 9.7
+      }
+    },
+    {
+      "away_abbrev": "MIN",
+      "away_name": "Minnesota Twins",
+      "derived": {
+        "air_density_index": 0.993995,
+        "air_density_kg_m3": 1.217644,
+        "density_altitude_ft": 39.6,
+        "weather_active_default": true,
+        "wind_cross_component_mph": 2.5878,
+        "wind_out_component_mph": -3.4341
+      },
+      "game_date_utc": "2026-05-07T17:05:00Z",
+      "game_pk": 822741,
+      "home_abbrev": "WSH",
+      "home_name": "Washington Nationals",
+      "mlb_schedule_weather": {
+        "condition": "Cloudy",
+        "parsed_wind": {
+          "wind_direction_label": "in",
+          "wind_from_deg": null,
+          "wind_speed_mph": 6.0
+        },
+        "temp_f": 59.0,
+        "venue_roof_type": "",
+        "wind": "6 mph, In From CF"
+      },
+      "source": {
+        "error": "",
+        "provider": "open-meteo",
+        "selected_offset_minutes": 5.0,
+        "selected_time_utc": "2026-05-07T17:00:00Z",
+        "status": "ok"
+      },
+      "stadium": {
+        "city": "Washington",
+        "elevation_ft": 16.0,
+        "latitude": 38.873,
+        "longitude": -77.0074,
+        "mlb_team": "WSN",
+        "outfield_bearing_deg": 43.0,
+        "primary_name": "Nationals Park",
+        "roof_type": "open",
+        "stadium_id": "nationals_park",
+        "state": "DC",
+        "weather_exposure": "open",
+        "weather_sensitivity": "medium"
+      },
+      "status_abstract": "Live",
+      "status_detailed": "In Progress",
+      "venue_name": "Nationals Park",
+      "weather": {
+        "dewpoint_f": 39.1,
+        "precipitation_in": 0.0,
+        "precipitation_probability_pct": 2.0,
+        "pressure_msl_hpa": 1011.4,
+        "relative_humidity_pct": 47.0,
+        "surface_pressure_hpa": 1010.8,
+        "temp_f": 59.3,
+        "weather_code": 3,
+        "wind_from_deg": 6.0,
+        "wind_gust_mph": 9.8,
+        "wind_speed_mph": 4.3
+      }
+    },
+    {
+      "away_abbrev": "CLE",
+      "away_name": "Cleveland Guardians",
+      "derived": {
+        "air_density_index": 0.958202,
+        "air_density_kg_m3": 1.173798,
+        "density_altitude_ft": 1404.7,
+        "weather_active_default": true,
+        "wind_cross_component_mph": 0.527,
+        "wind_out_component_mph": 15.0908
+      },
+      "game_date_utc": "2026-05-07T18:10:00Z",
+      "game_pk": 824117,
+      "home_abbrev": "KC",
+      "home_name": "Kansas City Royals",
+      "mlb_schedule_weather": {
+        "condition": "Partly Cloudy",
+        "parsed_wind": {
+          "wind_direction_label": "out",
+          "wind_from_deg": null,
+          "wind_speed_mph": 10.0
+        },
+        "temp_f": 63.0,
+        "venue_roof_type": "",
+        "wind": "10 mph, Out To RF"
+      },
+      "source": {
+        "error": "",
+        "provider": "open-meteo",
+        "selected_offset_minutes": 10.0,
+        "selected_time_utc": "2026-05-07T18:00:00Z",
+        "status": "ok"
+      },
+      "stadium": {
+        "city": "Kansas City",
+        "elevation_ft": 886.0,
+        "latitude": 39.0517,
+        "longitude": -94.4803,
+        "mlb_team": "KCR",
+        "outfield_bearing_deg": 47.0,
+        "primary_name": "Kauffman Stadium",
+        "roof_type": "open",
+        "stadium_id": "kauffman_stadium",
+        "state": "MO",
+        "weather_exposure": "open",
+        "weather_sensitivity": "medium"
+      },
+      "status_abstract": "Live",
+      "status_detailed": "In Progress",
+      "venue_name": "Kauffman Stadium",
+      "weather": {
+        "dewpoint_f": 41.9,
+        "precipitation_in": 0.0,
+        "precipitation_probability_pct": 0.0,
+        "pressure_msl_hpa": 1014.7,
+        "relative_humidity_pct": 45.0,
+        "surface_pressure_hpa": 983.1,
+        "temp_f": 63.7,
+        "weather_code": 1,
+        "wind_from_deg": 229.0,
+        "wind_gust_mph": 21.3,
+        "wind_speed_mph": 15.1
+      }
+    },
+    {
+      "away_abbrev": "CIN",
+      "away_name": "Cincinnati Reds",
+      "derived": {
+        "air_density_index": 0.989345,
+        "air_density_kg_m3": 1.211947,
+        "density_altitude_ft": 265.2,
+        "weather_active_default": true,
+        "wind_cross_component_mph": -3.9126,
+        "wind_out_component_mph": 0.8316
+      },
+      "game_date_utc": "2026-05-07T18:20:00Z",
+      "game_pk": 824681,
+      "home_abbrev": "CHC",
+      "home_name": "Chicago Cubs",
+      "mlb_schedule_weather": {
+        "condition": "Partly Cloudy",
+        "parsed_wind": {
+          "wind_direction_label": "",
+          "wind_from_deg": null,
+          "wind_speed_mph": 8.0
+        },
+        "temp_f": 54.0,
+        "venue_roof_type": "",
+        "wind": "8 mph, R To L"
+      },
+      "source": {
+        "error": "",
+        "provider": "open-meteo",
+        "selected_offset_minutes": 20.0,
+        "selected_time_utc": "2026-05-07T18:00:00Z",
+        "status": "ok"
+      },
+      "stadium": {
+        "city": "Chicago",
+        "elevation_ft": 594.0,
+        "latitude": 41.9484,
+        "longitude": -87.6553,
+        "mlb_team": "CHC",
+        "outfield_bearing_deg": 40.0,
+        "primary_name": "Wrigley Field",
+        "roof_type": "open",
+        "stadium_id": "wrigley_field",
+        "state": "IL",
+        "weather_exposure": "open",
+        "weather_sensitivity": "high"
+      },
+      "status_abstract": "Live",
+      "status_detailed": "In Progress",
+      "venue_name": "Wrigley Field",
+      "weather": {
+        "dewpoint_f": 35.7,
+        "precipitation_in": 0.0,
+        "precipitation_probability_pct": 4.0,
+        "pressure_msl_hpa": 1013.9,
+        "relative_humidity_pct": 54.0,
+        "surface_pressure_hpa": 991.4,
+        "temp_f": 51.9,
+        "weather_code": 3,
+        "wind_from_deg": 142.0,
+        "wind_gust_mph": 13.2,
+        "wind_speed_mph": 4.0
+      }
+    },
+    {
+      "away_abbrev": "NYM",
+      "away_name": "New York Mets",
+      "derived": {
+        "air_density_index": 0.816285,
+        "air_density_kg_m3": 0.999949,
+        "density_altitude_ft": 6918.9,
+        "weather_active_default": true,
+        "wind_cross_component_mph": 8.5678,
+        "wind_out_component_mph": -1.5107
+      },
+      "game_date_utc": "2026-05-07T19:10:00Z",
+      "game_pk": 824362,
+      "home_abbrev": "COL",
+      "home_name": "Colorado Rockies",
+      "mlb_schedule_weather": {
+        "condition": "Partly Cloudy",
+        "parsed_wind": {
+          "wind_direction_label": "in",
+          "wind_from_deg": null,
+          "wind_speed_mph": 7.0
+        },
+        "temp_f": 63.0,
+        "venue_roof_type": "",
+        "wind": "7 mph, In From LF"
+      },
+      "source": {
+        "error": "",
+        "provider": "open-meteo",
+        "selected_offset_minutes": 10.0,
+        "selected_time_utc": "2026-05-07T19:00:00Z",
+        "status": "ok"
+      },
+      "stadium": {
+        "city": "Denver",
+        "elevation_ft": 5200.0,
+        "latitude": 39.7559,
+        "longitude": -104.9942,
+        "mlb_team": "COL",
+        "outfield_bearing_deg": 16.0,
+        "primary_name": "Coors Field",
+        "roof_type": "open",
+        "stadium_id": "coors_field",
+        "state": "CO",
+        "weather_exposure": "open",
+        "weather_sensitivity": "high"
+      },
+      "status_abstract": "Preview",
+      "status_detailed": "Pre-Game",
+      "venue_name": "Coors Field",
+      "weather": {
+        "dewpoint_f": 32.4,
+        "precipitation_in": 0.0,
+        "precipitation_probability_pct": 1.0,
+        "pressure_msl_hpa": 1009.4,
+        "relative_humidity_pct": 28.0,
+        "surface_pressure_hpa": 841.4,
+        "temp_f": 66.5,
+        "weather_code": 3,
+        "wind_from_deg": 296.0,
+        "wind_gust_mph": 20.6,
+        "wind_speed_mph": 8.7
+      }
+    },
+    {
+      "away_abbrev": "PIT",
+      "away_name": "Pittsburgh Pirates",
+      "derived": {
+        "air_density_index": 0.896273,
+        "air_density_kg_m3": 1.097935,
+        "density_altitude_ft": 3671.4,
+        "weather_active_default": true,
+        "wind_cross_component_mph": 1.8067,
+        "wind_out_component_mph": 2.0065
+      },
+      "game_date_utc": "2026-05-07T19:40:00Z",
+      "game_pk": 825090,
+      "home_abbrev": "AZ",
+      "home_name": "Arizona Diamondbacks",
+      "mlb_schedule_weather": {
+        "condition": "Roof Closed",
+        "parsed_wind": {
+          "wind_direction_label": "",
+          "wind_from_deg": null,
+          "wind_speed_mph": 0.0
+        },
+        "temp_f": 72.0,
+        "venue_roof_type": "",
+        "wind": "0 mph, None"
+      },
+      "source": {
+        "error": "",
+        "provider": "open-meteo",
+        "selected_offset_minutes": 20.0,
+        "selected_time_utc": "2026-05-07T20:00:00Z",
+        "status": "ok"
+      },
+      "stadium": {
+        "city": "Phoenix",
+        "elevation_ft": 1086.0,
+        "latitude": 33.4455,
+        "longitude": -112.0667,
+        "mlb_team": "ARI",
+        "outfield_bearing_deg": 24.0,
+        "primary_name": "Chase Field",
+        "roof_type": "retractable",
+        "stadium_id": "chase_field",
+        "state": "AZ",
+        "weather_exposure": "retractable",
+        "weather_sensitivity": "medium"
+      },
+      "status_abstract": "Preview",
+      "status_detailed": "Pre-Game",
+      "venue_name": "Chase Field",
+      "weather": {
+        "dewpoint_f": 20.8,
+        "precipitation_in": 0.0,
+        "precipitation_probability_pct": 0.0,
+        "pressure_msl_hpa": 1009.3,
+        "relative_humidity_pct": 7.0,
+        "surface_pressure_hpa": 971.4,
+        "temp_f": 94.3,
+        "weather_code": 0,
+        "wind_from_deg": 246.0,
+        "wind_gust_mph": 8.3,
+        "wind_speed_mph": 2.7
+      }
+    },
+    {
+      "away_abbrev": "ATH",
+      "away_name": "Athletics",
+      "derived": {
+        "air_density_index": 0.984934,
+        "air_density_kg_m3": 1.206544,
+        "density_altitude_ft": 341.1,
+        "weather_active_default": true,
+        "wind_cross_component_mph": 4.2394,
+        "wind_out_component_mph": -6.7844
+      },
+      "game_date_utc": "2026-05-07T22:40:00Z",
+      "game_pk": 823467,
+      "home_abbrev": "PHI",
+      "home_name": "Philadelphia Phillies",
+      "mlb_schedule_weather": {
+        "condition": "",
+        "parsed_wind": {
+          "wind_direction_label": "",
+          "wind_from_deg": null,
+          "wind_speed_mph": null
+        },
+        "temp_f": null,
+        "venue_roof_type": "",
+        "wind": ""
+      },
+      "source": {
+        "error": "",
+        "provider": "open-meteo",
+        "selected_offset_minutes": 20.0,
+        "selected_time_utc": "2026-05-07T23:00:00Z",
+        "status": "ok"
+      },
+      "stadium": {
+        "city": "Philadelphia",
+        "elevation_ft": 25.0,
+        "latitude": 39.9057,
+        "longitude": -75.1665,
+        "mlb_team": "PHI",
+        "outfield_bearing_deg": 9.0,
+        "primary_name": "Citizens Bank Park",
+        "roof_type": "open",
+        "stadium_id": "citizens_bank_park",
+        "state": "PA",
+        "weather_exposure": "open",
+        "weather_sensitivity": "medium"
+      },
+      "status_abstract": "Preview",
+      "status_detailed": "Scheduled",
+      "venue_name": "Citizens Bank Park",
+      "weather": {
+        "dewpoint_f": 31.7,
+        "precipitation_in": 0.0,
+        "precipitation_probability_pct": 1.0,
+        "pressure_msl_hpa": 1009.1,
+        "relative_humidity_pct": 30.0,
+        "surface_pressure_hpa": 1009.3,
+        "temp_f": 63.7,
+        "weather_code": 0,
+        "wind_from_deg": 337.0,
+        "wind_gust_mph": 11.4,
+        "wind_speed_mph": 8.0
+      }
+    },
+    {
+      "away_abbrev": "BAL",
+      "away_name": "Baltimore Orioles",
+      "derived": {
+        "air_density_index": 0.947121,
+        "air_density_kg_m3": 1.160223,
+        "density_altitude_ft": 1580.7,
+        "weather_active_default": true,
+        "wind_cross_component_mph": -11.203,
+        "wind_out_component_mph": -4.3004
+      },
+      "game_date_utc": "2026-05-07T22:40:00Z",
+      "game_pk": 823870,
+      "home_abbrev": "MIA",
+      "home_name": "Miami Marlins",
+      "mlb_schedule_weather": {
+        "condition": "",
+        "parsed_wind": {
+          "wind_direction_label": "",
+          "wind_from_deg": null,
+          "wind_speed_mph": null
+        },
+        "temp_f": null,
+        "venue_roof_type": "",
+        "wind": ""
+      },
+      "source": {
+        "error": "",
+        "provider": "open-meteo",
+        "selected_offset_minutes": 20.0,
+        "selected_time_utc": "2026-05-07T23:00:00Z",
+        "status": "ok"
+      },
+      "stadium": {
+        "city": "Miami",
+        "elevation_ft": 8.0,
+        "latitude": 25.7781,
+        "longitude": -80.2197,
+        "mlb_team": "MIA",
+        "outfield_bearing_deg": 90.0,
+        "primary_name": "loanDepot park",
+        "roof_type": "retractable",
+        "stadium_id": "loanDepot_park",
+        "state": "FL",
+        "weather_exposure": "retractable",
+        "weather_sensitivity": "low"
+      },
+      "status_abstract": "Preview",
+      "status_detailed": "Scheduled",
+      "venue_name": "loanDepot park",
+      "weather": {
+        "dewpoint_f": 72.8,
+        "precipitation_in": 0.0,
+        "precipitation_probability_pct": 2.0,
+        "pressure_msl_hpa": 1014.2,
+        "relative_humidity_pct": 72.0,
+        "surface_pressure_hpa": 1014.1,
+        "temp_f": 82.8,
+        "weather_code": 0,
+        "wind_from_deg": 159.0,
+        "wind_gust_mph": 19.5,
+        "wind_speed_mph": 12.0
+      }
+    },
+    {
+      "away_abbrev": "TB",
+      "away_name": "Tampa Bay Rays",
+      "derived": {
+        "air_density_index": 0.99247,
+        "air_density_kg_m3": 1.215776,
+        "density_altitude_ft": 6.1,
+        "weather_active_default": true,
+        "wind_cross_component_mph": 11.203,
+        "wind_out_component_mph": 4.3004
+      },
+      "game_date_utc": "2026-05-07T23:10:00Z",
+      "game_pk": 824767,
+      "home_abbrev": "BOS",
+      "home_name": "Boston Red Sox",
+      "mlb_schedule_weather": {
+        "condition": "Clear",
+        "parsed_wind": {
+          "wind_direction_label": "out",
+          "wind_from_deg": null,
+          "wind_speed_mph": 10.0
+        },
+        "temp_f": 59.0,
+        "venue_roof_type": "",
+        "wind": "10 mph, Out To RF"
+      },
+      "source": {
+        "error": "",
+        "provider": "open-meteo",
+        "selected_offset_minutes": 10.0,
+        "selected_time_utc": "2026-05-07T23:00:00Z",
+        "status": "ok"
+      },
+      "stadium": {
+        "city": "Boston",
+        "elevation_ft": 21.0,
+        "latitude": 42.3467,
+        "longitude": -71.0972,
+        "mlb_team": "BOS",
+        "outfield_bearing_deg": 35.0,
+        "primary_name": "Fenway Park",
+        "roof_type": "open",
+        "stadium_id": "fenway_park",
+        "state": "MA",
+        "weather_exposure": "open",
+        "weather_sensitivity": "medium"
+      },
+      "status_abstract": "Preview",
+      "status_detailed": "Pre-Game",
+      "venue_name": "Fenway Park",
+      "weather": {
+        "dewpoint_f": 28.1,
+        "precipitation_in": 0.0,
+        "precipitation_probability_pct": 0.0,
+        "pressure_msl_hpa": 1008.0,
+        "relative_humidity_pct": 31.0,
+        "surface_pressure_hpa": 1007.0,
+        "temp_f": 58.7,
+        "weather_code": 0,
+        "wind_from_deg": 284.0,
+        "wind_gust_mph": 20.1,
+        "wind_speed_mph": 12.0
+      }
+    },
+    {
+      "away_abbrev": "STL",
+      "away_name": "St. Louis Cardinals",
+      "derived": {
+        "air_density_index": 0.985584,
+        "air_density_kg_m3": 1.20734,
+        "density_altitude_ft": 328.3,
+        "weather_active_default": true,
+        "wind_cross_component_mph": 4.2974,
+        "wind_out_component_mph": 0.1501
+      },
+      "game_date_utc": "2026-05-08T02:10:00Z",
+      "game_pk": 823306,
+      "home_abbrev": "SD",
+      "home_name": "San Diego Padres",
+      "mlb_schedule_weather": {
+        "condition": "",
+        "parsed_wind": {
+          "wind_direction_label": "",
+          "wind_from_deg": null,
+          "wind_speed_mph": null
+        },
+        "temp_f": null,
+        "venue_roof_type": "",
+        "wind": ""
+      },
+      "source": {
+        "error": "",
+        "provider": "open-meteo",
+        "selected_offset_minutes": 10.0,
+        "selected_time_utc": "2026-05-08T02:00:00Z",
+        "status": "ok"
+      },
+      "stadium": {
+        "city": "San Diego",
+        "elevation_ft": 20.0,
+        "latitude": 32.7073,
+        "longitude": -117.1566,
+        "mlb_team": "SDP",
+        "outfield_bearing_deg": 41.0,
+        "primary_name": "Petco Park",
+        "roof_type": "open",
+        "stadium_id": "petco_park",
+        "state": "CA",
+        "weather_exposure": "open",
+        "weather_sensitivity": "medium"
+      },
+      "status_abstract": "Preview",
+      "status_detailed": "Scheduled",
+      "venue_name": "Petco Park",
+      "weather": {
+        "dewpoint_f": 59.3,
+        "precipitation_in": 0.0,
+        "precipitation_probability_pct": 0.0,
+        "pressure_msl_hpa": 1014.7,
+        "relative_humidity_pct": 86.0,
+        "surface_pressure_hpa": 1014.0,
+        "temp_f": 63.6,
+        "weather_code": 3,
+        "wind_from_deg": 309.0,
+        "wind_gust_mph": 4.9,
+        "wind_speed_mph": 4.3
+      }
+    }
+  ],
+  "generated_at_utc": "2026-05-07T18:43:27.844035Z",
+  "metadata_path": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\data\\reference\\mlb_stadium_weather_metadata.json",
+  "notes": [
+    "Weather cache is diagnostic/shadow data. Existing live gates and FV logic are unchanged.",
+    "Retractable-roof games use static exposure until explicit roof-state data is validated.",
+    "wind_out_component_mph is positive when modeled wind blows toward center field."
+  ],
+  "provider": "open-meteo",
+  "schema_version": 1,
+  "warnings": []
+}

@@ -1,0 +1,61 @@
+Phase 3 Baseline (Gate/Shadow Extraction)
+Date: 2026-04-26
+Repo: baseball
+
+Objective
+- Extract gate rollout helpers and shadow-relaxed evaluator from
+  scripts/trading/signal_engine.py into a dedicated module with no behavior change.
+
+Changes
+1) Added:
+   - scripts/trading/signal_gates.py
+   - Contains:
+     - is_relax_ab_treatment()
+     - resolve_relax_mode_action()
+     - min_current_total_relax_pass()
+     - blowout_relax_pass()
+     - evaluate_shadow_relaxed()
+
+2) Updated:
+   - scripts/trading/signal_engine.py
+   - Imports signal_gates implementations
+   - Replaced method bodies with thin wrappers:
+     - _is_relax_ab_treatment()
+     - _resolve_relax_mode_action()
+     - _min_current_total_relax_pass()
+     - _blowout_relax_pass()
+     - _evaluate_shadow_relaxed()
+   - Removed local hashlib dependency now handled in signal_gates.py
+
+Validation Commands + Results
+1) python -m py_compile scripts/trading/signal_config.py scripts/trading/signal_gates.py scripts/trading/signal_engine.py scripts/trading/live_engine.py
+   - Result: pass
+
+2) python -m pytest -q tests/test_signal_engine_phase1_characterization.py
+   - Result: 8 passed in 0.20s
+
+3) python -m pytest -q
+   - Result: 27 passed in 3.97s
+
+4) python scripts/analysis/calibrate_signal_probabilities.py --mode both --verbose
+   - Result:
+     - calibration artifact written
+     - report written
+     - predictions written
+     - rows total=27 train=23 validation=3 test=1 selected=identity
+
+Calibration Snapshot
+- selected_method=identity
+- rows_total=27
+- rows_train=23
+- rows_validation=3
+- rows_test=1
+- raw_val_logloss=0.06108384288153681
+- platt_val_logloss=0.29132702288262496
+- isotonic_val_logloss=0.3022808718729337
+
+Size Snapshot
+- scripts/trading/signal_engine.py: 2442 lines
+- scripts/trading/signal_config.py: 409 lines
+- scripts/trading/signal_gates.py: 451 lines
+

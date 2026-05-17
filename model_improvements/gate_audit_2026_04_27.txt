@@ -1,0 +1,266 @@
+MLB Totals Over Gate Audit
+==========================
+Date: 2026-04-27
+Scope: live candidate/outcome logs from 2026-04-23 through 2026-04-26,
+plus one historical 2025 backtest cross-check.
+
+Question
+--------
+Each gate should save more loss value than it gives up in blocked win value.
+
+Dollar method
+-------------
+Values are normalized to $1 stake:
+
+  If a blocked candidate would lose:
+    loss_value_blocked = +1.00
+
+  If a blocked candidate would win at decision ask A:
+    win_value_blocked = (1 / A) - 1
+
+  net = loss_value_blocked - win_value_blocked
+
+Positive net means the gate is helping on the labeled sample.
+Negative net means the gate is over-blocking in that sample.
+
+Primary unit
+------------
+The primary table deduplicates by material state:
+
+  session_date, game_pk, line, decision_reason, inning, inning_state, outs,
+  current_total, score, runners_on, ask bucket, edge/FV buckets, relax metadata.
+
+This avoids tick spam while preserving materially different game states.
+
+Coverage
+--------
+Candidate rows:
+  2026-04-22: 2378 rows, but no outcome JSONL labels available in this workspace.
+  2026-04-23: 68 rows
+  2026-04-24: 111 rows
+  2026-04-25: 78 rows
+  2026-04-26: 67 rows
+
+Labeled gate-skip rows used:
+  material-state dedup: 241
+  market-line-gate dedup: 92
+
+Important instrumentation limitation:
+  Gates 1-5 mostly fire before candidate payload creation, so live candidate logs
+  cannot directly dollar-audit them yet. Gate 6 onward can be audited.
+
+
+Primary Results: Material-State Dedup
+-------------------------------------
+
+reason                         n   W-L    win_val  loss_val      net  avg_ask  verdict
+--------------------------------------------------------------------------------------
+gate_blowout                    32  31-1       9.85      1.00    -8.85   0.769  REWORK
+gate_runs_needed_max             7   6-1       3.14      1.00    -2.14   0.691  WATCH
+gate_min_current_total           9   6-3       3.98      3.00    -0.98   0.616  WATCH
+gate_runs_pace                  11   8-3       3.94      3.00    -0.94   0.710  WATCH
+gate_fv_saturation_v2            4   4-0       0.30      0.00    -0.30   0.932  WATCH
+gate_stage2_suppression          1   0-1       0.00      1.00    +1.00   0.570  KEEP
+gate_sp_era                      1   0-1       0.00      1.00    +1.00   0.770  KEEP
+gate_fv_saturation              74  59-15     12.71     15.00    +2.29   0.822  KEEP/WATCH
+gate_fv_ask_gap                  5   1-4       0.54      4.00    +3.46   0.624  KEEP
+gate_inning5_runs_needed        33  18-15      7.10     15.00    +7.90   0.700  KEEP
+gate_min_edge                   28  17-11      2.56     11.00    +8.44   0.827  KEEP
+gate_inning6_runs_needed        36  17-19      8.17     19.00   +10.83   0.670  KEEP
+
+
+Sensitivity: Market-Line-Gate Dedup
+-----------------------------------
+
+reason                         n   W-L    win_val  loss_val      net  avg_ask
+------------------------------------------------------------------------------
+gate_blowout                     8   7-1       2.74      1.00    -1.74   0.723
+gate_runs_needed_max             5   4-1       1.98      1.00    -0.98   0.714
+gate_fv_saturation_v2            2   2-0       0.07      0.00    -0.07   0.965
+gate_min_current_total           5   3-2       1.91      2.00    +0.09   0.608
+gate_runs_pace                   8   5-3       2.81      3.00    +0.19   0.704
+gate_inning5_runs_needed        14   9-5       4.13      5.00    +0.87   0.701
+gate_stage2_suppression          1   0-1       0.00      1.00    +1.00   0.570
+gate_sp_era                      1   0-1       0.00      1.00    +1.00   0.770
+gate_fv_saturation              17  14-3       1.60      3.00    +1.40   0.888
+gate_fv_ask_gap                  4   1-3       0.54      3.00    +2.46   0.628
+gate_inning6_runs_needed        15   8-7       4.15      7.00    +2.85   0.685
+gate_min_edge                   12   7-5       1.10      5.00    +3.90   0.825
+
+
+Shadow Relaxed Would-Pass Rows
+------------------------------
+
+reason                         n   W-L    win_val  loss_val      net  avg_ask
+------------------------------------------------------------------------------
+gate_blowout                     6   6-0       2.52      0.00    -2.52   0.710
+gate_min_current_total           5   4-1       2.53      1.00    -1.53   0.636
+gate_fv_saturation               2   2-0       0.23      0.00    -0.23   0.905
+gate_min_edge                    3   2-1       0.44      1.00    +0.56   0.750
+gate_stage2_suppression          1   0-1       0.00      1.00    +1.00   0.570
+gate_sp_era                      1   0-1       0.00      1.00    +1.00   0.770
+gate_runs_pace                   4   1-3       0.67      3.00    +2.33   0.755
+gate_fv_ask_gap                  5   1-4       0.54      4.00    +3.46   0.624
+gate_inning5_runs_needed        12   4-8       1.00      8.00    +7.00   0.720
+gate_inning6_runs_needed        24  10-14      3.92     14.00   +10.08   0.677
+
+
+Dependency Check: If Suspicious Gate Were Removed
+-------------------------------------------------
+
+This checks which later structural gate would block the same row before FV
+inference. It matters because a negative first-blocker can be non-marginal.
+
+gate_min_current_total, n=9, W-L=6-3:
+  next gate_runs_pace:       5 rows, W-L=3-2
+  next gate_runs_needed_max: 4 rows, W-L=3-1
+
+gate_runs_pace, n=11, W-L=8-3:
+  next gate_blowout:              3 rows, W-L=1-2
+  next gate_runs_needed_max:      2 rows, W-L=2-0
+  would reach FV inference:       6 rows, W-L=5-1
+
+gate_runs_needed_max, n=7, W-L=6-1:
+  next gate_close_game_runs_needed: 4 rows, W-L=3-1
+  next gate_inning5_runs_needed:    2 rows, W-L=2-0
+  would reach FV inference:         1 row,  W-L=1-0
+
+gate_inning5_runs_needed, n=33, W-L=18-15:
+  would reach FV inference: 33 rows
+
+gate_inning6_runs_needed, n=36, W-L=17-19:
+  next gate_blowout:        3 rows, W-L=3-0
+  would reach FV inference: 33 rows, W-L=14-19
+
+gate_blowout, n=32, W-L=31-1:
+  post-blowout FV fate is unknown because blowout fires before FV inference.
+  This is an instrumentation/design issue.
+
+
+Subgroup Notes
+--------------
+
+gate_blowout:
+  Negative across every major subgroup:
+    ask < 0.65:       n=6,  W-L=5-1,  net=-2.30
+    ask 0.65-0.75:    n=6,  W-L=6-0,  net=-2.70
+    ask 0.75-0.85:    n=10, W-L=10-0, net=-2.68
+    ask >= 0.85:      n=10, W-L=10-0, net=-1.17
+    lead 4-5:         n=16, W-L=15-1, net=-4.77
+    lead >= 6:        n=16, W-L=16-0, net=-4.07
+    runs_needed <=0.5 n=21, W-L=21-0, net=-6.15
+
+  Current evidence says this gate is over-protective. It is blocking many
+  games where the total is already one run from going over and the market ask
+  is often high. Because it fires before FV inference, we cannot see whether
+  the model/min-edge gates would have rejected those anyway.
+
+gate_inning6_runs_needed:
+  Strong positive. It remains the best-proven structural gate in the live data.
+  Shadow would-pass rows: n=24, W-L=10-14, net=+10.08.
+
+gate_inning5_runs_needed:
+  Positive overall, but context-sensitive:
+    rn <= 2.5: n=12, W-L=4-8,  net=+7.00
+    rn <= 3.5: n=21, W-L=14-7, net=+0.91
+  Keep it, but continue ask/runs-needed stratification.
+
+gate_fv_saturation:
+  Positive overall, but not uniformly:
+    ask < 0.65:  n=9,  W-L=6-3,  net=-0.88
+    ask >=0.85:  n=35, W-L=33-2, net=-0.21
+    lead <2:     n=9,  W-L=3-6,  net=+5.74
+    total=8:     n=27, W-L=18-9, net=+4.96
+  This suggests the gate is useful when the game is near the line in a close
+  context, but may be too blunt in high-ask market-confirmed states.
+
+gate_runs_needed_max:
+  Negative as a first blocker, but not a clean relaxation candidate. Most rows
+  would hit gate_close_game_runs_needed or gate_inning5_runs_needed next. This
+  needs sequential ablation or explicit shadow at 4.5 before changing.
+
+gate_min_current_total:
+  Slightly negative by material rows and near neutral by market-line dedup.
+  Existing conditional relax framework is appropriate. Do not globally lower
+  min_current_total yet; keep testing inning=4/current_total=3/ask>=0.60.
+
+
+Order Lifecycle Gates
+---------------------
+
+From final session JSON states through 2026-04-26:
+
+cancel_reason      n   W-L    win_value_blocked  loss_value_blocked  net
+--------------------------------------------------------------------------
+ask_reversal       1   1-0             10.71              0.00       -10.71
+fv_decay           5   5-0             54.70              0.00       -54.70
+game_final        15  14-1            166.49             25.00      -141.49
+
+Interpretation:
+  This is mostly pre-P0 behavior and confirms the old fv_decay/ask_reversal
+  implementation was far too aggressive. Do not use those historical cancels to
+  tune current P0 thresholds until post-fix samples accumulate.
+
+
+Historical Backtest Cross-Check
+-------------------------------
+
+Command:
+  python scripts/analysis/backtest_gates.py --year 2025 --compare-configs --discount 0.15
+
+Key output:
+  TR10 current-family before blowout/FV saturation:
+    n=4304, WR=88.7%, ROI=+14.1%
+
+  TR11 with blowout gate:
+    n=3940, WR=88.9%, ROI=+14.0%
+
+  TR13 current:
+    n=1657, WR=77.7%, ROI=+10.7%
+
+  Gate 8c historical validation:
+    inning 5 + rn >= 2.5 would-be-blocked:
+      n=640, 425W/215L, WR=66.4%
+    Same rn band at inning 4:
+      n=163, 132W/31L, WR=81.0%
+
+Interpretation:
+  Historical data supports inning 5/6 structural caution. Blowout gate is not
+  strongly supported historically; it slightly reduces ROI while removing volume.
+
+
+Recommendations
+---------------
+
+1) Highest ROI/risk patch: rework gate_blowout.
+   Current live labeled sample is strongly negative. Recommended design:
+     - Move blowout evaluation after FV inference, or at minimum compute/log FV
+       before blocking.
+     - Promote the existing blowout conditional relax from shadow to A/B or
+       enforce for a limited test:
+         allow when inning <= 7, ask >= 0.74, runs_needed <= 2.5.
+     - Add an explicit "runs_needed <= 0.5" subtest; current data is 21W/0L.
+
+2) Keep gate_inning6_runs_needed unchanged.
+   It is the strongest positive gate in both primary and shadow views.
+
+3) Keep gate_inning5_runs_needed, but split future reports by rn=2.5 vs rn=3.5.
+   The 2.5 bucket is strongly protective; the 3.5 bucket is only mildly positive.
+
+4) Keep gate_fv_ask_gap unchanged.
+   Small sample, but consistently positive and aligned with phantom-run theory.
+
+5) Keep gate_min_edge unchanged.
+   Positive in primary, market-line dedup, and shadow relaxed rows.
+
+6) Do not globally relax gate_runs_needed_max yet.
+   Its first-blocker result is negative, but downstream gates catch most rows.
+   Add a shadow threshold at 4.5 or run a sequential ablation before changing it.
+
+7) Do not globally lower min_current_total yet.
+   Existing conditional relax framework is correct. Continue testing inning=4,
+   current_total=3, ask>=0.60 contexts.
+
+8) Add candidate logging for Gates 1-5.
+   Current live data cannot dollar-audit inning floor, inactive state, min ask,
+   spread, or jump confirmation at the same quality level as Gates 6+.

@@ -1,0 +1,51 @@
+Phase 2 Baseline (Config/CLI Extraction)
+Date: 2026-04-26
+Repo: baseball
+
+Objective
+- Extract trade defaults + trade CLI parsing out of scripts/trading/signal_engine.py
+  into scripts/trading/signal_config.py with no behavior change.
+
+Changes
+1) Added:
+   - scripts/trading/signal_config.py
+   - Contains:
+     - all DEFAULT_* constants previously defined in signal_engine.py
+     - CONFIRM_RETAIN_FRACTION
+     - INACTIVE_INNING_STATES
+     - parse_trade_args(argv=None)
+     - __all__ export list for backward-compatible re-export in signal_engine
+
+2) Updated:
+   - scripts/trading/signal_engine.py
+   - Constants block replaced with import/re-export from signal_config.py
+   - parse_trade_args() replaced with wrapper delegating to signal_config.parse_trade_args
+   - removed local duplication of cache/paper/calibration path defaults
+
+Validation Commands + Results
+1) python -m py_compile scripts/trading/signal_config.py scripts/trading/signal_engine.py scripts/trading/live_engine.py
+   - Result: pass
+
+2) python -m pytest -q tests/test_signal_engine_phase1_characterization.py
+   - Result: 8 passed in 0.14s
+
+3) python -m pytest -q
+   - Result: 27 passed in 2.65s
+
+4) python scripts/analysis/calibrate_signal_probabilities.py --mode both --verbose
+   - Result:
+     - calibration artifact written
+     - report written
+     - predictions written
+     - rows total=27 train=23 validation=3 test=1 selected=identity
+
+Calibration Snapshot
+- selected_method=identity
+- rows_total=27
+- rows_train=23
+- rows_validation=3
+- rows_test=1
+- raw_val_logloss=0.06108384288153681
+- platt_val_logloss=0.29132702288262496
+- isotonic_val_logloss=0.3022808718729337
+

@@ -1,0 +1,113 @@
+Team Offense V2 -- Phase 4.5 Stability Check
+=============================================
+
+Date: 2026-05-07
+Plan: model_improvements/team_offense_v2_plan_2026_05_07.txt
+Phase 4 findings: model_improvements/team_offense_v2_phase4_findings_2026_05_07.txt
+Status: Stability confirmed. Proceeding to Phase 5.
+
+
+PURPOSE
+-------
+Phase 4 fit Model 3 on full 2021-2024 and reported a counter-intuitive
+negative coefficient on `prior_season_rpg`. Before shipping anything that
+depends on it, refit on rolling sub-windows to confirm the sign is
+structural, not sample-specific.
+
+
+METHOD
+------
+Refit Model 3 on each sub-window with EB shrinkage parameters re-estimated
+on that sub-window's training years. Walk-forward validate on the
+following season.
+
+  scripts/analysis/phase45_stability_check.py
+  data/analysis_output/team_offense_calibration/phase45_stability.json
+
+
+SUB-WINDOW RESULTS
+-------------------
+  train                  val    n_train    b_prior  b_season  b_momentum  M3_brier  vs_B
+  2022                   2023   221,584   -0.1008   +0.1458   +0.1055     0.173805 +0.095%
+  2023                   2024   214,280   -0.2312   +0.2148   -0.0669     0.171583 -0.087%
+  2024                   2025   218,309   -0.1250   +0.0581   +0.3518     0.171163 +0.143%
+  2021+2022              2023   221,584   -0.1023   +0.1482   +0.1216     0.173805 +0.095%
+  2022+2023              2024   435,864   -0.1673   +0.1718   +0.0338     0.171492 -0.034%
+  2023+2024              2025   432,589   -0.1658   +0.1385   +0.1568     0.171217 +0.112%
+  2021+2022+2023         2024   435,864   -0.1679   +0.1814   +0.0378     0.171492 -0.034%
+  2021+2022+2023+2024    2025   654,173   -0.1514   +0.1407   +0.1503     0.171204 +0.120%
+
+(Train=2021 alone is excluded because prior_season_rpg requires 2020 data,
+which we don't have in the corpus.)
+
+
+KEY FINDINGS
+------------
+
+1. **b_prior is NEGATIVE in 8/8 sub-windows.**
+   Range: -0.10 to -0.23. Mean: -0.15. This is *highly* stable.
+   The negative coefficient on prior_season_rpg is structural, not a
+   property of any single year's data. The interpretation -- "once you
+   know season-to-date and momentum, prior-season is a regression-to-mean
+   correction term, not an additive prior" -- is supported.
+
+2. **b_season is POSITIVE in 8/8 sub-windows.**
+   Range: +0.058 to +0.21. Mean: +0.15. The 2024-alone fit is the
+   smallest (+0.058) but still positive. Cleanly positive across windows.
+
+3. **b_momentum is POSITIVE in 7/8 sub-windows.**
+   The single negative case (training on 2023 alone, -0.067) is a
+   small-sample one-year fit. All multi-year and most single-year fits
+   are positive in [+0.03, +0.35]. Robust enough to ship.
+
+4. **Brier-on-val improvement is mixed: 5/8 wins.**
+   Model 3 beats Baseline B on validation Brier in 5 of 8 sub-windows.
+   The losses cluster around 2024-as-validation -- there's something
+   about 2024 specifically where Stage-3 magnitude matters less. Worth
+   a future deep-dive but not a blocker.
+
+5. **2024 single-season fit shows b_momentum = +0.352 (very high).**
+   Notable outlier. Possibly reflects 2024 having more momentum-relevant
+   late-season pennant races. Doesn't affect production decision since
+   we'd ship the full-window fit.
+
+
+VERDICT
+-------
+The negative prior-season coefficient is real and stable. Model 3 is
+structurally sound. The remaining open questions are dollar-impact and
+production-replay behavior, which Phase 5 addresses.
+
+PROCEED TO PHASE 5.
+
+
+PHASE 5 PLAN (refined)
+----------------------
+1. Build `cache/team_offense_model_v2.py` runtime module that takes
+   `(away_abbrev, home_abbrev, game_date, inning)` and returns the
+   Model 3 logit-delta. Implement EB shrinkage internally with
+   pre-computed sigma^2 / tau^2 baked into the artifact.
+
+2. Build a shadow-replay script that:
+   - Reads 2026 candidate_universe rows (live and paper)
+   - For each row with team-offense context, computes both v1 and v2
+     stage-3 deltas
+   - Reports: candidate-level edge delta distribution, gate-block
+     differences (how many bets does v2 add or remove?), realized P&L
+     delta if a different set of trades would have been placed
+   - Output: data/analysis_output/team_offense_calibration/phase5_shadow_replay.json
+
+3. Per-subgroup Brier audit on the validation set: confirm no
+   (inning x line) cell degrades by >= 2% when switching v1->v2.
+
+4. Per-inning |delta| audit: confirm v2's |stage3_delta| is not larger
+   than v1's at any inning (the "don't bet bigger by accident" guardrail).
+
+5. Wire `--use-team-offense-v2` and `--team-offense-v2-path` flags into
+   `live_engine.py` for shadow-mode comparison going forward.
+
+The recommendation after Phase 5 will be:
+  - GO if all Phase 7 criteria pass on holdout 2026 + audit
+  - SHADOW-ONLY otherwise (collect more 2026 data and revisit)
+  - REVISIT if 2024 anomaly suggests the model needs a year-fixed-effects
+    extension before promotion

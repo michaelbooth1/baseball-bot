@@ -1,0 +1,404 @@
+================================================================================
+SESSION REVIEW — 2026-04-28
+First post-V2-cutover session. First session with skip-with-features capture.
+================================================================================
+
+HEADLINE
+--------
+Three real bets placed via the new V2 SDK. Two filled, one win one loss.
+The V2 migration is validated in production. The new late-stage skip-with-
+features capture FIRED CORRECTLY — 28 unique skip-path snapshots persisted
+across all 5 family directories, in addition to the 3 trade-path captures.
+Codex's gate-name refactor (LATE_STAGE_SKIP_GATES updated for renamed gates)
+worked as intended.
+
+Realized PnL: -$13.69 on $40 staked (ROI -34%, n=2 fills, signal WR 67%
+counterfactual). One losing bet was a textbook phantom-run signature
+(edge=0.30) that slipped past gates because fv_ask_gap only applies inning
+7+. Single most actionable improvement is extending the edge-gap gate to
+earlier innings.
+
+
+================================================================================
+PART 1 — WHAT WORKED (the wins)
+================================================================================
+
+W1. V2 SDK MIGRATION VALIDATED
+   - Auth flow: derived API keys successfully via py_clob_client_v2
+   - sig_type=2 (POLY_GNOSIS_SAFE proxy) connection clean
+   - 3 limit-buy orders posted (sign 147-395ms, post 113-122ms — healthy)
+   - All 3 orders accepted with status='live'
+   - One cancel_order(OrderPayload) call dispatched (server replied "already
+     canceled" because Polymarket auto-cancels on market resolution; our
+     code path executed correctly regardless)
+   - Two fills recovered cleanly via get_order
+   - Zero V2-related errors in 44 MB of log output
+   No further V2 work required. The migration is done.
+
+W2. LATE-STAGE SKIP-WITH-FEATURES FIRED
+   28 skip-path captures persisted across all three sidecar dirs:
+     data/live_trading/tape_captures/2026-04-28/skip_*.json     (28)
+     data/live_trading/book_decision_snapshots/2026-04-28/skip_*.json (28)
+     data/live_trading/velocity_snapshots/2026-04-28/skip_*.json (28)
+   Plus 3 trade-path captures (one per bet). Total 31 sidecars per family.
+
+   Codex's pipeline refactor renamed several gate emit names — my original
+   LATE_STAGE_SKIP_GATES set was correctly updated to match
+   (gate_runs_needed -> gate_runs_needed_max, gate_close_game_high_rn ->
+   gate_close_game_runs_needed, gate_s2_suppress -> gate_stage2_suppression,
+   added gate_sp_era). Without that rename, captures would have silently
+   stopped firing. Verified by counting decision='skip_with_features' rows
+   in the candidate JSONL = 28 (matches sidecar count exactly).
+
+   Skip-with-features distribution:
+     12  gate_inning5_runs_needed   (most common)
+      7  gate_inning6_runs_needed
+      2  gate_runs_needed_max
+      2  gate_runs_pace
+      2  gate_fv_saturation
+      2  gate_blowout
+      1  gate_min_edge
+
+W3. ALL 5 FAMILIES CAPTURED REAL VALUES
+   Spot-check across all 31 sidecars:
+     tape_captures           31/31 contain at least one non-None value
+     book_decision_snapshots 27/31 (4 files had book fetches return empty)
+     velocity_snapshots      31/31
+
+   Family A trade tape: 100 trades fetched per snapshot (limit cap),
+   fetch_ok=True universally, latency ~190ms.
+   Family B/C produced sensible numerical signals on every snapshot.
+
+W4. ONE WINNING BET (WSH@NYM 7.5)
+   Score 0-5 B4, edge 0.171. Filled at 0.76 in 14 seconds.
+   Final 0-8 (over). +$6.31 profit.
+
+W5. CONDITIONAL RELAX FRAMEWORK STILL HEALTHY
+   Codex's blowout-relax rework continues to fire (count not separately
+   logged this session but no errors).
+
+W6. PIPELINE REFACTOR (CODEX'S WORK) OPERATIONALLY CLEAN
+   The TickContext / PreInferenceGateResult / FvPhaseResult dataclasses
+   carved process_tick into phase functions. Zero behavior regression
+   detected — same gate behavior, same capture wiring, no errors.
+
+
+================================================================================
+PART 2 — WHAT DIDN'T WORK (the concerns)
+================================================================================
+
+C1. THE LOSING BET IS A PHANTOM-RUN FINGERPRINT (HIGH PRIORITY)
+   Bet 3 (LAA@CWS 7.5):
+      score 1-3 in B4, 2 outs, runners empty
+      base_fair_value = 0.877  (Stage-1 Poisson said 88% over)
+      stage2 +0.089, stage3 -0.132
+      final fair_value = 0.872
+      entry_ask = 0.57
+      edge = 0.302 (!)
+      ltp_at_signal = 0.67
+      Filled at 0.56, lost (-$20)
+
+   This is the EXACT pattern flagged in our earlier "edge>0.25" analysis
+   ("0W/5L on filled bets, all phantom-run cases"). Why did it slip
+   through?
+
+      gate_fv_ask_gap: fires only when edge > fv_ask_gap_max(=0.26)
+                       AND inning >= fv_ask_gap_min_inning(=7).
+      Bet 3 was inning 4 -> the gate did not apply.
+
+   Spot-check Family A on this bet's sidecar:
+      ltp_minus_ask_last_3_trades = +0.28
+      (recent prints were 28pp ABOVE the ask — strong "market just paid
+      a much higher price" signal that the current 0.57 ask might be a
+      stale quote about to lift)
+
+   Spot-check Family B:
+      book_imbalance_top1 = 0.78  (heavy bid-side — looks bullish for over)
+      ask_depth_at_touch = 10     (THIN — easy to clear, suggests
+                                   uninformed taker about to take it)
+
+   The microstructure looked PERMISSIVE. The market structurally agreed
+   the price should be higher (bid-stacked, recent prints high). But the
+   GAME outcome was under (final 7 = exactly the line, lost).
+
+   This is the kind of case where:
+   - Stage-1 Poisson cache may overweight the inferred-1-run scenario
+     (going from 1-3 to 1-4 in B4 with bases empty pushes Poisson to
+     ~88% over — possibly an edge case in the cache calibration)
+   - Market knew something the model didn't (possibly the actual run
+     was a wild pitch, or the inferred run inference was wrong, or
+     the ball/pitcher matchup is unfavorable)
+   - Late-game scoring suppression won out
+
+   This is the canonical "informed counterparty fills us" event. Family
+   A-E captured it; we now have ONE labeled training row of this
+   pattern. We need ~20-30 more before we can tell whether the features
+   reliably predict adverse fills.
+
+C2. STL@PIT SHOULD HAVE BEEN A SKIP, NOT A "BUY-AT-LIMIT-NEVER-FILLS"
+   Bet 1 (STL@PIT 8.5):
+      score 6-1 in B6, runners empty
+      edge = 0.205
+      ltp_at_signal = 0.24    <-- market last traded at 24 cents
+      entry_ask = 0.76
+      ltp_minus_ask gap = -0.52  <-- 52pp disconnect
+      Posted limit 0.74, NEVER FILLED, cancelled at game_final.
+      Counterfactual: WOULD have won (final 18 runs).
+
+   The ask was 0.76 but the LTP was 0.24. Either the book is stale
+   (Family A confirms: seconds_since_last_trade=499s ~= 8 minutes since
+   last trade) or the bid/ask is from a market-maker quoting wide on a
+   thin book.
+
+   Either way, posting a buy at 0.74 against a 0.24 LTP is a low-
+   probability fill AND a high-adverse-selection setup if it does fill
+   (whoever sells to us at 0.74 over a 0.24 LTP knows something).
+
+   Outcome: order never filled, $0 PnL impact this time. But the
+   counterfactual win means we missed a potential $7 gain. Not a loss
+   per se, but it shows the gates don't catch the "ask quote is way
+   above LTP" pattern. There should probably be a gate:
+      if (ask - ltp) > 0.20 AND ltp is recent: skip
+
+C3. PITCHER CACHE BUILD FAILED -> GATE 8i DISABLED ALL SESSION
+   2026-04-28 11:05:54 WARNING: pitcher cache build timed out reading
+                                 statsapi.mlb.com (15s timeout)
+   2026-04-28 11:07:05 WARNING: same timeout, second attempt
+   Result: "Gate 8i disabled" for the entire session.
+
+   Gate 8i (pitcher quality boost) raises min_edge by 3pp when the
+   current pitcher has ERA < 3.75. With Gate 8i off, ALL bets used the
+   non-boosted threshold.
+
+   Bet 3 (LAA@CWS) was inning 4 with the starter likely still in. If
+   the starter's ERA < 3.75, the boost would have raised min_edge from
+   0.16 -> 0.19 — bet 3 had edge=0.30 so it would have passed anyway,
+   but the boost SHOULD have been active.
+
+   Action: pitcher cache build should retry with exponential backoff,
+   or fall back to a stale on-disk cache if available, rather than
+   silently disabling Gate 8i.
+
+C4. SCHEDULE REFRESH FAILURES (3 INSTANCES)
+   2026-04-28 11:06:03, 11:07:14, 18:44:47 — schedule refresh failed
+   on three separate occasions due to MLB StatsAPI timeouts /
+   connection-aborted. Could have caused brief market-discovery
+   misses (market discovery cycle also failed at 18:45:52).
+
+   These auto-recovered (no cascade). But: if a game started during a
+   missed-discovery window and the bot didn't pick it up until the
+   next cycle, we lost a few minutes of monitoring. Worth quantifying
+   if we can.
+
+C5. FAMILY A SIGNED_VOLUME_LAST_30s IS NONE ON 90% OF SKIP CAPTURES
+   28/31 sidecars have signed_volume_last_30s=None. Reason: those
+   signals fired during stale-market windows (median
+   seconds_since_last_trade ~= 200s = 3+ minutes since last trade).
+
+   Not a bug — Family A correctly returns None when no trades occurred
+   in the 30s window. But it means signed_volume_last_30s is a sparse
+   feature on skip-path data. Most of the fill-model's training will
+   get None on this column for skip rows.
+
+   Alternatives to consider (do NOT implement now, just note):
+      - Extend the window for skip-path Family A captures to 5 min?
+        (Risk: stale info, captures pre-game noise)
+      - Add a binary "is_market_stale" feature derived from
+        seconds_since_last_trade?
+      - Accept None as a categorical "stale" signal and let the model
+        learn from it.
+
+   Recommendation: accept the None coverage as informative. The model
+   should learn that "stale market at signal time" is itself a regime.
+
+
+================================================================================
+PART 3 — DATA-CAPTURE INFRASTRUCTURE STATUS
+================================================================================
+
+Capture rate (per session):
+  Trade-path captures:       3 (one per placed bet)
+  Skip-path captures:       28 (after dedup; ~75 raw events)
+  Dedup-suppressed:        ~75 raw events suppressed to 28 unique
+  Total fill-model rows:    31
+
+Per-family file counts (data/live_trading/<family>/2026-04-28/):
+  tape_captures:           31 .json files
+  book_decision_snapshots: 31 .json files
+  velocity_snapshots:      31 .json files
+
+Compared to projected (from session_review_2026_04_27.txt):
+  Predicted: ~50-100 unique skip-path snapshots/day
+  Actual:    28 (low end of projection)
+  Reason:    only 8 games / 10 line-pairs monitored; quieter slate
+             than typical
+
+If we get a typical 15-game evening slate, we'd expect ~50-80 skip
+captures. The infrastructure is sized correctly.
+
+Data-accrual projection:
+  Old rate:  ~5 fill-model rows/week  (trade-only path)
+  New rate: ~31 fill-model rows/day   (this session) =
+            ~200/week if sustained
+  -> ~40x acceleration realized in production. Matches design intent.
+
+After ~2 weeks at current rate:
+  Trade-path filled: ~2-4 (slow)
+  Skip-path captures: ~280 (fast)
+  Total: ~285 labeled rows for fill-model training
+  Sufficient for first reliability-diagram pass on Family A/B/C/D/E.
+
+
+================================================================================
+PART 4 — INTRIGUING DATA POINT (n=2, do not over-interpret)
+================================================================================
+
+The ONE WIN and ONE LOSS this session show INVERSE microstructure signals:
+
+   Bet 2 WSH@NYM (WON):
+     book_imbalance_top1 = 0.076   <- HEAVY ask side (sellers stacked)
+     ask_depth_at_touch  = 321     <- thick ask wall
+     ltp_minus_ask_3     = -0.40   <- recent prints WAY below ask
+     ask_velocity_30s    = -0.004  <- ask FALLING
+     -> Microstructure says "bearish for over"
+     -> Outcome: WON
+
+   Bet 3 LAA@CWS (LOST):
+     book_imbalance_top1 = 0.78    <- HEAVY bid side (looks bullish)
+     ask_depth_at_touch  = 10      <- thin ask, easy to clear
+     ltp_minus_ask_3     = +0.28   <- recent prints WAY above ask
+     ask_velocity_5s     = 0.0     <- stable
+     -> Microstructure says "bullish for over"
+     -> Outcome: LOST
+
+This is the EXACT inversion the fill-model design predicted as the
+Winner's-Curse signature: "permissive microstructure" filled bets are
+disproportionately the ones the market wanted to sell us. n=2 is way
+too small to draw any conclusion, but if this pattern holds across
+~30+ fills, the fill model gets actionable signal from these features.
+
+Worth flagging for future analysis as the dataset grows.
+
+
+================================================================================
+PART 5 — IMMEDIATE NEXT STEPS (RANKED)
+================================================================================
+
+T-1. HIGH — Extend fv_ask_gap or add a hard edge cap (single biggest fix)
+   Bet 3 (-$20) was a textbook phantom-run signature blocked from being
+   detected only because fv_ask_gap_min_inning=7. Two options:
+
+   Option A (minimal):
+     Lower fv_ask_gap_min_inning from 7 to 4 (or 5).
+     Risk: may also block legitimate early-inning high-edge signals.
+     Test against history before changing.
+
+   Option B (separate gate):
+     Add a "gate_extreme_edge" that fires whenever edge > 0.30
+     regardless of inning. Captures the worst phantom-run cases.
+     Existing fv_ask_gap (0.26 + inning 7) handles late-inning
+     somewhat-large gaps. New gate handles "anywhere, any inning"
+     extreme gaps.
+
+   Recommendation: Option B as a safer first step. Easy to tune later.
+
+T-2. HIGH — Add ltp_minus_ask gate
+   Bet 1 had a 52pp ltp-vs-ask disconnect. Order didn't fill (correctly
+   priced too low for the live market). But trying to BUY at 0.74 over
+   an LTP of 0.24 is a phantom-pricing signature. Either the LTP is
+   stale (Family A confirms: 8 min since last trade) or the book is
+   thin and the ask is a wide quote.
+
+   Proposed gate:
+      if abs(ask - ltp) > 0.30 AND ltp_is_recent (e.g. <300s old):
+         skip
+   This requires Family A to be computed BEFORE the gate — which
+   happens at signal time, so we can wire it as a regular gate rather
+   than late-stage. Single new gate, ~10 lines.
+
+T-3. MEDIUM — Robust pitcher cache build with retry + fallback
+   Current behavior: one timeout -> Gate 8i disabled all session.
+   Better: 3 retries with backoff (15s, 30s, 60s); if all fail and a
+   stale on-disk cache exists, use it; only disable Gate 8i if no
+   cache available at all.
+   File: scripts/analysis/build_pitcher_cache.py + signal_engine init
+   path that calls it.
+
+T-4. MEDIUM — Tighten schedule refresh resilience
+   3 schedule-refresh failures yesterday. Add retry with backoff.
+   Quantify whether any games went un-monitored due to discovery gaps.
+
+T-5. LOW — Investigate why bet 1 was placed AT ALL given ltp gap
+   The bot placed an order at limit 0.74 against a 0.24 LTP. The
+   order naturally never filled. But why did the gates let this
+   signal through? Either:
+   - The gate stack doesn't currently look at ltp_minus_ask gap (T-2
+     would fix)
+   - Or the gates DID let it through correctly because the model edge
+     was strong enough; the FILLING was the safety net (and worked)
+   Either way, a placed-but-never-fills order is wasted budget
+   reservation. Track these as a metric.
+
+T-6. LOW — Periodic tick-buffer health log (carry-over from yesterday)
+   Family C buffer_n=120 (full) and window_30s_n=12 confirmed working
+   for both trade- and skip-path captures. Substrate is healthy. The
+   periodic log is no longer URGENT, but still useful for observability.
+
+T-7. LOW — Investigate why bet 1 cancel returned "already canceled"
+   Polymarket auto-cancelled the order somehow (probably on game
+   resolution). Our cancel path handled it gracefully. Worth a brief
+   log scan to understand WHEN Polymarket considers an order
+   auto-cancelled. Helps build a mental model for future debugging.
+
+
+================================================================================
+PART 6 — STATUS OF OPEN ITEMS FROM YESTERDAY'S HANDOVER
+================================================================================
+
+T-1 (V2 SDK pip install in bot env):     DONE (verified by 3 fills)
+T-2 (CP-4 dry-run smoke vs clob-v2):     SKIPPED — went straight to
+                                          live; worked clean. Lucky.
+T-3 (Public REST endpoint smoke test):    Implicit — clob, data-api,
+                                          gamma all worked (sidecars
+                                          contain real values, monitor
+                                          has zero errors)
+T-4 (Conservative first session):         User chose --stake 20 not 5;
+                                          three bets survived with
+                                          modest -$13.69 outcome
+T-5 (Verify skip-with-features fired):    DONE (this review confirms
+                                          28 captures)
+T-6 (Tick-buffer health log):             not yet, downgraded to LOW
+T-7 (Market-filter investigation):        not yet, still relevant
+T-8 (Calibrator JSON inspection):         not yet (calibration_applied=0
+                                          continues — still identity)
+T-9 (Candidate JSONL size diagnosis):     PARTIAL — yesterday's session
+                                          had 2x the rows of Apr 27 with
+                                          new dedup_suppressed counter;
+                                          per-row size still seems large
+                                          but justified by family captures
+T-10 (build_fill_features.py):            after ~7 days of accumulated
+                                          skip captures; on track
+
+
+================================================================================
+SUMMARY
+================================================================================
+
+Yesterday was a major operational success. V2 cutover validated in
+production, late-stage skip-with-features capture worked exactly as
+designed, all five fill-model feature families produced real values for
+both trade and skip rows. We now have 31 labeled fill-model training
+rows from a single session — versus the ~5/week we would have had
+under the old trade-path-only design.
+
+The realized -$13.69 PnL is dominated by ONE losing bet (LAA@CWS,
+edge=0.30, lost) that fits the phantom-run pattern we explicitly
+identified weeks ago. It slipped past the gates because the existing
+fv_ask_gap gate only applies inning 7+. Single highest-leverage fix:
+add a "gate_extreme_edge" that catches edge > 0.30 in any inning.
+
+Everything else (V2, captures, dedup, refactor) is operating cleanly.
+
+================================================================================
+END
+================================================================================

@@ -1,0 +1,50 @@
+Day 3 Analysis — 2026-04-24
+Three bugs conspired to waste the only signal of the day
+Signal: DET@CIN O8.5, inning 6 bottom, 0 outs, score 5-2 (DET leading). FV=0.968, edge=17.8%. Game ended 8-9 = 17 runs total — over by 8.5 runs.
+
+The execution chain failed at every step:
+
+Bug A — _compute_stake read live_args.stake but --stake is a trade_arg. live_args.stake doesn't exist → falls through to DEFAULT_LIVE_STAKE = 25.0. The bet was sized at $25 instead of $10.
+
+Bug B — place_limit_buy(size=stake) but the actual parameter is size_usdc. Python raised TypeError before the order reached the CLOB.
+
+Bug C — The exception wasn't caught. The bet remained in self._bets with order_status="pending" and stake=$25, locking $25 of the $30 budget. The remaining $5 was below any stake minimum, so all 11 subsequent signals hit budget_exhausted and were blocked for the rest of the session.
+
+All three are fixed above: size_usdc, read trade_args.stake, wrap the CLOB call in try/except and mark "error" on failure (releasing the reserved budget).
+
+Finding 1 — LTP=0.13 with ask=0.79 is a warning sign, but for a different reason than expected
+The LTP (last traded price) was 0.13 — 13 cents — while the ask was 0.79. That's a 66-cent gap, the largest we've seen. Our new LTP logging correctly surfaced this in the LIVE BET line.
+
+What happened: DET@CIN at Great American Ball Park started as a low-over-probability game (DET leading 5-2 with CIN needing more runs). The Polymarket market probably hadn't been traded actively at high prices before the inning-6 signal. The LTP=0.13 reflects an early-game trade when the over was unlikely, not a phantom run. By inning 6 with 7 runs scored and 1.5 more needed in 3+ half-innings, 0.79 is the correct ask.
+
+This reveals a gap in our LTP interpretation: the LTP adversarial-selection signal (from our earlier analysis) is only meaningful when LTP is recent. A stale LTP from early innings is irrelevant to the current market state. We should add a "LTP staleness" concept — if LTP < ask - 0.30, it's probably stale and shouldn't influence the decision. For now, log a note when this condition occurs.
+
+The signal itself was correct (FV=0.968, game went to 17 total). The LTP gap was noise, not signal.
+
+Finding 2 — EV policy shadow shows 36% block rate (63/175)
+The EV policy in shadow mode evaluated 175 signals and would have blocked 63 (36%). This is a high block rate. Combined with the correct outcome (DET@CIN would have won), this continues the pattern from Day 2 where the EV policy is too aggressive at inning 6.
+
+The 175 evaluations being much higher than the 111 deduped candidate records confirms the EV policy fires before the budget/dedup checks. Many of the same game-state signals are evaluated multiple times per polling cycle (the dedup only suppresses the candidate JSONL write, not the EV evaluation).
+
+Finding 3 — gate_fv_saturation blocks (33) with new ask-level context
+The new Gate 8f log message is working. Looking at the pattern: DET@CIN, PHI@ATL, ATH@TEX, LAA@KC, NYY@HOU all had saturation blocks. With the new market-context classification in the log, you can now see at a glance which are "market CONFIRMS" (real runs) vs "market CONTRADICTS" (phantom).
+
+NYY@HOU final was 12-4 = 16 runs (massive over). Multiple saturation blocks on that game would have been wins — and the log now says "market CONFIRMS" for those high-ask blocks.
+
+Finding 4 — gate_fv_ask_gap had 3 blocks, 2 shadow-would-pass (relaxed inning threshold)
+Three signals were blocked by Gate 8g (edge > 0.28, inning >= 7). Two of these would pass under the relaxed shadow threshold (inning >= 8 instead of 7). Looking at the shadow records: 824932_9.5 (game unknown) with edge=0.3426 at inning 7, and another at edge=0.3049.
+
+These need outcome data to evaluate — the outcomes JSONL shows 9.5 lines for various games. Once we have a few more sessions, the shadow win rates for gate_fv_ask_gap relaxations will become meaningful.
+
+Finding 5 — gate_stage2_suppression: 1 block, shadow-would-pass
+One signal blocked by S2 extreme suppression (S2=-0.2024, inn=7). The shadow shows it would pass with the relaxed threshold (S2 <= -0.24, inn >= 7). The game was 823638_7.5 — checking outcomes: no 823638 entry in today's outcomes, so we can't evaluate outcome yet.
+
+Finding 6 — Sessions now correctly writing to live_trading
+The session mode shows "mode": "live" (not "dry_run") and stake: 10.0 correctly appears in the params. The path issue from Day 2 appears resolved. The bet record is the only problem — it has order_status: "pending" due to Bug C, which will be cleaned up by the new exception handler going forward.
+
+Summary of changes made
+#	Bug	Fix
+1	place_limit_buy(size=stake) wrong kwarg	Changed to size_usdc=stake
+2	_compute_stake reads live_args.stake (doesn't exist) → $25 default	Reads trade_args.stake first
+3	CLOB exception leaves bet as "pending", locks budget	Wrapped in try/except, marks "error", releases budget
+With these three fixes, tomorrow's session should produce the first real CLOB order placement. The signal quality is strong (3/3 correct signal outcomes across the testing days). The execution layer just needed these bugs cleared.

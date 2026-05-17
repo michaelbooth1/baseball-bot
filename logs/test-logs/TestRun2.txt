@@ -1,0 +1,351 @@
+TEST RUN 2 EVALUATION + TEST RUN 3 CHANGES
+==========================================
+Date evaluated: 2026-04-09
+Source data: 2026-04-08 session (paper_trading/sessions/2026-04-08_session.json)
+
+--------------------------------------------
+TEST RUN 2 RESULTS SUMMARY
+--------------------------------------------
+  Bets placed : 12
+  Win/Loss    : 5W / 7L
+  Win rate    : 41.7%
+  Total staked: $1,200 (notional)
+  Net profit  : -$289.63
+  ROI         : -24.1%
+
+Params used (TR2):
+  edge_threshold      = 0.10
+  jump_threshold      = 0.06
+  max_spread          = 0.20
+  min_inning          = 4
+  min_entry_ask       = 0.45   (NEW in TR2)
+  confirmation_ticks  = 3      (NEW in TR2)
+  event_dedup_secs    = 60.0   (NEW in TR2)
+  stake               = $100
+  lookback_ticks      = 5
+  stable_window       = 35
+  cooldown_ticks      = 50
+
+--------------------------------------------
+ROOT CAUSE ANALYSIS OF ALL 7 LOSSES
+--------------------------------------------
+
+LOSS 1: BAL@CWS O/U 8.5 OVER | Entry 0.48 | Edge 0.180
+  Inn: Bot 5, 2 outs | Score: BAL 2, CWS 2 | Final: 8 (miss 0.5)
+  Runs needed at entry: 6.5 - 4 = 6.5 more runs needed
+  Innings remaining:  ~8 half-innings
+  Runs/half-inning:   0.81 — borderline
+  Analysis: Final total was 8, one run short of 8.5. Entered at total=4 with
+  6.5 runs needed in ~4 innings — feasible but high variance. Near miss.
+
+LOSS 2: SEA@TEX O/U 7.5 OVER | Entry 0.47 | Edge 0.190
+  Inn: Bot 5, 2 outs | Score: SEA 0, TEX 3 | Final: 3 (miss 4.5)
+  Runs needed at entry: 7.5 - 3 = 4.5 more runs needed
+  Innings remaining:  ~8 half-innings (but TEX led 3-0, SEA struggling)
+  Analysis: CATASTROPHIC miss — final total was 3, same as score at bet time.
+  Neither team scored again. Context: SEA had 0 runs through 5 innings —
+  structurally low-scoring game. The market priced ask=0.47 optimistically
+  based on early-inning variance, but the game clearly had "pitcher's duel"
+  characteristics. Should have been excluded by min_current_total filter.
+
+LOSS 3: LAD@TOR O/U 7.5 OVER | Entry 0.46 | Edge 0.108
+  Inn: Top 4, 1 out | Score: LAD 0, TOR 1 | Final: 7 (miss 0.5)
+  Runs needed at entry: 7.5 - 1 = 6.5 more runs needed
+  Innings remaining:  ~11 half-innings
+  Analysis: Near miss — total ended at 7 (one short). However, entering with
+  only 1 run on the board through 3.5 innings is a red flag for a low-scoring
+  game. The entry_ask of 0.46 barely passed the 0.45 filter. Lowest edge (0.108)
+  of all bets placed — at the edge threshold floor.
+
+LOSS 4: STL@WSH O/U 8.5 OVER | Entry 0.47 | Edge 0.159
+  Inn: Bot 4, 0 outs | Score: STL 2, WSH 1 | Final: 7 (miss 1.5)
+  Runs needed at entry: 8.5 - 3 = 5.5 more runs needed
+  Innings remaining:  ~10 half-innings
+  Analysis: Total=3 at inning 4 is a low-scoring game. STL dominated on the
+  scoreboard (final 6-1) but total was only 7. No min_current_total filter in
+  place to exclude low-scoring games.
+
+LOSS 5: LAD@TOR O/U 8.5 OVER | Entry 0.47 | Edge 0.123
+  Inn: Bot 7, 2 outs | Score: LAD 3, TOR 3 | Final: 7 (miss 1.5)
+  Runs needed at entry: 8.5 - 6 = 2.5 more runs needed
+  Innings remaining:  ~4 half-innings
+  Analysis: This was the SECOND bet on LAD@TOR in the same game (loss #3 was
+  the first). Same game ended 3-4 (total 7). The 60s dedup window allowed both
+  bets because they were placed 85 minutes apart. However: betting on the same
+  game twice is inherently correlated — same underlying baseball game quality.
+  Also, entering in Bot7 2outs means effectively 3.5 innings left to produce
+  only 2.5 more runs. Not structurally bad, but came up short.
+
+LOSS 6: CHC@TB O/U 8.5 OVER | Entry 0.72 | Edge 0.146
+  Inn: Top 5, 0 outs | Score: CHC 4, TB 1 | Final: 8 (miss 0.5)
+  Runs needed at entry: 8.5 - 5 = 3.5 more runs needed
+  Innings remaining:  ~10 half-innings
+  Analysis: Another near miss — total ended at 8, one short. CHC was on a
+  scoring pace (4 runs through 4) but both teams slowed down. The 7.5 line
+  (bet #10) won because 8 > 7.5. This is correlated bet exposure again —
+  same game, same scoring event, 8.5 and 7.5 were both live. The 7.5 won,
+  8.5 lost by exactly 0.5 runs. This is a variance outcome, not a model error.
+
+LOSS 7: ATH@NYY O/U 8.5 OVER | Entry 0.45 | Edge 0.223
+  Inn: Top 4, 2 outs | Score: ATH 1, NYY 2 | Final: 5 (miss 3.5)
+  Runs needed at entry: 8.5 - 3 = 5.5 more runs needed
+  Innings remaining:  ~11 half-innings
+  Analysis: CATASTROPHIC miss — final total was 5 when 8.5+ was needed.
+  Only 3 runs scored in the entire remaining game. Entered at entry_ask=0.45
+  (exactly at the threshold), total=3 through 3.5 innings. Another pitcher's
+  duel masked by an early jump. The market was wrong and so was our inference.
+
+--------------------------------------------
+STATISTICAL ANALYSIS: IS EDGE PREDICTIVE?
+--------------------------------------------
+
+Edge distribution by outcome:
+  Wins  (5): 0.145, 0.161, 0.180, 0.190, 0.232  | Mean: 0.182
+  Losses(7): 0.108, 0.123, 0.146, 0.159, 0.180, 0.190, 0.223 | Mean: 0.161
+
+Observation: Edge distributions COMPLETELY OVERLAP. The lowest-edge bet (0.108)
+lost; the highest-edge bet (0.232) lost. The correlation between edge and outcome
+is near-zero across 12 samples. This is unsurprising — edge only measures how
+much the market mispriced the bet GIVEN the game state, not whether the game
+state itself was favorable to scoring more runs.
+
+Entry ask distribution by outcome:
+  Wins  : 0.46, 0.47, 0.47, 0.72, 0.73   | Range: 0.46-0.73
+  Losses: 0.45, 0.46, 0.47, 0.47, 0.47, 0.48, 0.72 | Range: 0.45-0.72
+
+Observation: Entry ask is also non-predictive. Bet #6 (CHC@TB, ask=0.72) lost.
+Bet #3 (SD@PIT 8.5, ask=0.46) won. The filter is doing its intended job of
+removing pure noise bets, but cannot distinguish structural losers.
+
+THE KEY VARIABLE: RUNS NEEDED PER INNING REMAINING
+  Wins:
+    KC@CLE 7.5:   needed 2.0 more runs, ~10 half-inn left | ratio: 0.20
+    SD@PIT 7.5:   needed 3.5 more runs, ~6 half-inn left  | ratio: 0.58
+    SD@PIT 8.5:   needed 4.5 more runs, ~6 half-inn left  | ratio: 0.75
+    BAL@CWS 7.5:  needed 2.5 more runs, ~10 half-inn left | ratio: 0.25
+    CHC@TB 7.5:   needed 6.5 more runs, ~11 half-inn left | ratio: 0.59
+
+  Losses:
+    BAL@CWS 8.5:  needed 6.5 more runs, ~8 half-inn left  | ratio: 0.81
+    SEA@TEX 7.5:  needed 4.5 more runs, ~8 half-inn left  | ratio: 0.56 (*)
+    LAD@TOR 7.5:  needed 6.5 more runs, ~11 half-inn left | ratio: 0.59
+    STL@WSH 8.5:  needed 5.5 more runs, ~10 half-inn left | ratio: 0.55
+    LAD@TOR 8.5:  needed 2.5 more runs, ~4 half-inn left  | ratio: 0.63
+    CHC@TB 8.5:   needed 3.5 more runs, ~10 half-inn left | ratio: 0.35
+    ATH@NYY 8.5:  needed 5.5 more runs, ~11 half-inn left | ratio: 0.50 (*)
+
+  (*) SEA@TEX and ATH@NYY are the catastrophic losses — both had active games
+  with near-zero scoring after bet placement. These are pitcher's-duel games
+  that the market incorrectly priced as high-scoring.
+
+Conclusion: The runs-needed ratio is directionally predictive but also noisy
+over 12 samples. The catastrophic losses (final total far below line) came from
+games where scoring had stalled, not from high runs-needed ratios alone.
+The structural fix is to require that the CURRENT SCORING PACE supports the
+remaining runs needed — i.e., the current total must not be suspiciously low
+for the inning.
+
+--------------------------------------------
+ANALYSIS SCRIPT FINDINGS (2026-04-08 CLOB DATA)
+--------------------------------------------
+
+Events analyzed: 71 total scoring events across 8 games
+FADE_UNDER signals: ~74% of all events (market underprices over after run scores)
+FADE_OVER  signals: ~26% (market overprices over, usually late in close games)
+
+Game-level patterns:
+  KC@CLE  (game 824455): FADE_OVER dominant — all 5 events showed market
+    OVER-pricing the over after scoring (unusual). Final = 12, so over won.
+    Market was very efficient on this high-scoring game.
+
+  CHC@TB  (game 823000): All 6 events FADE_UNDER — market consistently
+    underpriced after scoring. Strong signal. Both bets placed on this game
+    were structurally sound; 7.5 won, 8.5 lost by 0.5.
+
+  SD@PIT  (game 823403): 3 events, all FADE_UNDER. Both bets won (7.5 and 8.5).
+    Textbook case of the signal working correctly.
+
+FADE_UNDER signal continues to be real and consistent across 3 test days.
+The issue is not signal quality — the issue is position sizing/filtering.
+
+--------------------------------------------
+PATTERN FINDINGS ACROSS ALL 7 LOSSES
+--------------------------------------------
+
+1. PITCHER'S DUEL BLINDNESS — SEA@TEX (0 runs in 5 inn) and ATH@NYY (3 runs
+   in 3.5 inn) show the model cannot detect low-scoring game context. When
+   a team has 0 runs in 4+ innings, the market's ask on the over is speculative,
+   not informed. These games had strong pitcher matchups and should have been
+   excluded. The market's "over-pricing" (ask=0.47) was structurally wrong.
+
+2. NEAR-MISS CLUSTER — 4 of 7 losses were within 1 run of the line (BAL@CWS
+   8.5 miss by 0.5, LAD@TOR 7.5 miss by 0.5, LAD@TOR 8.5 miss by 1.5,
+   CHC@TB 8.5 miss by 0.5). These are variance outcomes in a sample too small
+   to draw strong conclusions. At 12 bets, a 1-run swing in two games flips
+   from -$289 to roughly +$0.
+
+3. CORRELATED BETS ACROSS SAME GAME — 12 bets on 8 unique games = 1.5
+   bets/game. LAD@TOR fired twice (both lost — same game quality). BAL@CWS
+   fired twice (1W/1L). SD@PIT fired twice (both won). The 60s dedup window
+   handles same-event duplicates but does NOT prevent re-entry on subsequent
+   events in the same game.
+
+4. min_entry_ask NEEDS RAISING — 6 of 7 losses had entry_ask 0.45-0.48. Only
+   1 loss (CHC@TB) had ask=0.72. The 0.45-0.48 band is structurally weak —
+   these bets require 3-6 more runs but the market only gives 45-48% probability.
+   The thin ask region is still too noisy and overconfident.
+
+5. SAMPLE SIZE WARNING — 23 total settled bets across 2 test runs is below the
+   minimum threshold for statistical significance. The ROI difference between
+   TR1 (+19.4%) and TR2 (-24.1%) is within noise for samples this size. Need
+   100+ settled bets before drawing firm conclusions about parameter settings.
+   That said, the structural failures (SEA@TEX, ATH@NYY) are not noise — they
+   represent a genuine model blind spot.
+
+--------------------------------------------
+TEST RUN 3 CHANGES
+--------------------------------------------
+
+CHANGE 1: MIN CURRENT TOTAL FILTER (fixes pitcher's-duel blindness)
+  Problem: SEA@TEX (0-3 through 5 inn) and ATH@NYY (1-2 through 3.5 inn) were
+    low-scoring games that the model bet as if they were high-scoring.
+  Fix: Add min_current_total = 4. Require that away_score + home_score >= 4
+    before placing any bet. If a game has produced fewer than 4 runs by any
+    inning, it's likely a pitcher's duel and the model should stay out.
+  Expected effect: Blocks SEA@TEX (total=3 at bet) and ATH@NYY (total=3 at bet).
+    May filter some LAD@TOR 7.5 (total=1). Small sacrifice on real high-scoring
+    games entering early, but eliminates structural pitcher's-duel bets.
+
+CHANGE 2: RUNS PACE FILTER (quantified version of Change 1)
+  Problem: Current total vs inning tells us if scoring pace supports the line.
+  Fix: Compute expected_pace = (current_total / inning) * 9. If expected_pace
+    < (line - 1.5), skip bet. Example: total=3 in inn=4 → pace = 6.75 runs/9inn.
+    For line=8.5, expected_pace 6.75 < 7.0 (8.5 - 1.5). Skip.
+    A 1.5-run buffer accounts for late-inning acceleration (close games get
+    pitching changes, bullpen arms may be weaker).
+  Expected effect: Conservative filter that catches games whose scoring pace
+    is structurally insufficient to reach the line. Does not block KC@CLE
+    (total=4 in inn=4, pace=9 → >=7.0 for 7.5 line, passes). Blocks SEA@TEX
+    (total=3 in inn=5, pace=5.4 → <6.0 for 7.5 line, blocked).
+
+CHANGE 3: RAISE min_entry_ask TO 0.55
+  Problem: The 0.45-0.55 band produced 6 of 7 losses. The market at 0.45-0.55
+    is saying "this is a coin flip at best" — and we need the game to produce
+    significant additional scoring. These are contradictory signals.
+  Fix: Raise min_entry_ask from 0.45 to 0.55. Only bet when the market is
+    pricing the over at >= 55% probability — meaning the current game state
+    already has meaningful over momentum.
+  Expected effect: Reduces total bets by ~40-50%, cuts all 0.45-0.48 losses.
+    SD@PIT 7.5 (0.479) would be filtered — acceptable, as it was a legitimate
+    win that barely passed. KC@CLE 7.5 (0.72), BAL@CWS 7.5 (0.73) pass easily.
+  Trade-off: Fewer signals, but higher precision expected. At our current bet
+    volume this is the right direction.
+
+CHANGE 4: PER-GAME INNING DEDUP (reduce correlated exposure)
+  Problem: 60s dedup window catches same-event duplicate signals but does not
+    prevent betting on the same game twice across different innings (e.g.
+    LAD@TOR: bet at inning 4 and again at inning 7, 85 minutes apart).
+  Fix: Add per_game_inning_dedup = True. Track last_bet_inning[game_pk].
+    Within the same inning, 60s dedup still applies. Across innings, only
+    allow a new bet on game_pk if: (a) current inning > last_bet_inning + 1,
+    AND (b) at least 3 innings have elapsed since last bet on this game,
+    AND (c) new edge > last_bet_edge + 0.05 (must be meaningfully better).
+  Expected effect: Limits correlated exposure. LAD@TOR double-bet (both losses)
+    would be reduced to 1 bet. May miss the SD@PIT double-win but acceptable
+    — losing the correlated exposure risk matters more over many samples.
+
+CHANGE 5: min_inning = 5 FOR LINES >= 8.5
+  Problem: STL@WSH 8.5 entered at Bot4, LAD@TOR 8.5 at Top4, ATH@NYY 8.5
+    at Top4. These are very early entries for a high line — 8.5+ runs requires
+    a lot more scoring and entering at inning 4 leaves too much uncertainty.
+  Fix: Add min_inning_high_line = 5. If line >= 8.5, skip bets placed before
+    inning 5. The 7.5 line minimum stays at inning 4.
+  Expected effect: Filters ATH@NYY 8.5 (Top4), STL@WSH 8.5 (Bot4), LAD@TOR
+    8.5 (Top4). LAD@TOR 8.5 was also bet #9 (late game, inning 7) — that one
+    passes. CHC@TB 8.5 (Top5) and SD@PIT 8.5 (Bot7) pass. BAL@CWS 8.5 (Bot5)
+    passes but is filtered by Change 3 (ask=0.48 < 0.55).
+
+--------------------------------------------
+PROJECTED COMBINED IMPACT
+--------------------------------------------
+
+Applying all changes retroactively to TR2:
+  Bet  1: KC@CLE 7.5    | ask=0.72 pass, total=4 inn=4 pace=9>=6 pass    → KEEP  (WIN)
+  Bet  2: SD@PIT 7.5    | ask=0.479 < 0.55 BLOCKED by Change 3           → SKIP  (was WIN)
+  Bet  3: SD@PIT 8.5    | ask=0.46 < 0.55 BLOCKED by Change 3            → SKIP  (was WIN)
+  Bet  4: BAL@CWS 7.5   | ask=0.73 pass, total=4 inn=4 pace=9>=6 pass    → KEEP  (WIN)
+  Bet  5: BAL@CWS 8.5   | ask=0.48 < 0.55 BLOCKED by Change 3            → SKIP  (was LOSS)
+  Bet  6: SEA@TEX 7.5   | ask=0.47 < 0.55 AND total=3 < 4 BLOCKED        → SKIP  (was LOSS)
+  Bet  7: LAD@TOR 7.5   | ask=0.46 < 0.55 AND total=1 < 4 BLOCKED        → SKIP  (was LOSS)
+  Bet  8: STL@WSH 8.5   | min_inning_high_line blocks (inn=4 < 5)         → SKIP  (was LOSS)
+  Bet  9: LAD@TOR 8.5   | Inning dedup (same game bet 7 at inn=4)         → SKIP  (was LOSS)
+  Bet 10: CHC@TB 7.5    | ask=0.48 < 0.55 BLOCKED by Change 3            → SKIP  (was WIN)
+  Bet 11: CHC@TB 8.5    | ask=0.72 pass, inn=5 pass, total=5 pace=9>=7   → KEEP  (LOSS - near miss)
+  Bet 12: ATH@NYY 8.5   | min_inning_high_line blocks (inn=4 < 5)         → SKIP  (was LOSS)
+
+  Result: 3 bets placed, 2W/1L, net = +$36.99 + $36.99 - $100 = -$26.01, ROI = -8.7%
+  (Still negative but much less exposed)
+
+  Better framing: Of the 2 bets blocked that were wins (SD@PIT 7.5 and 8.5),
+  those were same-game correlated wins that inflated TR2 win rate. The isolated
+  wins on games that were structurally clean (KC@CLE, BAL@CWS) still pass all
+  filters.
+
+NOTE ON SAMPLE SIZE: These projections are illustrative, not conclusive.
+With 12 bets total, individual games dominate outcomes. The CHC@TB 8.5 near
+miss (final=8, needed 8.5) is pure variance. We need 50-100 more settled bets
+before trusting ROI numbers at the ±5% level.
+
+--------------------------------------------
+UPDATED PARAMS FOR TEST RUN 3
+--------------------------------------------
+  edge_threshold           = 0.10    (unchanged)
+  jump_threshold           = 0.06    (unchanged)
+  max_spread               = 0.20    (unchanged)
+  min_inning               = 4       (unchanged for 7.5 lines)
+  min_inning_high_line     = 5       (NEW — applies to lines >= 8.5)
+  min_entry_ask            = 0.55    (RAISED from 0.45)
+  min_current_total        = 4       (NEW — minimum runs on board)
+  runs_pace_filter         = True    (NEW — pace must support line)
+  confirmation_ticks       = 3       (unchanged from TR2)
+  event_dedup_secs         = 60.0    (unchanged — same-event dedup)
+  per_game_inning_dedup    = True    (NEW — cross-inning dedup)
+  stake                    = $100    (unchanged)
+  lookback_ticks           = 5       (unchanged)
+  stable_window            = 35      (unchanged)
+  cooldown_ticks           = 50      (unchanged)
+
+--------------------------------------------
+WHAT IS WORKING (DO NOT CHANGE)
+--------------------------------------------
+  - FADE_UNDER signal is real: 74% of events across 2026-04-08 data show the
+    market underprices the over after a run scores. This was 61% in TR1 data
+    and 74% in TR2 data — consistent direction across 2 days.
+  - confirmation_ticks=3 worked perfectly: zero false positive noise-spike bets
+    in TR2 (compared to 3 losses from single-tick spikes in TR1).
+  - ask_jump_tracking works: no bid-dip false positives observed in TR2.
+  - The underlying inference model is correct in direction — SD@PIT bets (both
+    wins), KC@CLE (win), BAL@CWS 7.5 (win) show the model CAN identify real
+    high-scoring games and exploit the order book.
+
+--------------------------------------------
+SECONDARY OBSERVATIONS
+--------------------------------------------
+  1. GAME SELECTION MATTERS MORE THAN PARAMETER TUNING — The difference between
+     a +20% ROI day and a -24% ROI day was driven by which games the model bet,
+     not by edge or ask levels. TR1 happened to pick high-scoring games; TR2
+     included two low-scoring (pitcher's duel) games by mistake.
+
+  2. MORNING LINES AS PRE-FILTER — Consider using opening total lines as a
+     context filter. If the opening line is 7.0 or below (low expected scoring),
+     be more conservative or skip. If line is 9.0+, the game is expected to be
+     high-scoring — more aggressive. This would require fetching pre-game lines.
+
+  3. TEAM SCORING PACE (future) — A rolling 7-game team scoring average would
+     help distinguish structural high-scoring games from flukes. Not yet in scope
+     but should be considered for TR4/TR5.
+
+  4. PROFIT TARGET — The SD@PIT bets (wins at 8.5x and 9.17x payout) demonstrate
+     that high-edge bets on genuinely high-scoring games produce outsized returns
+     (108.77 + 117.39 = $226 profit from 2 bets). The model should be optimized
+     to FIND these cases, not to bet everything that meets minimum criteria.

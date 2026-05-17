@@ -1,0 +1,160 @@
+Team Offense V2 — Phase 1 Findings
+====================================
+
+Date: 2026-05-07
+Plan: model_improvements/team_offense_v2_plan_2026_05_07.txt
+Status: Phase 1 complete; recommend proceeding to Phase 2-4
+
+ARTIFACTS
+---------
+Builder:   scripts/analysis/build_team_offense_calibration_table.py
+Reports:   scripts/analysis/report_team_offense_residuals.py
+           scripts/analysis/report_team_offense_mle_deltas.py
+Outputs:   data/analysis_output/team_offense_calibration/
+             - training_table.jsonl                  (1,129,081 rows)
+             - manifest.json
+             - phase1_residual_report.json
+             - phase1_mle_deltas.json
+
+DATA
+----
+Per-half-inning residuals over 12,457 regular-season games, 2021-2026.
+1,129,081 rows. 100% Stage-1 coverage (rows where Stage-1 doesn't price
+the line are skipped). Stage-3 deliberately OFF: residual target is
+`over_hit - base_fv_stage1_plus_stage2`.
+
+Team-quality regime built from the same corpus's `cache/team_game_log.json`
+using a leakage-free 50-game rolling RPG (matches the production model's
+window for fair comparison).
+
+
+HEADLINE: The current `LOGIT_DELTA_PER_RUN = 0.20` is ~3.2x too aggressive.
+============================================================================
+Empirical per-run logit slope (MLE-fit, weighted by row count, on the
+±2.5-run domain): **+0.062 logit / run**.
+
+Current production: 0.20 logit / run.
+
+Ratio: **0.31x** -- the production model is correcting ~3.2x harder than
+the data supports.
+
+The MLE was fit on 1,110,311 calibration rows after dropping rows where
+either team had < 10 prior games (early-season). Confidence on the slope
+is high given the sample.
+
+
+SECONDARY FINDING #1: The bias the current model targets is REAL.
+==================================================================
+Stage-1 + Stage-2 alone has near-zero overall residual (-0.0001 over
+1.13M rows) BUT the residual is monotonic in offense-diff:
+
+  diff bucket          n          MLE logit-delta
+  <=-1.5 runs       45,546        -0.167
+  -1.5 to -0.5      276,041       -0.030
+  -0.5 to +0.5      490,224       -0.012
+  +0.5 to +1.5      250,242       +0.058
+  >=+1.5            51,441        +0.102
+
+The shape Stage-3 was designed to correct exists in the data. The
+problem is purely magnitude (and shape vs inning -- see below).
+
+
+SECONDARY FINDING #2: Asymmetric correction.
+=============================================
+Low-offense matchups (<=-1.5) need a LARGER absolute correction
+(-0.167) than high-offense matchups (>=+1.5, +0.102). The current
+model's symmetric linear `LOGIT_DELTA_PER_RUN * diff` cannot capture
+this. Implication: Phase 4 should test piecewise / asymmetric
+formulations, not just refit the constant.
+
+
+SECONDARY FINDING #3: The linear inning-weight decay (1.0 -> 0.0 by
+inning 9) is WRONG.
+=====================================================================
+Per-inning MLE delta on the >=+1.5 high-offense bucket:
+
+  inn 1:  +0.147   (current model weight: 1.000 -> applies 0.20 * diff * 1.000)
+  inn 2:  +0.114   (current weight: 0.875)
+  inn 3:  +0.114   (current weight: 0.750)
+  inn 4:  +0.110   (current weight: 0.625)
+  inn 5:  +0.104   (current weight: 0.500)
+  inn 6:  +0.089   (current weight: 0.375)
+  inn 7:  +0.028   (current weight: 0.250)
+  inn 8:  +0.078   (current weight: 0.125)
+  inn 9:  +0.038   (current weight: 0.000)
+
+The empirical per-run effect is approximately FLAT from innings 1-6
+(values 0.09-0.15), then drops to ~0.03-0.08 in innings 7-9. The
+current linear ramp is dialing the prior down too aggressively in
+mid-innings (4-6) -- which is the regime where most live trades fire.
+
+A reasonable rebuild: piecewise weight, ~1.0 from innings 1-5,
+~0.7 in innings 6-7, ~0.4 in innings 8-9. Phase 4 should fit this
+non-parametrically.
+
+
+SECONDARY FINDING #4: 2026-05-06 TEX@NYY loss revisited.
+=========================================================
+The bet record showed `team_offense_delta = +0.107` at inning 6 in a
+high-offense matchup (NYY-juiced).
+
+Per the MLE fit, the appropriate Stage-3 logit-shift for that regime
+is roughly +0.089 (>=+1.5 diff, inning 6). The current model applied
+0.20 * diff * 0.375 = 0.075 * diff, which for a typical +1.5-2.0 diff
+would compute to +0.11-0.15 logit -- somewhat over the empirical +0.089.
+
+Conclusion: the current Stage-3 over-applied for this regime. With a
+properly calibrated Phase-4 model the bet's edge would have been
+materially smaller and likely below the 0.15 threshold.
+
+Caveat: this is N=1. The systemic case is the slope finding, not this
+bet.
+
+
+WHAT THE DATA DOES NOT SUPPORT
+-------------------------------
+- Throwing out Stage-3 entirely. The residual structure exists; the
+  shape is monotonic and the slope is statistically clear. Removing
+  Stage-3 would re-introduce ~+/-0.012 systematic miscalibration in
+  the high/low-offense regimes.
+- A simple "halve the constant" fix. While LOGIT_DELTA_PER_RUN = 0.06
+  would match the average slope better, the asymmetry and inning-weight
+  shape errors mean we'd still mis-calibrate at the extremes. Phase 4
+  should fit jointly.
+- Promoting any change to enforce mode without walk-forward validation
+  per the original Phase 5 plan. The MLE fits here use ALL data; we
+  have not yet shown out-of-sample stability.
+
+
+RECOMMENDATIONS
+---------------
+1. Proceed to Phase 2 (feature library) and Phase 3 (EB shrinkage).
+   The headline result already justifies the effort.
+
+2. In Phase 4, ensure the model space includes:
+   - asymmetric (piecewise positive / negative) per-run slopes
+   - non-parametric inning weights (per-inning constants, not a ramp)
+   These are the two structural errors Phase 1 surfaced.
+
+3. As an INTERIM safety measure, consider lowering
+   `LOGIT_DELTA_PER_RUN` from 0.20 to ~0.10 in the existing
+   `team_offense_model.py`. This is closer to the data without yet
+   addressing the inning-weight or asymmetry issues, and would
+   reduce the magnitude of Stage-3 contributions until V2 ships.
+
+   This interim is OUT OF SCOPE for this work without explicit user
+   approval -- the V2 plan calls for shadow comparison via
+   `team_offense_model_v2.py`, not in-place tuning of v1.
+
+4. Rebuild the calibration table with `2025+2026` excluded once Phase
+   4 modeling starts, so the fit honestly excludes the validation +
+   test windows. Phase 1 fits used all data for diagnostics only.
+
+
+NEXT (Phase 2)
+--------------
+Build the feature library: prior-season RPG, season-to-date,
+momentum_5/10/20, decay-weighted, home/road splits. Each computed
+strictly leak-free using the corpus already loaded. Output is a join
+table keyed on `(team, date)` that the Phase 4 modeling can attach to
+the per-half-inning calibration rows.

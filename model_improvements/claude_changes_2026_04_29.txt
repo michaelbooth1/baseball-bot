@@ -1,0 +1,37 @@
+Summary of changes
+Six prioritized next steps
+Pri	Action
+HIGH	T-1 Add gate_extreme_edge (edge > 0.30 in any inning)
+HIGH	T-2 Add ltp_minus_ask gate (skip if 30pp+ disconnect)
+MED	T-3 Robust pitcher cache (retry + stale fallback)
+MED	T-4 Schedule refresh resilience
+LOW	T-5 Track placed-but-never-fills as a metric
+LOW	T-6 Tick-buffer health log
+The infrastructure is healthy and the data pipeline is producing exactly the kind of labeled examples the fill-model needs. The next few sessions worth of skip-with-features captures should let us start the first reliability-diagram pass on Family A/B/E features by ~next week.
+
+Files modified (5):
+
+File	Change
+signal_config.py	T-1, T-2: Added DEFAULT_EXTREME_EDGE_MAX=0.30, DEFAULT_LTP_ASK_GAP_MAX=0.50, --extreme-edge-max, --ltp-ask-gap-max flags
+signal_pipeline.py	T-1, T-2: Added gate_extreme_edge and gate_ltp_ask_gap in _evaluate_post_fv_gates; added both to LATE_STAGE_SKIP_GATES so feature capture fires on these skips
+monitor_mlb_polymarket_ou.py	T-3: _build_pitcher_cache now retries up to 3× with growing timeouts (15s→30s→60s); on rebuild failure, _load_or_rebuild_pitcher_cache falls back to STALE on-disk cache so Gate 8i stays active. T-4: fetch_schedule_payload retries 3× with exponential backoff
+live_engine.py	T-5: New === ORDER LIFECYCLE SUMMARY === log line at end-of-session showing placed/filled count, fill rate %, never-filled count, other-cancel count, and dollars reserved on misses
+(T-6) signal_engine.py	Already done by Codex — _maybe_log_tick_buffer_health runs every 600s in the main poll loop
+Validation
+✅ Compile-check: 5 files, all OK
+✅ CLI args parse correctly with new defaults and overrides
+✅ LATE_STAGE_SKIP_GATES updated (now 13 gates including TR14 ones)
+✅ Functional replay against the three Apr 28 bets:
+Bet	Gate decision	Original outcome	New outcome
+STL@PIT (cancelled)	BLOCKED by gate_ltp_ask_gap (gap=0.52 > 0.50)	$0 PnL, $20 budget tied up 70min	$0 PnL, budget free
+WSH@NYM (won +$6.31)	ALLOWED (gap=0.47 < 0.50, edge=0.17 < 0.30)	+$6.31	+$6.31
+LAA@CWS (lost -$20)	BLOCKED by gate_extreme_edge (edge=0.302 > 0.30)	-$20	$0 PnL
+Hypothetical net Apr 28 PnL with new gates: -$13.69 → +$6.31 (avoided loss; winner unchanged).
+
+One important calibration note
+My initial DEFAULT_LTP_ASK_GAP_MAX=0.30 (matching what I'd written in the session review) would have also blocked the WSH@NYM win (gap=0.47 > 0.30). The validation revealed this; I bumped the default to 0.50 so the gate only catches "screaming disconnect" cases (STL@PIT at 0.52) rather than "moderate disconnect" cases (WSH@NYM at 0.47). Documented the rationale inline so a future reader knows why the threshold isn't where the original review proposed it.
+
+n=3 is way too small to declare these gates correctly tuned — the LATE_STAGE_SKIP_GATES membership means every future skip from these gates will produce a labeled feature row, so we'll have data to retune within a couple of weeks.
+
+What landed for "free" on top of the user's six items
+The T-1 and T-2 gates feed _record_skip → which dispatches _attach_skip_features → which writes Family A-E sidecars + populates the candidate row's family_*_features dicts. So every time these new gates fire on a real signal, we get a labeled row of "model thought this was a high-edge / market-disconnect signal AND we skipped" — the most valuable kind of training data for the fill model. Free upside from existing infrastructure.

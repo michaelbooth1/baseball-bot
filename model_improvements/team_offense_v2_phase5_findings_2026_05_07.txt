@@ -1,0 +1,211 @@
+Team Offense V2 -- Phase 5 Findings (Dollar Test)
+====================================================
+
+Date: 2026-05-07
+Status: NO-GO under naive v1->v2 replacement.
+        v2's structural correction is correct, but it interacts with
+        the post-FV gate stack (gate_min_edge + gate_extreme_edge) in
+        a way that the current gate thresholds were not calibrated
+        for. Recommendation: SHADOW MODE + GATE RECALIBRATION before
+        any promotion.
+
+
+ARTIFACTS
+---------
+Runtime:        scripts/analysis/team_offense_model_v2.py
+Shadow replay:  scripts/analysis/team_offense_v2_shadow_replay.py
+Output:         data/analysis_output/team_offense_calibration/phase5_shadow_replay.json
+
+
+METHOD
+------
+For all 119 placed bets in 2026 (live + paper combined) and 1,217 late-stage
+skip rows, recompute Stage-3 logit-delta under v1 and v2 with the SAME
+team-state context. Apply current gate config (edge_threshold=0.15,
+edge_threshold_high_line=0.16, extreme_edge_max=0.22) to determine whether
+each bet would have traded under each model.
+
+
+TOP-LEVEL DISTRIBUTIONS
+------------------------
+v2-v1 logit-delta change across 119 bets:
+  mean        -0.0047    (v2 slightly less aggressive overall)
+  abs_mean     0.0671    (typical magnitude of swap)
+  min         -0.2500    (strong negative shift in some matchups)
+  max         +0.2501    (strong positive shift in others)
+
+The absolute mean of 0.067 logit is substantial -- equivalent to roughly
+1.5pp probability shift at typical placed-bet ask prices. v2 changes
+edges materially per bet, in BOTH directions.
+
+
+HEADLINE: NET P&L IMPACT IS NEGATIVE UNDER NAIVE SWAP
+=======================================================
+True bidirectional P&L change of swapping v1 -> v2 in the current gate
+stack on actually-placed 2026 bets:
+
+  v2 blocks 4 bets v1 would trade:
+    bets:    DET@BOS O8.5 inn7 (won, $0)
+             BAL@KC  O10.5 inn8 (won, +$13.40)
+             MIN@WSH O9.5  inn6 (won, +$3.89)
+             SF@BAL  O8.5  inn5 (LOST, -$100)
+    P&L change under v2: +$82.71 (mostly from blocking the SF@BAL loser)
+
+  v2 trades 2 bets v1 would BLOCK under current gates:
+    bets:    STL@WSH O8.5 inn4 (LOST, -$100)
+             ATH@NYY O8.5 inn4 (LOST, -$100)
+    P&L change under v2: -$200.00
+
+  NET P&L CHANGE UNDER v2 + CURRENT GATES: -$117.29
+
+
+THE INTERACTION PROBLEM
+------------------------
+The 2 bets v2 newly trades reveal an important coupling:
+
+  STL@WSH: v1 edge 0.160 -> v2 edge 0.200
+           v1 BLOCKED by gate_min_edge (0.160 < 0.16 threshold for high lines)
+           v2 PASSES both gates
+
+  ATH@NYY: v1 edge 0.223 -> v2 edge 0.166
+           v1 BLOCKED by gate_extreme_edge (0.223 > 0.22 cap from TR19)
+           v2 PASSES both gates because v2 reduces the edge
+
+Both bets lost $100 in production reality -- they were actually placed
+under earlier gate config when extreme_edge_max=0.30 (TR16 era).
+
+The structural issue: v2 changes the SHAPE and MAGNITUDE of the edge
+distribution. The TR19 extreme_edge_max=0.22 cap was tuned EMPIRICALLY
+against v1's edge distribution. When v2 makes some edges smaller (the
+ATH@NYY case) and some edges larger (the STL@WSH case), the protective
+calibration of the gate stack changes.
+
+In particular:
+  - gate_extreme_edge protects against high-edge "phantom run" cases
+    where v1 produces edge > 0.22. v2 sometimes pulls these edges below
+    the cap (e.g. via the negative b_prior). v2 LOSES the
+    extreme_edge protection on those bets.
+  - gate_min_edge requires edge >= 0.15/0.16 for trade. v2 sometimes
+    raises borderline v1 edges above the threshold, ADDING bets v1
+    would have skipped.
+
+If v2 is the right Stage-3, the gates should be RECALIBRATED for it:
+  - extreme_edge_max should likely be LOWER under v2 (~0.17-0.18) to
+    match the protective behavior the 0.22 cap provided under v1
+  - min_edge_threshold may need to be RAISED slightly under v2
+
+
+PHASE 7 PROMOTION CRITERIA STATUS
+----------------------------------
+  1. Brier improves >= 0.5% relative on test:    PASS on test (0.88%),
+                                                 FAIL on val (0.12%)  [Phase 4]
+  2. No subgroup degrades >= 2% relative:        NOT YET CHECKED
+  3. Replayed live-engine P&L neutral or better: FAIL (-$117.29) under
+                                                 naive v1->v2 with current gates
+  4. Avg |stage3_delta| not larger at any inning: FAIL at inning 7
+                                                 (v1=0.025, v2=0.031, +26%
+                                                 but tiny absolute scale,
+                                                 N=27)
+
+  -> NO-GO for naive promotion. Recommend SHADOW MODE + GATE
+     RECALIBRATION before revisiting.
+
+
+PER-INNING |stage3_delta| AUDIT
+--------------------------------
+  inn   n  v1_|d|  v2_|d|   pass?
+   4   37  0.0763  0.0728   PASS
+   5   23  0.0601  0.0465   PASS
+   6   25  0.0446  0.0426   PASS
+   7   27  0.0247  0.0312   FAIL (+26%, but absolute 0.006 logit, ~0.1pp prob)
+   8    5  0.0144  0.0044   PASS
+   9    2  0.0000  0.0000   PASS
+
+The criterion-#4 inning-7 fail is real but practically immaterial:
+0.006 logit at typical decision asks is sub-1% probability shift. The
+strict criterion is preserved as an early-warning guardrail; sample
+size is small (27 rows).
+
+
+SKIP-REPLAY SIGNAL
+-------------------
+1,217 late-stage skip rows replayed (gate_min_edge + gate_extreme_edge).
+2 of those skip rows would have FLIPPED to trade under v2. Without a
+fill model we can't quantify their realized impact, but the count is
+small.
+
+
+WHAT'S CLEAN AND WHAT'S NOT
+----------------------------
+CLEAN:
+  - v2's coefficients are structurally correct (Phases 1-4 + stability check)
+  - Negative b_prior is robust across 8/8 sub-windows
+  - On 1.13M-row residual table, v2 fit Brier-improves over v1
+
+NOT CLEAN:
+  - Naive v1->v2 swap with current gate config nets -$117 over 2026
+  - Sample is small (4+2 = 6 decision-changing bets); even one outlier
+    swings the result by $100
+  - Gate stack was empirically tuned around v1; v2 changes the
+    distribution gates see
+
+
+WHY 2 BETS LOSING $100 EACH IS A BIG DEAL
+------------------------------------------
+We have 119 bets total in 2026 across live + paper. Net realized P&L for
+those is roughly -$120 to -$150. Two -$100 v2-only-trades represent a
+LARGE fraction of the year's P&L. Even a small probability that v2
+correctly catches them (or a small change in the gate config to keep them
+blocked) flips the dollar test.
+
+
+RECOMMENDATIONS
+---------------
+1. Do NOT replace v1 with v2 in production yet.
+
+2. Wire `--use-team-offense-v2-shadow` into signal_engine.py / live_engine.py
+   so each placed-bet candidate row carries:
+     - team_offense_delta_v1 (current production)
+     - team_offense_delta_v2 (shadow)
+   Live behavior remains v1; we collect comparison data continuously.
+
+3. After ~30 days of shadow data:
+   a. Recompute the gate-stack protective behavior under v2's edge
+      distribution
+   b. Find the v2-equivalent extreme_edge_max threshold (likely 0.17-0.18)
+      that provides the same false-positive protection as v1's 0.22
+   c. Find the v2-equivalent min-edge thresholds for std/high lines
+   d. Re-run Phase 5 dollar test with the recalibrated thresholds
+
+4. Phase 7 GO conditions become:
+   - Brier improves on rolling validation window
+   - Recalibrated gates produce non-negative dollar test
+   - All 4 criteria pass
+
+5. Optional: research a "soft" v2 deployment where the v1 delta and v2
+   delta are blended (e.g. 50/50 average) as an interim risk-reducer
+   while shadow data accumulates.
+
+
+WHAT THIS DOESN'T CHANGE
+-------------------------
+The fundamental finding is unaffected: the current Stage-3 v1 is
+structurally miscalibrated (Phase 1 + 4). Specifically:
+  - LOGIT_DELTA_PER_RUN = 0.20 is too aggressive (~3.2x)
+  - Hard clamps under-shrink mid-range teams
+  - Linear inning weight ramp dials prior down too aggressively in
+    mid-innings where most bets fire
+  - Prior-season offense is anti-predictive once season+momentum is in
+
+These are real and worth fixing. The Phase 5 result just says: fixing
+them in isolation has unintended interactions with downstream gates.
+Fix together, not separately.
+
+
+NEXT
+----
+1. Wire shadow flag in signal_engine.py + live_engine.py.
+2. Once shadow data is flowing, build a "Phase 6 calibration audit" that
+   takes shadow logs and proposes recalibrated extreme/min-edge gate
+   thresholds for v2.
+3. Re-run Phase 5 dollar test with recalibrated gates after ~30 days.

@@ -1,0 +1,83 @@
+Stage-1 Historical Prior Findings - 2026-05-13
+
+Scope
+- Question: what historical run-environment prior should Stage-1 use for MLB totals FV?
+- Motivation: uniform 10-season history added support but appeared too high-scoring for the current MLB environment.
+- Data used: local regular-season MLB game feeds, calibration-opportunity rows through 2026-05-09, and cache-swapped FV ablation.
+
+Important conclusion
+- This is not a simple 5y vs 10y problem.
+- The best practical prior is a relevance/support tradeoff:
+  - Rolling 4y (2022-2025) best matched the current low-to-mid scoring environment on deduped all-family and no-score calibration.
+  - Rolling 5y (2021-2025) remains the conservative production fallback because it has more support and preserved better score-event rank ordering.
+  - Uniform 10y is too high-scoring for current conditions unless future data overturns this.
+  - Weighted 10y improves over uniform 10y but did not beat 4y/5y on the current labeled sample.
+
+Scoring-environment evidence
+- 2016-2025 mean RPG: 9.064
+- 2021-2025 mean RPG: 8.908
+- 2025 RPG: 8.895
+- 2026 YTD through 2026-05-11: 8.460
+- Blended 2026 projection: 8.804
+- Post-2023 slope: about -0.168 RPG/year
+- 2019 and 2023 are high-scoring anchors; equal weighting lets them pull Stage-1 upward.
+
+Candidate cache evidence through 2026-05-09
+
+Row-level all-family:
+- rolling4 Brier 0.249874, logloss 0.899677
+- rolling5 Brier 0.249487, logloss 0.895924
+- rolling6 Brier 0.250237, logloss 0.905911
+- uniform10 Brier 0.253034, logloss 0.941300
+- weighted10 Brier 0.251575, logloss 0.931189
+
+Deduped game-line all-family:
+- rolling4 Brier 0.246409, logloss 0.845195, profit proxy -12.878459
+- rolling5 Brier 0.246940, logloss 0.844800, profit proxy -13.989429
+- rolling6 Brier 0.247603, logloss 0.846778, profit proxy -14.020357
+- uniform10 Brier 0.250423, logloss 0.859413, profit proxy -13.202175
+- weighted10 Brier 0.247610, logloss 0.850774, profit proxy -14.020357
+
+Deduped game-line-score all-family:
+- rolling4 Brier 0.256972, logloss 0.830191, profit proxy -26.295387
+- rolling5 Brier 0.257513, logloss 0.829911, profit proxy -27.406358
+- rolling6 Brier 0.258087, logloss 0.831829, profit proxy -27.437285
+- uniform10 Brier 0.261437, logloss 0.844221, profit proxy -26.619104
+- weighted10 Brier 0.257817, logloss 0.833433, profit proxy -27.437285
+
+Family-specific read
+- no_score_drift:
+  - rolling4 was best on deduped Brier/logloss.
+  - This supports the state-value/no-score pivot because no-score drift cares more about confirmed current run environment than immediate post-score ranking.
+- score_event_transition:
+  - rolling5/6/uniform10 preserved better AUC/rank ordering in some deduped slices.
+  - rolling4 lowered overconfidence but may lose discrimination on score-event transitions.
+  - This reinforces keeping score-event and no-score drift model families separate.
+
+Implementation decision
+- Production startup Stage-1 cache is set to the conservative five completed prior seasons.
+  - For 2026: 2021-2025.
+- Rolling4 2022-2025 is the lead research candidate, not production.
+- Uniform10 and weighted10 stay research-only.
+
+Artifacts
+- Production fallback cache target:
+  cache/mlb_ou_cache.json built with --min-season 2021 --max-season 2025
+- Lead candidate:
+  cache/mlb_ou_cache_4y_2022_2025_candidate.json
+- Other evaluated candidates:
+  cache/mlb_ou_cache_3y_2023_2025_candidate.json
+  cache/mlb_ou_cache_6y_2020_2025_candidate.json
+  cache/mlb_ou_cache_10y_candidate.json
+  cache/mlb_ou_cache_weighted_scoring_env_candidate.json
+- Research outputs:
+  data/analysis_output/scoring_trends/
+  data/analysis_output/stage1_prior_candidates/
+  data/analysis_output/fair_value_stage_ablation/cache_compare/
+
+Next validation gates before any promotion
+- Re-run candidate comparison after more post-2026-05-07 TR20/TR21 data.
+- Add/keep deduped metrics by game-line and game-line-score state; row-level alone is too clustered.
+- Compare separately for score_event_transition and no_score_drift.
+- Require rolling4 to improve no-score drift without unacceptable score-event damage before promotion.
+- If families diverge, consider family-specific Stage-1 priors instead of one global cache.

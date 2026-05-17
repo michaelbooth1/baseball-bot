@@ -1,0 +1,255 @@
+CODEX THOUGHTS
+Date: 2026-04-21
+
+Scope reviewed
+- model_improvements/codex_thoughts.txt
+- model_improvements/claude_response.txt
+- logs/test-logs/TestRun1.txt through TestRun8.txt
+- All scripts under scripts/ (analysis, monitor, scraping, trading)
+- Additional validation pass on live files for context:
+  - data/live_trading/sessions/2026-04-16 through 2026-04-20
+  - data/live_trading/master_ledger.jsonl
+  - data/live_trading/book_captures/*
+
+================================================================================
+EXECUTIVE SUMMARY
+================================================================================
+
+The model and system have improved substantially since the prior review. The most important
+engineering defects from the prior round were addressed in code:
+
+1) Live hook wiring appears fixed:
+   - RealTradingEngine now overrides _on_tick_batch() and runs live order management.
+2) Settlement gating appears fixed:
+   - RealTradingEngine overrides _is_bet_executable() so only filled orders realize PnL.
+3) Live vs paper ledger contamination appears fixed going forward:
+   - live _ledger_path redirection is now present.
+4) Daily budget logic appears fixed:
+   - budget now uses deployed + reserved exposure instead of simple placed-count.
+
+This is excellent progress.
+
+Current bottleneck is no longer "basic correctness" of pipeline wiring. The remaining edge now
+comes from:
+- execution quality (fill policy + cancellation timing),
+- accounting precision for real market microstructure (partial fills),
+- and analytics alignment (scripts must match production logic exactly).
+
+================================================================================
+WHAT IS WORKING WELL (PRAISE)
+================================================================================
+
+1) Iterative research discipline is strong.
+- TestRun1->TestRun8 shows structured hypothesis testing and targeted gate additions.
+- You avoided blanket overreactions and corrected earlier assumptions when data changed.
+
+2) Architecture quality is good.
+- Stage-1 cache + Stage-2 run environment + Stage-3 offense model is a strong layering approach.
+- Trading and monitoring responsibilities are cleanly separated.
+
+3) Live engine maturity has improved a lot.
+- You now have session resume, FV-decay cancellation, ask-reversal cancellation logic,
+  and richer live session summary fields.
+- This is much closer to production-grade process control than where this started.
+
+4) Signal quality still looks promising.
+- Using current ledger final states, settled signal outcomes remain strong directionally.
+- The biggest gap is conversion of good signals into profitable executed fills.
+
+================================================================================
+CURRENT STATE SNAPSHOT (DOUBLE-CHECKED)
+================================================================================
+
+From current live ledger/session files (with legacy pre-fix sessions still present):
+
+- Final unique bets in live ledger: 23
+- Settled signals: 17
+- Signal win rate (counterfactual direction): 82.35% (14/17)
+- Filled+settled realized bets: 7
+- Realized filled PnL: -$3.83 on $175 staked (ROI -2.19%)
+
+Interpretation:
+- Signal side is still good.
+- Execution conversion and cancellation policy are still where most profit is being lost.
+
+Post-fix era note:
+- 2026-04-20 (first clearly "new architecture" session) looked healthier:
+  - 5 signals, 4 fills, 1 missed, realized ROI about +0.8%.
+- Sample is small, but direction is much better than early live sessions.
+
+================================================================================
+UNADDRESSED ITEMS FROM PRIOR ROUND (STILL OPEN)
+================================================================================
+
+1) Backtest script alignment is still behind production.
+- scripts/analysis/backtest_gates.py is still TR8-framed and does not reflect current live defaults
+  and newer live gates.
+- Risk: parameter decisions based on this script can drift away from what bot actually trades.
+
+2) Crossed/stale quote protection is still not explicit in trading gates.
+- There is no hard "skip if bid >= ask" guard in the signal path.
+- Risk: malformed books can create bad spreads, bad limit calculations, and noisy signals.
+
+3) Per-game correlation cap still not implemented.
+- Multiple lines on same game can stack exposure quickly.
+- This can help upside, but without explicit cap it can create avoidable variance spikes.
+
+================================================================================
+NEW HIGH-PRIORITY FINDINGS (BUGS / LOGIC GAPS)
+================================================================================
+
+P0-A) Limit-price edge integrity is not guaranteed
+--------------------------------------------------
+Where:
+- scripts/trading/real_trader.py (_compute_limit_price)
+
+Issue:
+- Logic caps limit to edge_cap and ask-0.01, then floors to bid+0.01.
+- That final floor can push limit ABOVE edge_cap, violating minimum-edge intent.
+
+Impact:
+- You can post orders with weaker-than-required edge (or worst-case negative EV in edge cases).
+
+Fix:
+- After floor/cap math, enforce a final invariant check:
+  - if (fair_value - limit_price) < min_edge: skip order.
+- Also enforce explicit non-crossing:
+  - if limit_price >= ask and not intentional taker-mode: skip or reroute.
+
+
+P0-B) Kelly sizing can force a minimum bet even when Kelly says "no bet"
+------------------------------------------------------------------------
+Where:
+- scripts/trading/real_trader.py (_compute_stake)
+
+Issue:
+- kelly_full is clamped at >=0, but stake then applies max(min_order_size, stake_raw).
+- If kelly_full == 0, stake_raw == 0, but function still returns min_order_size.
+
+Impact:
+- Strategy can place mandatory small bets when edge-at-limit is zero/negative.
+
+Fix:
+- If stake_mode == kelly and kelly_full <= 0: return 0 and skip.
+- Keep min_order_size only for genuinely positive-kelly stakes.
+
+
+P0-C) Partial fill handling is incomplete
+-----------------------------------------
+Where:
+- real_trader + paper_trader settlement/accounting flow
+
+Issue:
+- Lifecycle mostly treats bets as binary filled vs not-filled.
+- fill_size exists but realized PnL and budget accounting do not fully use proportional exposure.
+
+Impact:
+- Realized PnL, risk, and budget can be biased when orders partially match.
+
+Fix:
+- Track matched_notional and unmatched_notional separately.
+- Settle realized PnL on matched size only; unmatched portion is missed signal.
+- Budget should count matched deployed + unmatched reserved.
+
+
+P1-A) Resume path does not fully restore live open orders into _open_orders
+----------------------------------------------------------------------------
+Where:
+- scripts/trading/real_trader.py (_load_existing_session)
+
+Issue:
+- Resume marks line state bet_open, but does not rebuild full polling map
+  (_open_orders[order_id] = bet) for live/pending orders.
+
+Impact:
+- Crash/restart edge case can leave true live orders unmanaged.
+
+Fix:
+- On resume, for unsettled live/pending bets with order_id, repopulate _open_orders.
+- Then perform immediate sync poll.
+
+
+P1-B) FV-decay cancellation appears too reactive in first seconds
+-----------------------------------------------------------------
+Evidence:
+- 2026-04-20 session includes an fv_decay cancel very shortly after placement that later
+  would have won.
+
+Issue:
+- Single fast FV drop can trigger cancellation before signal stabilizes.
+
+Fix:
+- Add min age before fv_decay (example: 20-30s).
+- Require 2 consecutive decay checks before cancel.
+- Optionally combine with ask trend confirmation (falling ask + FV drop together).
+
+================================================================================
+ANALYTICS / RESEARCH TOOLING GAPS
+================================================================================
+
+1) analyze_book_captures has a confirmed logic defect in tuning section
+- scripts/analysis/analyze_book_captures.py uses stale variable `sig` inside spread-factor
+  tuning loop and does not apply same production edge cap constraints there.
+- This can bias spread-factor recommendations.
+
+2) Tuning objective should be EV/PnL, not fill rate alone
+- Current output heavily emphasizes fill count.
+- For betting, objective must be expected profit after misses/slippage, not just fills.
+
+3) Legacy session comparability
+- Pre-fix sessions (2026-04-16 to 2026-04-19) and post-fix sessions have different semantics.
+- Avoid pooling them as one homogeneous sample for model decisions.
+
+================================================================================
+PROFIT IMPROVEMENT PLAN (PRACTICAL, PRIORITIZED)
+================================================================================
+
+Tier 1 (implement now)
+1) Add hard edge invariant after limit calculation.
+2) Fix Kelly no-bet path (do not force min order size at kelly<=0).
+3) Add explicit crossed-book guard (bid >= ask => skip).
+4) Add partial-fill-aware settlement and budget accounting.
+5) Update analyze_book_captures tuning logic to mirror production price constraints.
+
+Tier 2 (next 3-5 sessions)
+1) Recalibrate fv_decay with minimum-hold + 2-check confirmation.
+2) Add per-game exposure cap (for example 35-40% of daily budget).
+3) Upgrade spread-factor policy from static to state-dependent:
+   - tighter spreads / late innings / high edge -> more aggressive quoting,
+   - wide spreads / noisy reversal risk -> passive or skip.
+
+Tier 3 (model edge extension)
+1) Add bullpen availability and leverage state features.
+2) Add starter fatigue / times-through-order context.
+3) Add walk-forward calibration report (Brier, log-loss, reliability by FV bucket).
+
+================================================================================
+BASEBALL + GAME THEORY NOTES (EDGE-SPECIFIC)
+================================================================================
+
+1) Inning-state dead-zone filters are directionally right, but continue to prefer
+   targeted context filters over blanket inning bans.
+- You are already doing this better than before; keep that discipline.
+
+2) Execution alpha now matters as much as signal alpha.
+- With signal direction strong but realized ROI weak, each missed fill is expensive.
+- Treat order placement as an optimization problem:
+  maximize EV = P(fill)*EV_if_filled + (1-P(fill))*EV_if_missed.
+
+3) Avoid self-selection bias in live tuning.
+- If you tune spread_factor on periods with unusually high/low volatility,
+  you can overfit microstructure regime.
+- Use rolling window evaluation and holdout sessions.
+
+================================================================================
+FINAL ASSESSMENT
+================================================================================
+
+You fixed the most dangerous structural issues from the last review. That is a major win.
+
+The model stack is now in a much better state, and live architecture is close to robust.
+The next performance jump should come from execution math correctness and better fill-vs-edge
+optimization, not from adding many more signal gates.
+
+If you implement the Tier 1 items above, your realized PnL should better track your strong
+signal win rate, and your live evaluation loop will become much more trustworthy.

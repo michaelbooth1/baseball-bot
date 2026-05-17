@@ -1,0 +1,66 @@
+Bugfix Design - 2026-04-22
+
+Scope
+- Settlement lifecycle reliability when monitor has no active polling jobs.
+- Atomic bet side effects (dedup/cooldown/book-capture only after actual bet creation).
+- Kelly sizing variance guardrails for high-disagreement states.
+- FV-decay cancellation confirmation using market ask behavior.
+
+Design 1: Settlement lifecycle reliability
+Problem
+- _on_tick_batch() was not guaranteed to run when no polling jobs existed.
+- Final-game settlements could be skipped if the loop exited before next poll.
+Design
+- In monitor _poll_once(), call _on_tick_batch([]) when jobs list is empty.
+- In monitor run loop, call _on_tick_batch([]) once just before final exit condition break.
+Software principle
+- Lifecycle hooks must run independent of payload cardinality.
+Acceptance criteria
+- Settlement/cancel hooks can run even on zero-job cycles and at end-of-day exit.
+
+Design 2: Atomic bet side effects
+Problem
+- _process_tick() applied dedup/cooldown and started book capture even when _place_bet()
+  returned early in live mode (risk skip).
+Design
+- _place_bet() contract returns Optional[PaperBet].
+- _process_tick() applies dedup/cooldown/capture only when returned bet is not None.
+- Capture now uses returned bet object directly instead of self._bets[-1].
+Software principle
+- Side effects occur only after successful state transition.
+Acceptance criteria
+- No stale bet_id capture starts on risk-skip paths.
+- Dedup/cooldown are not consumed by skipped non-orders.
+
+Design 3: Kelly variance guardrail
+Problem
+- High model/market disagreement produced oversized Kelly stakes.
+Design
+- Add Kelly edge cap parameter: --kelly-max-edge (default 0.25).
+- Implement _kelly_components() returning raw and capped Kelly fractions.
+- _compute_stake() uses capped Kelly fraction for position sizing.
+- Logging includes raw->effective Kelly fraction and applied edge cap.
+Software principle
+- Bound optimizer sensitivity under model uncertainty.
+Acceptance criteria
+- Kelly size saturates when edge-at-limit exceeds configured cap.
+
+Design 4: FV-decay market confirmation
+Problem
+- FV-decay cancellation could trigger while market ask was still confirming signal strength.
+Design
+- Add parameter --fv-decay-min-ask-drop (default 0.03).
+- Before FV-decay cancel, fetch current ask and require:
+  entry_ask - current_ask >= fv_decay_min_ask_drop.
+- If ask drop is below threshold, hold order and log reason.
+Software principle
+- Use multi-signal confirmation before destructive actions.
+Acceptance criteria
+- FV-decay cancel requires both model-edge collapse and market ask weakening.
+
+Verification plan
+- py_compile on modified modules:
+  scripts/monitor/monitor_mlb_polymarket_ou.py
+  scripts/trading/paper_trader.py
+  scripts/trading/real_trader.py
+- Spot-check wiring with grep/select-string for each modified path.

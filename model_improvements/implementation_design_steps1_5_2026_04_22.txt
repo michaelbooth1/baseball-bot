@@ -1,0 +1,191 @@
+Implementation Design: Steps 1-5 (2026-04-22)
+
+Scope
+- Step 1: Preserve decision-time price lineage in live trading.
+- Step 2: Propagate lineage fields through unified/training analysis tables.
+- Step 3: Build candidate-universe capture + builder (trade and no-trade decisions).
+- Step 4: Integrate EV policy scoring into live trading behind a feature flag.
+- Step 5: Align backtest_gates current config and gate coverage with production logic.
+
+Goals
+1) Ensure data lineage is unambiguous:
+   - decision-time market ask must remain immutable.
+   - execution-time price must be stored separately and used for realized P&L.
+2) Ensure downstream analysis uses correct feature semantics.
+3) Add first-class data source for trade/no-trade decision modeling.
+4) Safely introduce EV-driven live policy with "off/shadow/enforce" modes.
+5) Keep historical gate backtests synchronized with production defaults/gates.
+
+Non-goals (this pass)
+- Re-training and re-calibrating all models.
+- Reprocessing historical logs for full candidate backfill.
+- Replacing all gate logic with EV-only policy.
+
+-------------------------------------------------------------------------------
+Step 1 Design: Preserve decision-time price lineage
+-------------------------------------------------------------------------------
+
+Current issue
+- `entry_ask` is overwritten on fill in `scripts/trading/real_trader.py`.
+- This contaminates decision-time feature meaning in logs/tables.
+
+Design
+1) Keep `entry_ask` immutable as decision-time ask.
+2) Add explicit lineage fields to `LiveBet`:
+   - `decision_ask` (decision-time best ask)
+   - `posted_limit` (posted limit price)
+   - `actual_fill_price` (real execution price if filled)
+3) Stop mutating `entry_ask` on fills/recovery/final-check paths.
+4) On fills, write `fill_price` and `actual_fill_price`; keep `entry_ask` unchanged.
+5) In settlement math (`paper_trader._settle_finished_games`), use:
+   - `actual_fill_price` (preferred), else `fill_price`, else `entry_ask`.
+   This preserves correct realized P&L even when entry_ask is immutable.
+
+Risks
+- Legacy rows without new fields.
+Mitigation:
+- Fallback logic in settlement and table builders.
+
+Validation
+- Grep for any remaining `entry_ask = fill_price` writes.
+- Dry-run one synthetic path and inspect output object fields.
+
+-------------------------------------------------------------------------------
+Step 2 Design: Propagate lineage fields through analysis tables
+-------------------------------------------------------------------------------
+
+Design
+1) `build_unified_signal_table.py`
+   - Add master columns:
+     `decision_ask`, `posted_limit`, `actual_fill_price`.
+   - Canonical extraction with fallback:
+     decision_ask <- decision_ask || entry_ask
+     posted_limit <- posted_limit || limit_price
+     actual_fill_price <- actual_fill_price || fill_price
+   - Keep existing columns for backward compatibility.
+2) `build_signal_training_table.py`
+   - Include new decision-time fields in pre-signal feature group:
+     `decision_ask`, `posted_limit`.
+   - Keep `entry_ask` and `limit_price` to support legacy rows.
+3) `backtest_ev_policy.py`
+   - Price selection helper should prefer `posted_limit` then `limit_price`,
+     and keep existing fallbacks.
+
+Validation
+- Rebuild unified table and training table.
+- Confirm manifests include new columns.
+- Spot-check live rows have non-null decision_ask/posted_limit where expected.
+
+-------------------------------------------------------------------------------
+Step 3 Design: Candidate-universe capture + builder
+-------------------------------------------------------------------------------
+
+Objective
+- Capture both outcomes:
+  - trade decisions
+  - no-trade decisions (with reason)
+  after the trigger phase (post Gate-5 confirmation).
+
+Design Part A: Runtime capture
+1) Add candidate logging to `PaperTradingEngine` (inherited by live):
+   - output file:
+     `<paper_root>/candidate_universe/<YYYY-MM-DD>_candidates.jsonl`
+     (live engine redirects `paper_root` to `data/live_trading`, so file lands
+      under live_trading automatically).
+2) Candidate record schema:
+   - id/meta: `candidate_id`, `mode`, `session_date`, `ts`, `game_pk`, teams, line
+   - state/features: inning, outs, runners, scores, totals, runs_needed, lead
+   - pricing/features: `decision_ask`, `best_bid`, spread, `fair_value`, `edge`
+   - decision: `decision` in {trade, skip}, `decision_reason`, `bet_id` nullable
+3) Log point:
+   - Candidate universe starts after Gate-5 confirmation.
+   - For each later skip return, emit decision=skip with a reason code.
+   - For placed bet, emit decision=trade with linked `bet_id`.
+
+Design Part B: Builder script
+1) New script: `scripts/analysis/build_candidate_universe_table.py`.
+2) Inputs:
+   - candidate JSONLs from paper/live roots
+   - game finals map from `data/games/regular/**.json` (for counterfactual labels)
+3) Outputs:
+   - `data/analysis_output/candidate_universe/candidates_master.jsonl`
+   - CSV + manifest.
+4) Labels:
+   - `target_trade` from decision
+   - `target_counterfactual_win` from final_total > line (when game final available)
+5) Keep this table separate from unified signals; unified remains event-level executed
+   signal table, candidate table is decision-level universe.
+
+Validation
+- Run builder; check both trade and skip rows exist.
+- Check reason-code distribution and final-label coverage.
+
+-------------------------------------------------------------------------------
+Step 4 Design: EV policy integration behind feature flag
+-------------------------------------------------------------------------------
+
+Design
+1) Add live args:
+   - `--ev-policy-mode` = `off | shadow | enforce` (default off)
+   - `--ev-policy-report-path`
+   - `--ev-policy-win-model-path`
+   - `--ev-policy-fill-model-path`
+2) Add lightweight model scorer in `real_trader.py`:
+   - Load model JSON artifacts produced by `backtest_ev_policy.py`
+   - Reconstruct preprocessor and logistic inference
+   - Provide `score(feature_row) -> prob`
+3) Build decision-time feature row from current context:
+   - game state, decision_ask, posted_limit candidate, t0 microstructure, mode,
+     plus available param_* values.
+4) Compute policy quantities in `_place_bet` before posting:
+   - `p_win_if_filled`
+   - `p_fill`
+   - `ev_if_filled`
+   - `ev_realized = p_fill * ev_if_filled`
+   - `ev_per_stake`
+5) Apply mode behavior:
+   - off: do nothing.
+   - shadow: compute and log policy decision but do not block existing logic.
+   - enforce: require policy pass:
+     `ev_per_stake >= min_ev_per_stake` and `p_fill >= min_p_fill`.
+6) Source thresholds from report:
+   - `policy_selection.best_validation_config`.
+
+Risk
+- Missing live-time feature parity with offline training.
+Mitigation:
+- Model scorer gracefully handles missing features via stored medians/categories.
+- Log policy diagnostics per decision.
+
+Validation
+- Start in `shadow` mode and verify scoring logs.
+- Switch to `enforce` in dry-run and confirm skip/allow behavior changes as expected.
+
+-------------------------------------------------------------------------------
+Step 5 Design: backtest_gates alignment with production
+-------------------------------------------------------------------------------
+
+Design
+1) Extend `GateConfig` and `apply_gates` for current production-relevant gates:
+   - TR12-like `max_base_fv` saturation gate.
+   - TR13-like blowout-adjacent gate (lead>=4 and inning>=7 with trailing<=1).
+2) Update config labels:
+   - Make "current" reflect latest production gate family (TR13 current).
+3) Update primary analysis section:
+   - run "current" config key, not hardcoded TR11 wording.
+4) Keep known non-portable gates documented:
+   - Stage-2 suppression and FV-ask-gap require live ask/weather model context not
+     fully represented in this historical simulator.
+
+Validation
+- Run script quick check (single year) and ensure output references current config.
+
+-------------------------------------------------------------------------------
+Change order and verification strategy
+-------------------------------------------------------------------------------
+1) Implement Step 1 and run targeted grep/logic checks.
+2) Implement Step 2 and run table builders on small range.
+3) Implement Step 3 capture + builder and verify rows.
+4) Implement Step 4 with default mode off, then test shadow dry-run.
+5) Implement Step 5 config/gate alignment and smoke-test.
+6) Summarize residual risks and next actions.

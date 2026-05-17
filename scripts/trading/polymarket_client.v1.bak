@@ -1,0 +1,465 @@
+"""
+polymarket_client.py -- Authenticated wrapper around py-clob-client for Polymarket CLOB.
+
+Handles:
+  - Credential loading from environment (.env)
+  - One-time API key derivation at startup
+  - Limit BUY order placement (signed + posted)
+  - Order status polling
+  - Order cancellation
+
+This module has NO trading logic. It only knows about the CLOB API.
+Imported by live_engine.py; can be tested independently with test_order.py.
+
+Requires:
+    pip install py-clob-client python-dotenv eth-account
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+import os
+import time
+from pathlib import Path
+from typing import Optional
+
+from models import OrderResult, OrderStatus, TradeRecord, _ts_to_iso  # noqa: E402
+
+LOGGER = logging.getLogger("polymarket_client")
+
+CLOB_HOST = "https://clob.polymarket.com"
+CHAIN_ID  = 137  # Polygon mainnet
+
+
+# ---------------------------------------------------------------------------
+# CLOBOrderClient
+# ---------------------------------------------------------------------------
+
+class CLOBOrderClient:
+    """
+    Thin authenticated wrapper around py-clob-client.
+
+    Usage:
+        client = CLOBOrderClient.from_env()
+        client.initialize()          # derives API keys — call once at startup
+        result = client.place_limit_buy(token_id, price=0.72, size_usdc=100.0)
+        if result.success:
+            status = client.get_order(result.order_id)
+    """
+
+    def __init__(
+        self,
+        private_key: str,
+        funder: Optional[str] = None,
+        host: str = CLOB_HOST,
+        chain_id: int = CHAIN_ID,
+        dry_run: bool = False,
+    ) -> None:
+        if not private_key and not dry_run:
+            raise ValueError("POLY_PRIVATE_KEY is required")
+        self._private_key = private_key
+        self._funder = funder or None
+        self._host = host
+        self._chain_id = chain_id
+        self.dry_run = dry_run
+        self._client = None          # set after initialize()
+        self._initialized = False
+        self._maker_address: Optional[str] = None  # set after initialize()
+
+    # ------------------------------------------------------------------
+    # Factory
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_env(
+        cls,
+        env_path: Optional[Path] = None,
+        dry_run: bool = False,
+    ) -> "CLOBOrderClient":
+        """Load credentials from .env file or environment variables."""
+        if env_path is not None and env_path.exists():
+            try:
+                from dotenv import load_dotenv
+                load_dotenv(env_path)
+                LOGGER.info("Loaded .env from %s", env_path)
+            except ImportError:
+                LOGGER.warning("python-dotenv not installed; reading env vars directly")
+
+        private_key = os.getenv("POLY_PRIVATE_KEY", "")
+        funder      = os.getenv("POLY_PUBLIC_KEY", "") or None
+
+        if not private_key and dry_run:
+            # Dry-run does not place authenticated orders, so a placeholder key
+            # is acceptable and avoids forcing wallet credentials for simulation.
+            private_key = "0x" + ("1" * 64)
+            LOGGER.warning("POLY_PRIVATE_KEY not found; using placeholder key in dry-run mode.")
+
+        if not private_key:
+            raise RuntimeError(
+                "POLY_PRIVATE_KEY not found. "
+                "Set it in .env or as an environment variable."
+            )
+        return cls(private_key=private_key, funder=funder, dry_run=dry_run)
+
+    # ------------------------------------------------------------------
+    # Initialization (call once at startup)
+    # ------------------------------------------------------------------
+
+    def initialize(self) -> None:
+        """Derive API credentials from private key and build the full client.
+
+        Must be called once before any order operations. Raises on failure.
+        """
+        if self.dry_run:
+            self._initialized = True
+            self._maker_address = self._funder or "dry_run"
+            LOGGER.info("CLOBOrderClient initialized in dry-run mode (auth skipped).")
+            return
+
+        try:
+            from py_clob_client.client import ClobClient
+            from py_clob_client.clob_types import ApiCreds
+        except ImportError:
+            raise RuntimeError(
+                "py-clob-client not installed. Run: pip install py-clob-client"
+            )
+
+        from eth_account import Account
+        derived_addr = Account.from_key(self._private_key).address
+        # The maker_address for trade history queries is the funder when using
+        # a proxy wallet (sig_type=2), otherwise it's the EOA itself.
+        sig_type = (
+            2 if self._funder and self._funder.lower() != derived_addr.lower()
+            else 0
+        )
+        self._maker_address = self._funder if sig_type == 2 else derived_addr
+        LOGGER.info(
+            "CLOB init: EOA=%s  funder=%s  sig_type=%d  maker_address=%s  dry_run=%s",
+            derived_addr,
+            self._funder or "same as EOA",
+            sig_type,
+            self._maker_address,
+            self.dry_run,
+        )
+
+        # Step 1: base client to derive API creds
+        base = ClobClient(
+            host=self._host,
+            chain_id=self._chain_id,
+            key=self._private_key,
+            signature_type=sig_type,
+            funder=self._funder,
+        )
+
+        # Step 2: derive API key from on-chain wallet signature
+        api_creds = base.derive_api_key()
+        LOGGER.info("API key derived: %s...", api_creds.api_key[:8])
+
+        # Step 3: full authenticated client
+        creds = ApiCreds(
+            api_key=api_creds.api_key,
+            api_secret=api_creds.api_secret,
+            api_passphrase=api_creds.api_passphrase,
+        )
+        self._client = ClobClient(
+            host=self._host,
+            chain_id=self._chain_id,
+            key=self._private_key,
+            creds=creds,
+            signature_type=sig_type,
+            funder=self._funder,
+        )
+        self._initialized = True
+        LOGGER.info("CLOBOrderClient initialized OK")
+
+    # ------------------------------------------------------------------
+    # Order operations
+    # ------------------------------------------------------------------
+
+    def place_limit_buy(
+        self,
+        token_id: str,
+        price: float,
+        size_usdc: float,
+    ) -> OrderResult:
+        """Place a limit BUY order.
+
+        Args:
+            token_id:   Polymarket CLOB token ID for the OVER outcome.
+            price:      Limit price (0.01–0.99, two decimal places).
+            size_usdc:  Desired maximum USDC cost; converted to CTF shares.
+
+        Returns:
+            OrderResult with success flag and order_id if accepted.
+        """
+        if price <= 0 or price >= 1:
+            return OrderResult(success=False, error=f"Invalid buy price: {price}")
+        if size_usdc <= 0:
+            return OrderResult(success=False, error=f"Invalid size_usdc: {size_usdc}")
+
+        rounded_price = round(price, 2)
+        if rounded_price <= 0 or rounded_price >= 1:
+            return OrderResult(success=False, error=f"Invalid rounded buy price: {rounded_price}")
+
+        size_shares = size_usdc / rounded_price
+        if not math.isfinite(size_shares) or size_shares <= 0:
+            return OrderResult(success=False, error=f"Invalid computed share size: {size_shares}")
+
+        if self.dry_run:
+            LOGGER.info(
+                "DRY-RUN: would BUY %.4f shares @ %.3f (max_cost=$%.2f)  token=%s...%s",
+                size_shares, rounded_price, size_usdc, token_id[:12], token_id[-6:],
+            )
+            return OrderResult(
+                success=True,
+                order_id=f"dry_run_{int(time.time()*1000)}",
+                status="dry_run",
+                size_shares=size_shares,
+                notional_usdc=size_usdc,
+            )
+
+        if not self._initialized or self._client is None:
+            return OrderResult(success=False, error="Client not initialized. Call initialize() first.")
+
+        try:
+            from py_clob_client.clob_types import OrderArgs
+            from py_clob_client.order_builder.constants import BUY
+        except ImportError:
+            return OrderResult(success=False, error="py-clob-client not installed")
+
+        order_args = OrderArgs(
+            token_id=token_id,
+            price=rounded_price,
+            size=size_shares,
+            side=BUY,
+        )
+
+        try:
+            t_sign = time.time()
+            signed = self._client.create_order(order_args)
+            sign_ms = (time.time() - t_sign) * 1000.0
+
+            t_post = time.time()
+            response = self._client.post_order(signed)
+            post_ms = (time.time() - t_post) * 1000.0
+
+            LOGGER.debug(
+                "Order posted: price=%.3f  shares=%.4f  max_cost=$%.2f  "
+                "sign=%.0fms  post=%.0fms  resp=%s",
+                rounded_price, size_shares, size_usdc, sign_ms, post_ms, response,
+            )
+
+            if not isinstance(response, dict):
+                return OrderResult(
+                    success=False,
+                    error=f"Unexpected response type: {type(response).__name__}: {response}",
+                    sign_ms=sign_ms,
+                    post_ms=post_ms,
+                )
+
+            order_id = response.get("orderID") or response.get("id") or response.get("order_id")
+            status   = response.get("status", "unknown")
+
+            if order_id:
+                LOGGER.info(
+                    "Order accepted: id=%s  status=%s  price=%.3f  shares=%.4f  "
+                    "max_cost=$%.2f  sign=%.0fms  post=%.0fms",
+                    order_id, status, rounded_price, size_shares, size_usdc, sign_ms, post_ms,
+                )
+                return OrderResult(
+                    success=True,
+                    order_id=str(order_id),
+                    status=str(status),
+                    sign_ms=sign_ms,
+                    post_ms=post_ms,
+                    size_shares=size_shares,
+                    notional_usdc=size_usdc,
+                )
+            else:
+                return OrderResult(
+                    success=False,
+                    error=f"No order_id in response: {response}",
+                    sign_ms=sign_ms,
+                    post_ms=post_ms,
+                )
+
+        except Exception as exc:
+            LOGGER.error("place_limit_buy failed: %s", exc)
+            return OrderResult(success=False, error=str(exc))
+
+    def cancel_order(self, order_id: str) -> bool:
+        """Cancel an open order. Returns True if cancelled or already gone."""
+        if self.dry_run:
+            LOGGER.info("DRY-RUN: would cancel order %s", order_id)
+            return True
+
+        if not self._initialized or self._client is None:
+            LOGGER.error("cancel_order called before initialize()")
+            return False
+
+        try:
+            resp = self._client.cancel(order_id)
+            LOGGER.info("Cancel order %s: %s", order_id, resp)
+            return True
+        except Exception as exc:
+            LOGGER.warning("cancel_order %s failed: %s", order_id, exc)
+            return False
+
+    def get_order(self, order_id: str) -> OrderStatus:
+        """Fetch current status of a single order."""
+        if self.dry_run:
+            return OrderStatus(order_id=order_id, status="dry_run", size_matched=0.0)
+
+        if not self._initialized or self._client is None:
+            return OrderStatus(order_id=order_id, status="unknown", error="not initialized")
+
+        try:
+            resp = self._client.get_order(order_id)
+            if not isinstance(resp, dict):
+                return OrderStatus(order_id=order_id, status="unknown", error=str(resp))
+
+            # py_clob_client response fields — normalize status to lowercase
+            status       = str(resp.get("status") or "unknown").lower()
+            size_matched = float(resp.get("size_matched") or 0.0)
+            price        = float(resp.get("price") or 0.0) or None
+
+            return OrderStatus(
+                order_id=order_id,
+                status=status,
+                size_matched=size_matched,
+                price=price,
+            )
+        except Exception as exc:
+            LOGGER.warning("get_order %s failed: %s", order_id, exc)
+            return OrderStatus(order_id=order_id, status="unknown", error=str(exc))
+
+    def get_trades_for_order(
+        self,
+        order_id: str,
+        token_id: str,
+        placed_at_ts: float,
+    ) -> Optional[TradeRecord]:
+        """Search trade history for a fill matching order_id.
+
+        get_order() is unreliable after market settlement — Polymarket clears
+        order records from its CLOB lookup when a market resolves. Trade records
+        are permanent. This method is the fallback used when get_order() returns
+        "unknown" for an order we believe should be resolved.
+
+        Strategy: query trades filtered by our maker_address + token_id + timestamp
+        (since order placement), then match against order_id in the trade fields.
+        If no order_id match is found but exactly one trade exists in the window,
+        that trade is assumed to be ours (we only ever have one order per token at
+        a time per session).
+
+        Args:
+            order_id:     The CLOB order ID we're looking for.
+            token_id:     The market token ID (over outcome token).
+            placed_at_ts: Unix timestamp when the order was placed (for time filter).
+
+        Returns:
+            TradeRecord if a matching fill is found, else None.
+        """
+        if self.dry_run:
+            return None
+
+        if not self._initialized or self._client is None:
+            LOGGER.warning("get_trades_for_order called before initialize()")
+            return None
+
+        if not self._maker_address:
+            LOGGER.warning("get_trades_for_order: maker_address not set, cannot query")
+            return None
+
+        try:
+            from py_clob_client.clob_types import TradeParams
+        except ImportError:
+            LOGGER.warning("get_trades_for_order: py-clob-client not installed")
+            return None
+
+        try:
+            params = TradeParams(
+                maker_address=self._maker_address,
+                market=token_id,
+                after=int(placed_at_ts),
+            )
+            trades = self._client.get_trades(params)
+        except Exception as exc:
+            LOGGER.warning("get_trades_for_order API call failed: %s", exc)
+            return None
+
+        if not trades:
+            LOGGER.debug(
+                "get_trades_for_order: no trades found for token=%s...%s since ts=%d",
+                token_id[:10], token_id[-6:], int(placed_at_ts),
+            )
+            return None
+
+        LOGGER.debug(
+            "get_trades_for_order: %d trade(s) found for token=%s...%s since ts=%d",
+            len(trades), token_id[:10], token_id[-6:], int(placed_at_ts),
+        )
+
+        # Prefer an exact order_id match in known trade fields.
+        # Polymarket trade objects may carry the order ID under different field
+        # names depending on whether we were maker or taker — check both.
+        match = None
+        for t in trades:
+            if not isinstance(t, dict):
+                continue
+            if (t.get("maker_order_id") == order_id
+                    or t.get("taker_order_id") == order_id
+                    or t.get("order_id") == order_id):
+                match = t
+                break
+
+        # Fallback: if exactly one trade exists in the window and no exact match
+        # was found, assume it's ours. We only ever post one order per token per
+        # session, so ambiguity is not possible.
+        if match is None and len(trades) == 1:
+            match = trades[0]
+            LOGGER.info(
+                "get_trades_for_order: no order_id match — using sole trade in window "
+                "(order_id=%s  trade=%s)",
+                order_id, match.get("id") or match.get("transaction_hash", "?"),
+            )
+
+        if match is None:
+            LOGGER.warning(
+                "get_trades_for_order: %d trade(s) found but none matched order_id=%s",
+                len(trades), order_id,
+            )
+            return None
+
+        # Parse price and size — API may return strings
+        try:
+            price = float(match.get("price") or 0.0)
+            size  = float(match.get("size") or match.get("size_matched") or 0.0)
+        except (TypeError, ValueError) as exc:
+            LOGGER.warning("get_trades_for_order: could not parse price/size: %s", exc)
+            return None
+
+        if price <= 0 or size <= 0:
+            LOGGER.warning(
+                "get_trades_for_order: invalid price=%.4f or size=%.4f in trade",
+                price, size,
+            )
+            return None
+
+        # Convert timestamp to ISO string
+        raw_ts = match.get("timestamp") or match.get("created_at") or match.get("time")
+        timestamp_iso = _ts_to_iso(raw_ts)
+
+        trade_id = str(match.get("id") or match.get("transaction_hash") or "unknown")
+        LOGGER.info(
+            "get_trades_for_order: fill confirmed  trade_id=%s  price=%.4f  "
+            "size=%.2f  timestamp=%s",
+            trade_id, price, size, timestamp_iso,
+        )
+        return TradeRecord(
+            trade_id=trade_id,
+            price=price,
+            size=size,
+            timestamp_iso=timestamp_iso,
+        )
