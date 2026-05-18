@@ -15,7 +15,48 @@ transition objective. It is split into five sections:
   quoting. Strategic, not a one-week task; phases A-E.
 - **Operational guidance** -- standing rules for day-to-day session work.
 
-Last roadmap review: **2026-05-17** (Active #16 model lineage
+Last roadmap review: **2026-05-17** (Active #16 v2 lineage
+extension shipped: build-time lineage now stamped on the
+Stage-1 cache, Stage-2 cache, Stage-3 v2 weights, EV-policy
+artifacts (report + 3 model JSONs), and the walk-forward
+certification report -- closes the 5 "Defer to v2" follow-ups
+from this morning's v1 shipment. Particularly timely: today's
+loss attribution identified Stage-1 as owning the 27pp bias,
+so the next time the Stage-1 cache is rebuilt (Active #8) the
+new cache will carry full lineage from day one. Earlier same
+day: Active #10 bet-level loss
+attribution shipped: per-bet 4-stage probability decomposition
+via the logit-additive FV chain, aggregated to surface "which
+stage owns the bias." First production run on 87 filled+settled
+bets reveals **Stage-1 owns ~100% of the 27pp over-prediction
+bias** (mean_p0=92.7%, mean_won=65.5%). Stage-2 contributes
++0.04pp, Stage-3 actively *helps* by -0.05pp, calibration is 0
+(shadow mode). This pinpoints Active #8's retrain target: the
+Stage-1 Poisson cache, not the Stage-2/3 weights. Earlier same
+day: Active #9 per-cohort
+calibration drift detection shipped: 8th drift dimension.
+Mirrors cohort_roi_health decomposition (edge / ask / inning /
+line / current-state-edge bucket) on calibration: per-cohort
+Brier + reliability gap vs aggregate. Two alert classes:
+aggregate-level (whole model >= 10pp gap, fires regardless of
+cohort breakdown) and per-cohort vs aggregate (>= 2x ratio with
+n >= 30). First production run on 44 settled bets fired the
+aggregate alert: **22.1pp reliability gap (mean_fv 92.6% vs
+mean_won 70.5%) -- model is over-predicting Overs systematically**;
+auto-attributed to 3 drifted inputs (stage2_run_env_delta PSI
+2.32, base_fair_value 1.75, team_offense_delta 1.37).
+Validates the zero-bet audit hypothesis: aggregate
+calibration_health was scoring "calibrator picked OK method"
+green while the calibrator's outputs themselves were 22pp off.
+Earlier same day: Active #11 counterfactual
+gate-change logger shipped: per-gate × per-alt-threshold × per-
+time-window cross-tab; top_recommendations ranked by trailing-
+30d realized-$ saved; daily-review block mirrors high-impact
+tightenings to Notes. First production run on 178 settled bets
+surfaced 7 actionable tightenings: gate_min_entry_ask 0.55->0.65
+saves $75.64/30d, gate_max_base_fv 0.99->0.95 saves $54.12/30d
+(high conf), gate_min_current_total 4->5 saves $44.31/30d.
+Earlier same day: Active #16 model lineage
 tracking shipped: both calibration artifacts + all four
 promote.py audit rows now carry build-time + promotion-time
 lineage [git_sha, builder_path, input_hashes]. Completes Phase
@@ -53,6 +94,411 @@ state-value report, UNDER walk-forward + certification all live with
 first production data.
 
 ## Recently completed
+
+- **Active #16 v2: artifact lineage extension** *(2026-05-17)* --
+  closes out the 5 "Defer to v2" follow-ups documented in this
+  morning's v1 shipment. The v1 ship stamped lineage on the
+  calibration artifacts (OVER + UNDER) and on all four `promote.py`
+  audit rows. V2 extends the same `compute_lineage` pattern to the
+  five other critical artifact builders so every promotion target
+  in the system now carries the full build context (git_sha,
+  builder_path, input_hashes, input_dir_summaries, cli_args_summary).
+
+  **Builders stamped**:
+  - **Stage-1 cache** (`cache/build_mlb_ou_cache.py`). Inputs
+    summarised: `data/games/<season_type>/` directory tree. CLI args:
+    season_type, game_types, lines, min_games, max_combined,
+    extras_bucket, history window dates, season_weighting_path,
+    out path. **Particularly timely**: today's Active #10 shipment
+    identified Stage-1 as owning ~100% of the 27pp aggregate
+    over-prediction bias, so the next Stage-1 rebuild (Active #8)
+    will produce a cache carrying full lineage from day one.
+  - **Stage-2 cache** (`cache/build_mlb_stage2_run_env.py`). Inputs:
+    Stage-1 cache (hashed) + games dir (summarised). CLI args:
+    season_type, game_types, train_end_year, validation_start_year,
+    max_total_delta, stage1_cache, out.
+  - **Stage-3 v2 weights** (`scripts/analysis/promote_team_offense_v2.py`).
+    Inputs: phase4_models.json source artifact (hashed). CLI args:
+    source_artifact, output_path, dry_run flag.
+  - **EV-policy backtest** (`scripts/analysis/backtest_ev_policy.py`).
+    Inputs: training table + manifest (both hashed). Lineage block
+    attached to the main report PLUS each of the three runtime-loaded
+    model JSONs (`ev_signal_win_if_filled_model`,
+    `ev_execution_fill_runtime_model`, `ev_execution_fill_strict_model`).
+    CLI args: model_family, artifact_purpose, table_path,
+    manifest_path, output_root.
+  - **Walk-forward certification** (`scripts/analysis/build_walk_forward_certification.py`).
+    Inputs: training table (hashed). CLI args include the readiness
+    label + n_filled at build time so the lineage block self-
+    describes the cert's state.
+
+  **Real production smoke test on 2026-05-17**: rebuilt
+  walk_forward_certification end-to-end; new artifact carries:
+  ```
+  "lineage": {
+    "schema_version": 1,
+    "builder_path": "scripts/analysis/build_walk_forward_certification.py",
+    "git_sha": "91b70a1348f2",
+    "git_dirty": true,
+    "input_hashes": {
+      "data/analysis_output/training_tables/signal_training_table.jsonl": "sha256:..."
+    },
+    "cli_args_summary": {
+      "readiness_label": "PRELIMINARY", "n_filled": 88, ...
+    }
+  }
+  ```
+
+  **Pattern is identical across all 5 builders**: try/except import
+  of `artifact_lineage.compute_lineage` (project-relative import or
+  bare module name); call `compute_lineage(builder_path=__file__,
+  input_paths=..., input_dir_paths=..., project_root=PROJECT_DIR,
+  extra={cli_args_summary: ...})`; attach to top-level `payload["lineage"]`;
+  wrap the whole block in `try/except` so a stamp failure never
+  blocks the artifact write. Fail-open is critical -- a missing
+  lineage stamp is recoverable on the next refresh; a failed
+  artifact build is not.
+
+  **What's still deferred to v3**:
+  - **Live-engine startup-time lineage logging**: when the runtime
+    boots and loads the Stage-1/2/3 caches + calibrator artifacts,
+    log a single INFO line per artifact with its lineage summary.
+    Operator can grep the runtime log to confirm which artifact
+    version was live for any given session. Independent of the
+    builders; can ship as a single live_engine_setup.py change.
+  - **Cache-freshness daily-review block**: surface "your Stage-1
+    cache is N days old, last input mtime was X" in the daily
+    review by reading the lineage off each cache file. Becomes
+    actionable once a few weeks of cache rebuilds have accumulated.
+  - **Historic-artifact backfill**: impossible by construction --
+    pre-V1 artifacts were built before lineage existed, so the
+    git_sha + dataset state is gone. From today forward, every NEW
+    artifact carries lineage.
+
+  **Files**: `cache/build_mlb_ou_cache.py` (Stage-1 stamp in `main`),
+  `cache/build_mlb_stage2_run_env.py` (Stage-2 stamp before payload
+  write), `scripts/analysis/promote_team_offense_v2.py` (Stage-3 v2
+  stamp in `main`), `scripts/analysis/backtest_ev_policy.py`
+  (lineage computed once + `_with_lineage` helper attaches to all
+  4 artifacts), `scripts/analysis/build_walk_forward_certification.py`
+  (cert stamp in `main`). New test module
+  `tests/test_lineage_v2_builder_wiring.py` (12 tests: 2 end-to-end
+  cert verification, 5 opportunistic on-disk shape checks that
+  skip cleanly when artifacts pre-date the shipment, 5 builder
+  importability smoke tests). **1093 tests + 41 subtests pass
+  (5 skipped on cache artifacts that haven't rebuilt yet).**
+
+- **Active #10: bet-level loss attribution** *(2026-05-17)* -- the
+  natural follow-up to today's Active #9 shipment. Where #9
+  detects "the model is mis-calibrated by 22pp," this answers
+  "which stage of the FV pipeline owns the miscalibration?" The
+  load-bearing observation: the FV chain composes logit-additively
+  in production, verified to 0.001 on all 87 filled+settled bets
+  (calibration is in shadow mode, so calibration_delta ~= 0):
+  ```
+  fair_value = sigmoid(
+      logit(base_fair_value)        # Stage-1
+      + stage2_run_env_delta        # Stage-2 (park / weather)
+      + team_offense_delta          # Stage-3 (team offense)
+      + calibration_delta           # final calibrator
+  )
+  ```
+  That identity gives a clean per-stage probability decomposition
+  every operator can read.
+
+  **Math** (`scripts/analysis/build_loss_attribution_report.py`):
+  - Per bet: `p0 = base_fv`, `p1 = sigmoid(logit(p0) + s2)`,
+    `p2 = sigmoid(logit(p1) + s3)`, `p3 = fair_value`.
+  - Per-stage shifts: `s1 = p0 - 0.5` (Stage-1 baseline shift from
+    neutral), `s2 = p1 - p0`, `s3 = p2 - p1`,
+    `sc = p3 - p2` (calibration residual).
+  - Aggregate `bias = mean_p3 - mean_won` (signed; positive =
+    over-prediction).
+  - Per-stage `mean_shift_in_bias_direction = mean(s_X) * sign(bias)`
+    -- the stage's mean shift projected onto the bias direction. A
+    stage that pushed FV further into the bias gets a positive
+    value; a stage that pushed against the bias gets a negative
+    value.
+  - `attribution_share = max(0, in_bias_dir) / sum(positive
+    in_bias_dirs)` -- "of the stages that hurt, what fraction does
+    this one own." Stages that helped (negative) get a 0 share --
+    they aren't a culprit.
+  - `top_culprits` = stages with share >= 25% sorted DESC. The
+    operator's "which lever do I pull" surface.
+
+  **Three time windows** (all / trailing_30d / trailing_7d) so
+  the operator can compare recent trends against the full sample.
+  **Per-cohort breakdown** across the same 5 dimensions as
+  `cohort_calibration_health` (edge_bucket, ask_bucket,
+  inning_bucket, line_bucket, current_state_edge_bucket) so the
+  operator can drill from "Stage-1 owns 95%" to "Stage-1 owns
+  100% of the inning>=8 cohort" if needed.
+
+  **Daily-review block** `_loss_attribution_health` reads the
+  trailing-30d aggregate + top culprit and mirrors a single
+  retrain-target Notes alert with prefix `Loss-attribution:` when
+  `|bias| >= 5pp` AND some stage owns `>= 50%` of the bias. Below
+  that, the bias is structurally distributed and the operator
+  should read the full artifact rather than act on a Notes-line.
+  Stale-artifact check fires after 14d.
+
+  **First production run on 2026-05-17** across 87 filled+settled
+  bets (trailing window includes everything since 2026-04-17):
+  - Aggregate bias: **+27.1pp** (model over-predicting; mean_p0
+    =92.7%, mean_p3=92.7%, mean_won=65.5%).
+  - **`stage1_baseline` owns 99.9% of the bias direction
+    (mean_shift_in_bias_direction = +42.7pp).**
+  - `stage2_run_env`: mean shift +0.04pp (effectively neutral).
+  - `stage3_team_offense`: mean shift -0.05pp (actively helping
+    by a small amount).
+  - `calibration`: 0.00pp (shadow mode -- doesn't shift live FV).
+
+  **The Notes alert it produces:** "trailing-30d aggregate bias
+  +27.1pp (model over_predicting, n=87); `stage1_baseline` owns
+  100% of the bias direction (shift +42.7pp). This is the retrain
+  target -- cross-check with cohort_calibration_health and
+  concept_drift_health before changing the live cache."
+
+  **Strategic implication for Active #8**: the roadmap entry for
+  "Stage-2 / Stage-3 fresh-test calibration audit (Phase 6)"
+  proposed rebuilding both Stage-2 + Stage-3 v2. Today's data
+  says **focus the retrain on Stage-1**, not Stage-2 or Stage-3.
+  Stage-2 and Stage-3 are doing their job within the noise floor;
+  the bot's over-prediction is coming from the Stage-1 Poisson
+  cache base rate being too high for the cohorts we're betting
+  in. That likely means the Stage-1 cache (5-year historical
+  prior) is over-confident on the modern league's run environment,
+  or our selection bias is concentrated in states the Stage-1
+  cache is most over-confident on. Either way, Active #8's
+  rebuild surface narrows from "Stage-2 + Stage-3 retrain" to
+  "Stage-1 cache rebuild on fresh seasons + cohort-conditional
+  audit."
+
+  **Loosening counterfactuals + execution slippage deferred to
+  v2.** v1 ships probability-space attribution only. Execution
+  slippage (`actual_fill_price - decision_ask`) is a separate
+  decomposition that affects ROI but not FV; it requires
+  `actual_fill_price` in the training table (currently missing
+  for the 87-bet historical sample). v2 adds it.
+
+  **Files**: new `scripts/analysis/build_loss_attribution_report.py`
+  (~480 LOC: logit/sigmoid math, `BetDecomposition` dataclass,
+  `decompose_bet` projection + filter, `aggregate_decompositions`
+  math with positive-sum normalization, 3-window slicing,
+  per-cohort aggregation across the 5 standard dimensions, markdown
+  render), `scripts/analysis/run_daily_refresh.py` (new
+  `loss_attribution_report` step after walk_forward_certification),
+  `scripts/analysis/build_daily_human_review_report.py` (new
+  `_loss_attribution_health` block + Notes mirror + build_report
+  wiring), 32 new tests in `test_build_loss_attribution_report.py`
+  (math identities, filter logic, stage-shift math, aggregate +
+  attribution-share math, window slicing, cohort breakdown,
+  schema completeness, markdown render, end-to-end main + empty
+  input), 10 new tests in `LossAttributionHealthTests` (artifact
+  loading, clear-culprit alert text, no-single-culprit softer
+  alert, small-bias suppression, under-predict direction tag,
+  empty trailing window, stale artifact, compact schema, Notes
+  mirror prefix). **1086 tests + 41 subtests pass.**
+
+- **Active #9: per-cohort calibration drift detection** *(2026-05-17)* --
+  the 8th drift dimension. The aggregate `calibration_health` block
+  scores the calibrator's method selection + audit metadata; this
+  block answers the orthogonal question: **does the calibrated FV
+  actually match realized win-rate, per cohort?** Today's zero-bet
+  audit was the catalyst: the aggregate calibration looked green
+  while a 22pp aggregate reliability gap was hiding in plain sight
+  beneath it, and the CHC@CWS over-the-line miss (model said 54.7%,
+  reality went 17 runs vs 10.5 line) was the canonical failure mode.
+
+  **What it computes** (in `build_daily_human_review_report.py`):
+  - For every filled+settled bet with `won` populated and
+    `fair_value` in [0, 1]: `_aggregate_calibration` returns `n`,
+    `mean_fair_value`, `mean_won`, `reliability_gap` (=
+    `|mean_fv - mean_won|`), and `brier` (= `mean((fv - won)^2)`).
+  - Aggregate metrics computed once on the trailing-7d window
+    (same window as `cohort_roi_health` so cross-comparison stays
+    apples-to-apples).
+  - Per-cohort metrics computed across the same 5 dimensions as
+    `cohort_roi_health` via `COHORT_DIMENSIONS`: `edge_bucket`,
+    `ask_bucket`, `inning_bucket`, `line_bucket`,
+    `current_state_edge_bucket`. Each bucket also carries
+    `reliability_gap_ratio_vs_aggregate` for ad-hoc inspection.
+
+  **Two alert classes** ship together. The user-spec was cohort-only
+  but real-data smoke testing showed cohorts rarely reach the
+  required n=30 at current volume; without an aggregate alert the
+  block would have stayed silent today even with a 22pp aggregate
+  gap. Both alerts mirror to top-level Notes with prefix
+  `Cohort-calibration:`.
+  - **Aggregate alert**: fires when aggregate reliability gap >= 10pp
+    AND aggregate n >= 15. Catches whole-model miscalibration even
+    when no single cohort dominates. The first production run hit
+    this at **22.1pp gap (n=44)**, exact same shape today's
+    zero-bet audit predicted.
+  - **Per-cohort vs aggregate ratio**: fires when a cohort's
+    reliability gap is >= 2x the aggregate gap AND cohort n >= 30
+    AND aggregate gap >= 1pp (the floor avoids dividing by ~0).
+    Suppresses today's failure-mode noise while letting structural
+    cohort divergence surface once volume accumulates.
+
+  **Direction-aware alert text** spells out whether the model is
+  `over-predicting` or `under-predicting` per cohort. Reuses the
+  same promotion / demotion / concept-drift attribution helpers as
+  `cohort_roi_health`, so alerts get the same enrichment suffixes
+  (e.g. today's aggregate alert auto-attached
+  `[concept-drift: stage2_run_env_delta psi 2.32,
+  base_fair_value psi 1.75, team_offense_delta psi 1.37]`).
+
+  **Why this is the 8th drift dimension, not a tweak to the
+  existing `calibration_health` block**: the existing block scores
+  the calibrator's *selection* metadata (which method, stability
+  gate, identity rejection). This block scores the calibrator's
+  *output quality* against realized outcomes. They're orthogonal
+  -- the calibrator can pick the "right" method by validation
+  logloss and still produce systematically biased FVs if the
+  underlying Stage-1/2/3 inputs have drifted (which is exactly
+  the situation `concept_drift_health` has been flagging for ~5
+  days). Splitting them keeps each block's responsibility tight
+  and avoids blowing up the existing calibration audit schema.
+
+  **First production run on 2026-05-17** (44 filled+settled bets
+  in the trailing 7d window):
+  - Aggregate alert fires: `mean_fv 92.6% vs mean_won 70.5%`,
+    gap **22.1pp**, model **over-predicting systematically**.
+    Attribution suffix: `stage2_run_env_delta psi 2.32`,
+    `base_fair_value psi 1.75`, `team_offense_delta psi 1.37`
+    -- consistent with the concept-drift block's 5-day-old finding
+    that the model is being fit on materially-shifted inputs.
+  - No per-cohort alerts fire (all buckets have n < 30 at current
+    volume). The block will start firing cohort-level alerts as
+    volume accumulates; today the aggregate alert IS the signal.
+  - Cohort-level table still populated for operator inspection:
+    `inning_bucket=6` shows 42pp gap on 13 bets, `ask_bucket=0.75-0.85`
+    shows 35pp gap on 29 bets -- both directionally consistent with
+    the aggregate but below the n=30 alert floor.
+
+  **Files**: `scripts/analysis/build_daily_human_review_report.py`
+  (5 new module constants `COHORT_CALIBRATION_*`, new
+  `_bet_is_calibratable` filter helper, new `_aggregate_calibration`
+  math helper, new `_cohort_calibration_health` block computing
+  aggregate + per-cohort + ratio + alerts + attribution,
+  `build_report` wiring, `_build_notes` mirror with
+  `Cohort-calibration:` prefix). 21 new tests in
+  `CohortCalibrationHealthTests` covering the filter, the math
+  (perfectly-calibrated zero gap, over- and under-prediction
+  directions, empty cohort returns None), alert firing /
+  suppression boundaries (aggregate threshold, aggregate min-n,
+  per-cohort 2x ratio, per-cohort n=30 floor, missing-bucket
+  exclusion, aggregate gap floor for ratio test), trailing
+  reviews contributing to window, schema completeness,
+  promotion-attribution suffix, and Notes-mirror prefix.
+  **1044 tests + 41 subtests pass.**
+
+- **Active #11: counterfactual gate-change logger** *(2026-05-17)* --
+  the second-fastest gate-decision tool in the project, sitting next
+  to the walk-forward certification (Active #1) but answering a
+  different question. Cert says "is this gate structurally sound on
+  average against READY-sized data?"; counterfactual says "if I had
+  tightened this gate by one click over the trailing-30d / 7d, how
+  much money would I have saved in realized P&L?"
+
+  **Why offline + reuse the cert's gate library** instead of the
+  per-candidate runtime ledger the roadmap text proposed:
+  `signal_training_table.jsonl` already carries every field needed
+  (edge, ask, inning, runs_needed, base_fair_value, stage2 delta,
+  current_total, lead_abs, etc.) joined to target_win / target_profit
+  per filled bet. `build_walk_forward_certification.py` already
+  defines `GATE_DEFS` + `_sweep_one` that re-evaluate any gate at
+  any threshold against any cohort. The counterfactual reuses both
+  -- zero runtime risk, single source of truth for gate definitions,
+  and the report ships richer cross-tabs than a per-candidate ledger
+  could surface.
+
+  **What ships**:
+  - **`scripts/analysis/build_gate_counterfactual_report.py`** (~410
+    LOC). Imports `GATE_DEFS`, `BetRow`, `load_bet_rows`, `_sweep_one`
+    from the cert. For each gate × each sweep threshold × each window
+    (`all`, `trailing_30d`, `trailing_7d`) computes:
+    - `counterfactual_profit_delta_vs_current` = the realized $ that
+      enforcing the alt threshold instead of the current one would
+      have saved (positive) or sacrificed (negative). Formula:
+      `cur_blocked.total_profit - alt_blocked.total_profit` (the
+      identity works for both tightenings and loosenings; sign
+      carries the interpretation).
+    - `kept_roi_delta_vs_current` = kept_cohort_roi shift after the
+      flip.
+    - Anchor row at the current threshold (`is_current=True`,
+      delta=None) so every panel has a baseline anchor.
+    - `is_tightening` direction inference (max-direction lower = tighter,
+      min-direction higher = tighter).
+  - **`top_recommendations`** list ranks the highest-impact tightening
+    counterfactuals over trailing-30d (primary) and trailing-7d
+    (freshest signal, lower confidence). Filters: tightening-only,
+    blocked_n_filled >= 5, $-savings >= $25 (builder floor),
+    sorted DESC by $-savings, cap at 10 entries. Confidence label
+    auto-degrades on blocked-N: high >= 20, medium >= 10, low < 10.
+  - **`gate_counterfactual_report` refresh step** wired in
+    `run_daily_refresh.py` right after `walk_forward_certification`
+    (depends on the same training table). Outputs to
+    `data/analysis_output/gate_counterfactual/gate_counterfactual_report.{json,md}`.
+  - **`gate_counterfactual_health` block** in
+    `build_daily_human_review_report.py` reads the artifact,
+    compacts the top recommendations onto the daily review payload,
+    and mirrors the top-3 high-impact ones (>= $40 savings, the
+    Notes-mirror layer applies a stricter floor than the builder
+    so day-to-day single-bet noise doesn't crowd Notes) to top-level
+    `notes` with prefix `Gate-counterfactual:`. Stale-artifact age
+    check fires after 14d.
+
+  **Loosening counterfactuals deferred to v2.** When the current
+  threshold blocks a bet that WOULD have won, the cert sweep gives
+  the right number, but the "would have placed AND filled" assumption
+  on never-placed candidates is unsupported without a p_fill model.
+  Tightening is high-confidence (we know exactly which bets were
+  placed and filled); loosening is lower-confidence. v1 surfaces
+  tightening only; v2 can add loosening with an explicit p_fill
+  estimator + lower confidence labeling.
+
+  **First production run on 2026-05-17** across 178 settled bet rows:
+  7 tightening recommendations cleared the trailing-30d floor:
+  - `gate_min_entry_ask` 0.55 → 0.65 saves **$+75.64** (blocked N=15,
+    blocked ROI -36.0%, confidence medium).
+  - `gate_max_base_fv` 0.99 → 0.95 saves **$+54.12** (blocked N=41,
+    blocked ROI -18.6%, confidence high).
+  - `gate_min_current_total` 4 → 5 saves **$+44.31** (blocked N=20,
+    blocked ROI -20.2%, confidence high).
+  - `gate_s2_suppress_max` -0.20 → 0.0 saves **$+41.34** (blocked N=23,
+    confidence high).
+  - `gate_runs_needed_max` 3.5 → 2.5 saves **$+35.54** (blocked N=13,
+    confidence medium).
+  - Plus 2 more (gate_min_inning, gate_min_edge) below the Notes-
+    mirror floor but visible in the JSON artifact.
+
+  Trailing-7d (single recommendation surfacing the freshest signal):
+  `gate_max_base_fv` 0.99 → 0.95 saves **$+28.66** in just the
+  trailing 7d (blocked N=24) -- this is the single-gate flip with
+  the clearest immediate evidence, and the cert's gate scorecard
+  expansion shipped earlier today is consistent (gate_max_base_fv
+  has historically been at saturation; lowering it captures the
+  phantom-score fingerprint earlier).
+
+  **Operational use**: read the trailing-30d top section first
+  (medium/high confidence), cross-check against the cert's per-gate
+  verdict (currently PRELIMINARY at 178 bets; doesn't actuate yet
+  but informs operator's eventual day-30 threshold decisions), then
+  use `promote.py gate-threshold <name> <value>` to change. Daemon
+  is preview-only for gate-threshold; no auto-actuation.
+
+  **Files**: new `scripts/analysis/build_gate_counterfactual_report.py`,
+  `scripts/analysis/run_daily_refresh.py` (new
+  `gate_counterfactual_report` step), `scripts/analysis/build_daily_human_review_report.py`
+  (new `_gate_counterfactual_health` block + Notes mirror +
+  build_report wiring), new `tests/test_build_gate_counterfactual_report.py`
+  (25 tests covering window slicing, tightening direction inference,
+  counterfactual math, applicability, top_recommendations filters,
+  confidence labels, markdown render, end-to-end main), new
+  `GateCounterfactualHealthTests` (10 tests in the daily-review test
+  file). 1023 tests + 41 subtests pass.
 
 - **Walk-forward gate-scorecard expansion** *(2026-05-17)* -- the
   Active #1 walk-forward certification report expanded from 5 to
@@ -1811,52 +2257,52 @@ ledger rows), but the code exists.
    - Files: `cache/build_mlb_stage2_run_env.py`, `model_improvements/`
      Phase 6 notes (to be written), training corpora under `data/games/`.
 
-9. **Per-cohort calibration drift detection.** Today's
-   `calibration_health` is aggregate -- a model that is well-calibrated
-   on average but mis-calibrated in one cohort (e.g. high-ask, late-
-   innings, score-event family only) will pass the existing alert
-   while quietly bleeding money on the bad cohort. Mirror the
-   `cohort_roi_health` decomposition (edge / ask / inning / line /
-   current-state-edge bucket) onto calibration: per-cohort Brier +
-   reliability-curve deviation against the aggregate calibrator.
-   Fires when any cohort's reliability gap exceeds aggregate by >=
-   2x AND has >= 30 samples. Becomes the 8th drift dimension; same
-   Notes-block mirroring as the other seven.
+9. **Per-cohort calibration drift detection.** *Shipped 2026-05-17.*
+   See the Recently Completed "Active #9: per-cohort calibration
+   drift detection" entry for full details. v1 ships two alert
+   classes: an aggregate-level alert (whole-model gap >= 10pp,
+   n >= 15) and the originally-specced per-cohort vs aggregate
+   ratio alert (cohort gap >= 2x aggregate, n >= 30). The
+   aggregate alert was added during real-data smoke testing when
+   the original cohort-only design would have stayed silent
+   despite a 22pp aggregate reliability gap visible in today's
+   production data. Mirrors `cohort_roi_health` decomposition
+   across 5 dimensions and reuses promotion / demotion / concept-
+   drift attribution helpers. Original roadmap text below
+   preserved for context.
    - Files: `scripts/analysis/build_daily_human_review_report.py`
      (new `cohort_calibration_health` block);
      `calibrate_signal_probabilities.py` (per-cohort reliability
      decomposition helper).
 
-10. **Bet-level loss attribution.** Currently every bet has an
-    outcome (won/lost) and a P&L, but when we lose we cannot answer
-    "which model component owned this loss?" -- Stage-1 (base rate
-    wrong), Stage-2 (park/weather wrong), Stage-3 (team offense
-    wrong), calibration (FV->p mapping wrong), execution (filled at
-    wrong price). For every settled bet, compute the marginal
-    contribution of each model component to the realized error
-    (decompose `actual_total - fair_value_uncalibrated` into stage
-    contributions; decompose `fair_value_calibrated - 0.5` into the
-    pieces calibration shifted). Aggregate over the trailing window
-    so the daily review shows "X% of losses attributable to Stage-3,
-    Y% to calibration, Z% to execution slippage." Tells the operator
-    *which lever to pull* on a bad week instead of guessing.
+10. **Bet-level loss attribution.** *Shipped 2026-05-17.* See the
+    Recently Completed "Active #10: bet-level loss attribution"
+    entry for full details. v1 ships probability-space attribution
+    via the logit-additive FV chain identity (verified to 0.001 on
+    all 87 production bets). First production run reveals Stage-1
+    owns ~100% of the 27pp aggregate over-prediction bias, with
+    Stage-2/Stage-3 actively neutral-to-helping. This re-targets
+    Active #8 from "rebuild Stage-2 + Stage-3" to "rebuild Stage-1
+    cache." Execution slippage deferred to v2 (training table
+    doesn't yet carry `actual_fill_price` for historic rows).
     - Files: new
       `scripts/analysis/build_loss_attribution_report.py`; consumed
       by `build_daily_human_review_report.py` (new
       `loss_attribution_health` block).
 
-11. **Counterfactual gate-change logger.** Today, deciding whether
-    a gate threshold change is good requires waiting for a 30-day
-    walk-forward. But for every candidate evaluated, we already have
-    enough information to compute "would this candidate have been
-    bet under threshold X' instead of X?" -- it's just a
-    re-evaluation of the gate predicate. Persist a sparse
-    counterfactual log per candidate: `{candidate_id, gate_name,
-    current_threshold, alt_thresholds: [(thr, would_bet, edge,
-    p_fill_estimate), ...]}`. On settlement, the outcome is known,
-    so we get the realized P&L of each alternative threshold
-    *without paper-trading them*. Operator gets near-real-time gate
-    A/B telemetry that today takes a full walk-forward cycle.
+11. **Counterfactual gate-change logger.** *Shipped 2026-05-17.* See
+    the Recently Completed "Active #11: counterfactual gate-change
+    logger" entry for full details. v1 ships as pure offline analysis
+    that reuses the cert's `GATE_DEFS` + `_sweep_one` against three
+    time windows (all / trailing_30d / trailing_7d), with a
+    `top_recommendations` list ranked by trailing-30d realized-$
+    saved and a daily-review block that mirrors high-impact
+    tightenings (>= $40 savings) to Notes. Tightening direction only
+    in v1; loosening counterfactuals deferred to v2 (need a p_fill
+    model on never-placed candidates). First production run on 178
+    bets surfaced 7 actionable tightenings, the headline being
+    `gate_min_entry_ask` 0.55->0.65 saving $75.64 over the last 30d.
+    Original roadmap text below preserved for v2-design context.
     - Files: `scripts/trading/signal_pipeline_postfv_gates.py` (emit
       counterfactual rows); new
       `scripts/analysis/build_gate_counterfactual_report.py`.
@@ -1930,9 +2376,13 @@ ledger rows), but the code exists.
     (fresh git sha at promotion time) on every success-path
     audit row. Surfaced in `promote.py status` so operators can
     answer "which artifact + which git_sha?" without git
-    archaeology when fast_demote (#13) fires. Follow-up:
-    extend to Stage-2/Stage-3 cache builders + EV-policy
-    artifacts (~30 min each, same `compute_lineage` pattern).
+    archaeology when fast_demote (#13) fires. **V2 shipped
+    2026-05-17 (same day)**: lineage now also stamped on the
+    Stage-1 cache, Stage-2 cache, Stage-3 v2 weights, EV-policy
+    artifacts (report + 3 model JSONs), and walk-forward
+    certification report. Remaining v3 follow-ups: live-engine
+    startup-time lineage logging + cache-freshness daily-review
+    block.
 
 ## Bidirectional trading -> market-making (long-horizon)
 

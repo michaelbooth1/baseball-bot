@@ -1104,6 +1104,40 @@ def main(argv=None) -> int:
     rows = load_bet_rows(Path(args.training_table))
     payload = build_certification_payload(rows)
 
+    # Active #16 v2 (2026-05-17): stamp lineage on the certification
+    # report. When the operator acts on a per-gate verdict (RETUNE,
+    # RETIRE) the audit row should be able to point at WHICH cert
+    # produced the recommendation -- this lineage block answers that
+    # by capturing the training-table hash + git_sha at build time.
+    try:
+        from scripts.analysis.artifact_lineage import compute_lineage as _compute_lineage
+    except ImportError:
+        try:
+            from artifact_lineage import compute_lineage as _compute_lineage  # type: ignore[no-redef]
+        except ImportError:
+            _compute_lineage = None  # type: ignore[assignment]
+    if _compute_lineage is not None:
+        try:
+            payload["lineage"] = _compute_lineage(
+                builder_path=__file__,
+                input_paths=[args.training_table],
+                project_root=PROJECT_DIR,
+                extra={
+                    "cli_args_summary": {
+                        "training_table": str(args.training_table),
+                        "output_dir": str(args.output_dir),
+                        "readiness_label": (
+                            payload.get("readiness") or {}
+                        ).get("label"),
+                        "n_filled": (
+                            payload.get("overall") or {}
+                        ).get("n_filled"),
+                    },
+                },
+            )
+        except Exception as _lineage_exc:  # noqa: BLE001
+            print(f"[lineage] warning: stamp failed: {_lineage_exc!r}")
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     json_path = output_dir / "walk_forward_certification.json"

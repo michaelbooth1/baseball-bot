@@ -156,6 +156,42 @@ def main(argv=None) -> int:
     except RuntimeError as exc:
         print(f"Promotion failed: {exc}", file=sys.stderr)
         return 1
+
+    # Active #16 v2 (2026-05-17): stamp lineage on the promoted
+    # weights JSON. Anchored on the source artifact's hash so when
+    # the cache file is later inspected the operator can trace it
+    # back to a specific phase4_models.json + the git_sha that ran
+    # the promotion. Fail-open: lineage failure must not block the
+    # promotion write.
+    try:
+        from scripts.analysis.artifact_lineage import compute_lineage as _compute_lineage
+    except ImportError:
+        try:
+            from artifact_lineage import compute_lineage as _compute_lineage  # type: ignore[no-redef]
+        except ImportError:
+            _compute_lineage = None  # type: ignore[assignment]
+    if _compute_lineage is not None:
+        try:
+            from pathlib import Path as _P
+            _project_dir = _P(__file__).resolve().parents[2]
+            payload["lineage"] = _compute_lineage(
+                builder_path=__file__,
+                input_paths=[args.source_artifact],
+                project_root=_project_dir,
+                extra={
+                    "cli_args_summary": {
+                        "source_artifact": str(args.source_artifact),
+                        "output_path": str(args.output_path),
+                        "dry_run": bool(args.dry_run),
+                    },
+                },
+            )
+        except Exception as _lineage_exc:  # noqa: BLE001
+            print(
+                f"[lineage] warning: stamp failed: {_lineage_exc!r}",
+                file=sys.stderr,
+            )
+
     rendered = json.dumps(payload, indent=2, sort_keys=True)
     if args.dry_run:
         print(rendered)

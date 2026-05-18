@@ -2442,6 +2442,52 @@ def build_refresh_steps(config: RefreshConfig, session_dates: Sequence[str], max
         ],
     ))
 
+    # Active #10 (2026-05-17): bet-level loss attribution report.
+    # Decomposes each filled+settled bet's calibrated FV via the
+    # logit-additive chain (p0 -> p1 -> p2 -> p3) into per-stage
+    # probability contributions, then aggregates across the trailing
+    # window to surface which stage owns the largest share of the
+    # aggregate bias (mean_p3 - mean_won). Pure offline analysis;
+    # reads signal_training_table.jsonl, writes under
+    # data/analysis_output/loss_attribution/.
+    steps.append(RefreshStep(
+        name="loss_attribution_report",
+        description=(
+            "Rebuild the Active #10 bet-level loss attribution "
+            "report -- per-stage decomposition of each filled+settled "
+            "bet's FV chain into Stage-1 / Stage-2 / Stage-3 / "
+            "calibration contributions, plus aggregate culprit "
+            "ranking by share of bias direction."
+        ),
+        command=[
+            _python(),
+            _script("scripts/analysis/build_loss_attribution_report.py"),
+        ],
+    ))
+
+    # Active #11 (2026-05-17): gate counterfactual report. Reuses the
+    # cert's GATE_DEFS + _sweep_one to compute realized-$ counterfactual
+    # deltas for each (gate, alt_threshold, time_window). Surfaces a
+    # `top_recommendations` list ranked by trailing-30d $ saved so the
+    # operator can see "if I had tightened X to Y last week, I would
+    # have saved $Z." Pure offline analysis; reads
+    # signal_training_table.jsonl, writes under
+    # data/analysis_output/gate_counterfactual/.
+    steps.append(RefreshStep(
+        name="gate_counterfactual_report",
+        description=(
+            "Rebuild the Active #11 gate counterfactual report -- "
+            "for each enforced gate, each sweep threshold, each "
+            "time window (all / trailing_30d / trailing_7d), compute "
+            "the realized-$ counterfactual P&L delta vs. current and "
+            "rank the top tightening recommendations."
+        ),
+        command=[
+            _python(),
+            _script("scripts/analysis/build_gate_counterfactual_report.py"),
+        ],
+    ))
+
     steps.append(RefreshStep(
         name="quote_engine_shadow_report",
         description=(

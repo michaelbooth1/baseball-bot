@@ -94,6 +94,43 @@ COHORT_ROI_MIN_BETS_FOR_ALERT = 5
 COHORT_ROI_LOSING_THRESHOLD = -0.10
 COHORT_ROI_REGIME_DELTA = 0.15
 
+# Active #9 (2026-05-17): per-cohort calibration drift detection. The
+# 8th drift dimension. The aggregate `calibration_health` block tells
+# the operator "is the model calibrated on average"; this block answers
+# "is any cohort SYSTEMATICALLY mis-calibrated even when the aggregate
+# looks fine." Mirrors COHORT_DIMENSIONS used by cohort_roi_health so
+# cuts are consistent across the drift family.
+#
+# Reliability gap = |mean(fair_value) - mean(won)| within the cohort.
+# Fires when a cohort's reliability gap exceeds the aggregate gap by
+# >= 2x AND the cohort has >= 30 filled+settled bets. The 30-bet floor
+# is stricter than cohort_roi's 5-bet floor because reliability noise
+# is dominated by sample variance at low n -- below 30, a single
+# unlucky win/loss row swings the gap by 1/n.
+#
+# Today's CHC@CWS miss (2026-05-17) is the canonical failure mode
+# this block catches: aggregate calibration looks OK while a specific
+# cohort (high-line, late-inning, Stage-2-suppressed) is systematically
+# under-predicting Overs.
+COHORT_CALIBRATION_WINDOW_DAYS = 7
+COHORT_CALIBRATION_MIN_N_FOR_ALERT = 30
+COHORT_CALIBRATION_GAP_RATIO_ALERT = 2.0
+# Don't fire on micro aggregate gaps -- if the aggregate model is
+# perfectly calibrated to 4 decimals, a cohort at 1pp deviation is
+# 25x the aggregate but trivial in absolute terms. Require the
+# aggregate gap to be at least 1pp before the ratio test has meaning.
+COHORT_CALIBRATION_MIN_AGGREGATE_GAP = 0.01
+# Aggregate-level alert thresholds. Separate from the cohort-vs-
+# aggregate ratio alert -- this fires when the WHOLE model is mis-
+# calibrated by a material amount, even if no single cohort stands
+# out. At ~24 fills/week, cohort n=30 rarely fires; the aggregate
+# alert keeps the block useful at current volume. Threshold: 10pp
+# reliability gap is well past noise (a perfectly-calibrated model
+# settles to ~2pp at n=50 by sample variance alone) and warrants
+# operator attention.
+COHORT_CALIBRATION_AGGREGATE_GAP_ALERT = 0.10
+COHORT_CALIBRATION_AGGREGATE_MIN_N = 15
+
 # Concept-drift health (added 2026-05-15). Reads the leading-indicator
 # drift report built by `build_concept_drift_report.py`. We don't
 # recompute PSI here -- we just summarise the artifact and roll its
@@ -160,6 +197,59 @@ DEFAULT_MODEL_MATURITY_REPORT = (
 )
 UNDER_BOOK_COVERAGE_WARN_THRESHOLD = 0.50
 UNDER_BOOK_COVERAGE_STALE_AGE_DAYS = 14
+
+
+# Gate counterfactual report (Active #11, 2026-05-17). Reads the
+# `gate_counterfactual_report.json` artifact built daily by
+# build_gate_counterfactual_report.py and surfaces the top tightening
+# recommendations as a daily-review block. Mirrors top recommendations
+# whose counterfactual_profit_delta_usd clears the alert threshold to
+# the top-level Notes block with prefix "Gate-counterfactual:". This
+# is the leading-indicator complement to the cert's once-per-month
+# verdict: the cert says "this gate is structurally sound on average,"
+# this block says "tightening this gate by one click would have saved
+# $X last week."
+DEFAULT_GATE_COUNTERFACTUAL_REPORT = (
+    PROJECT_DIR / "data" / "analysis_output" / "gate_counterfactual"
+    / "gate_counterfactual_report.json"
+)
+GATE_COUNTERFACTUAL_STALE_AGE_DAYS = 14
+
+# Loss attribution (Active #10, 2026-05-17). The cohort_calibration
+# block (Active #9) tells the operator the model is mis-calibrated;
+# this block tells them WHICH STAGE owns it. Reads the artifact
+# produced by build_loss_attribution_report.py and surfaces the
+# trailing-30d top culprit + bias direction. Mirrors any culprit
+# stage owning >= LOSS_ATTRIBUTION_NOTES_MIN_SHARE to Notes with
+# prefix `Loss-attribution:`. A stage owning >= 50% of the bias is
+# a clear retrain target; below that, multiple stages share blame.
+DEFAULT_LOSS_ATTRIBUTION_REPORT = (
+    PROJECT_DIR / "data" / "analysis_output" / "loss_attribution"
+    / "loss_attribution_report.json"
+)
+LOSS_ATTRIBUTION_STALE_AGE_DAYS = 14
+# Don't fire on tiny biases -- if the model's aggregate bias is
+# < 5pp we have a near-calibrated model and attribution is noise.
+# The aggregate_health block (Active #9) handles the "is there a
+# bias to attribute" question; this floor avoids double-firing on
+# weeks where the model is fine.
+LOSS_ATTRIBUTION_NOTES_MIN_ABS_BIAS = 0.05
+# A stage with this share or more of the bias direction is reported
+# in the operator's Notes. 0.50 means "owns at least half" -- a
+# crisp retrain target. Below 50%, the bias is structurally
+# distributed across stages and the operator should read the full
+# artifact, not act on a Notes-line alert.
+LOSS_ATTRIBUTION_NOTES_MIN_SHARE = 0.50
+# Alert floor: only mirror recommendations whose savings clear this
+# threshold (the builder's own min_delta floor is already $25, but we
+# can be MORE conservative at the Notes-mirror layer so day-to-day
+# noise doesn't crowd out higher-priority alerts). $40 = ~4 average
+# stakes; below that, even a real signal is competing with single-bet
+# noise on a low-volume day.
+GATE_COUNTERFACTUAL_NOTES_MIN_DELTA_USD = 40.0
+# Max top recommendations to mirror per refresh; the rest stay in the
+# JSON artifact + the dedicated markdown report.
+GATE_COUNTERFACTUAL_NOTES_MAX_ALERTS = 3
 
 LOG_PATTERNS = {
     "schedule_refreshed": "Schedule refreshed",
@@ -1583,6 +1673,264 @@ def _cohort_roi_health(
 
 
 # ---------------------------------------------------------------------------
+# Active #9: cohort-calibration health (the 8th drift dimension).
+# ---------------------------------------------------------------------------
+
+
+def _bet_is_calibratable(bet: Dict[str, Any]) -> bool:
+    """Filter for bets that contribute to a per-cohort reliability metric.
+
+    Requires: status=='filled' (the outcome is realized), `won` is a
+    Bool (True/False, not None), and `fair_value` is a finite float in
+    [0,1]. Bets that fail any of these can't contribute to a Brier or
+    reliability calculation.
+    """
+    if str(bet.get("status") or "") != "filled":
+        return False
+    won = bet.get("won")
+    if won not in (True, False):
+        return False
+    fv = bet.get("fair_value")
+    try:
+        fv = float(fv)
+    except (TypeError, ValueError):
+        return False
+    if not (0.0 <= fv <= 1.0):
+        return False
+    return True
+
+
+def _aggregate_calibration(
+    bets: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Compute Brier + reliability gap for one cohort of filled bets.
+
+    Reliability gap = |mean(fair_value) - mean(won)|; the calibration
+    error of the cohort. A perfectly-calibrated cohort has gap = 0.
+    Brier = mean((fair_value - won)^2); the standard scoring rule.
+    Both metrics are None for empty cohorts.
+    """
+    n = 0
+    sum_fv = 0.0
+    sum_won = 0.0
+    sum_sq = 0.0
+    for b in bets:
+        try:
+            fv = float(b.get("fair_value"))
+        except (TypeError, ValueError):
+            continue
+        won = b.get("won")
+        if won not in (True, False):
+            continue
+        n += 1
+        sum_fv += fv
+        sum_won += 1.0 if won else 0.0
+        sum_sq += (fv - (1.0 if won else 0.0)) ** 2
+    if n == 0:
+        return {
+            "n": 0,
+            "mean_fair_value": None,
+            "mean_won": None,
+            "reliability_gap": None,
+            "brier": None,
+        }
+    mean_fv = sum_fv / n
+    mean_won = sum_won / n
+    return {
+        "n": n,
+        "mean_fair_value": round(mean_fv, 4),
+        "mean_won": round(mean_won, 4),
+        "reliability_gap": round(abs(mean_fv - mean_won), 4),
+        "brier": round(sum_sq / n, 4),
+    }
+
+
+def _cohort_calibration_health(
+    *,
+    today_bet_rows: List[Dict[str, Any]],
+    trailing_reviews: List[Dict[str, Any]],
+    session_date: Optional[str] = None,
+    promotion_events_log_path: Path = DEFAULT_PROMOTION_EVENTS_LOG,
+    concept_drift_health: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Per-cohort calibration drift detection (Active #9).
+
+    Mirrors `cohort_roi_health`'s decomposition (edge / ask / inning /
+    line / current-state-edge bucket) but on the CALIBRATION axis: how
+    well does our calibrated fair value match realized win-rate per
+    cohort? Fires when a cohort's reliability gap exceeds the aggregate
+    reliability gap by >= COHORT_CALIBRATION_GAP_RATIO_ALERT AND the
+    cohort has >= COHORT_CALIBRATION_MIN_N_FOR_ALERT bets.
+
+    Why this matters: `calibration_health` (the existing block) scores
+    the calibrator's choice + audit metadata aggregate-only. A model
+    that is well-calibrated on average can still be systematically
+    over- or under-predicting in a specific cohort (e.g.
+    `inning_bucket=>=8` + `current_state_edge_bucket=<0.03`).
+    Cohort-roi catches it via realized P&L, but only AFTER the cohort
+    has bled real money. This block catches it via reliability
+    deviation -- a leading indicator that fires before / alongside
+    cohort-roi.
+
+    Mirrors cohort_roi's promotion/demotion/concept-drift attribution
+    suffixes via the same helpers so the operator gets the same alert
+    enrichment shape across drift dimensions.
+
+    Surfaces under top-level `notes` with prefix
+    `Cohort-calibration:`.
+    """
+    today_calibratable = [
+        b for b in today_bet_rows if _bet_is_calibratable(b)
+    ]
+    window_bets = (
+        today_calibratable
+        + [
+            b for b in _collect_window_filled_bets(trailing_reviews)
+            if _bet_is_calibratable(b)
+        ]
+    )
+
+    aggregate = _aggregate_calibration(window_bets)
+    cohorts_by_dim: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for dim_name, bucket_fn in COHORT_DIMENSIONS:
+        per_bucket: Dict[str, List[Dict[str, Any]]] = {}
+        for b in window_bets:
+            bucket = bucket_fn(b)
+            per_bucket.setdefault(bucket, []).append(b)
+        cohorts_by_dim[dim_name] = {
+            label: _aggregate_calibration(rows)
+            for label, rows in per_bucket.items()
+        }
+
+    alerts: List[str] = []
+    aggregate_gap = aggregate.get("reliability_gap")
+    aggregate_n = aggregate.get("n", 0)
+
+    # --- Aggregate-level alert ---
+    # Fires when the WHOLE calibrator is materially off, regardless of
+    # whether any cohort stands out. Critical because at current
+    # ~24-fills/week volume, cohort n=30 rarely triggers; without this
+    # the block would be silent during the very weeks the aggregate is
+    # most wrong.
+    if (
+        aggregate_gap is not None
+        and aggregate_gap >= COHORT_CALIBRATION_AGGREGATE_GAP_ALERT
+        and aggregate_n >= COHORT_CALIBRATION_AGGREGATE_MIN_N
+    ):
+        mean_fv_agg = aggregate.get("mean_fair_value") or 0.0
+        mean_won_agg = aggregate.get("mean_won") or 0.0
+        direction = (
+            "over-predicting" if mean_fv_agg > mean_won_agg
+            else "under-predicting"
+        )
+        alerts.append(
+            f"aggregate calibration reliability gap "
+            f"{aggregate_gap * 100:.1f}pp over trailing "
+            f"{COHORT_CALIBRATION_WINDOW_DAYS}d (n={aggregate_n}, "
+            f"mean_fv {mean_fv_agg * 100:.1f}% vs mean_won "
+            f"{mean_won_agg * 100:.1f}%) >= "
+            f"{COHORT_CALIBRATION_AGGREGATE_GAP_ALERT * 100:.0f}pp "
+            f"threshold. Model is {direction} systematically -- "
+            "calibrator retrain or Stage-2/Stage-3 refresh likely "
+            "warranted; cross-check concept_drift_health for input "
+            "shift attribution."
+        )
+
+    # --- Per-cohort vs aggregate ratio alert ---
+    # Only run ratio logic when the aggregate gap is meaningfully above
+    # 0. With a perfectly-calibrated model, every cohort divides by a
+    # near-zero baseline and the ratio test fires on noise.
+    aggregate_gap_ok_for_ratio = (
+        aggregate_gap is not None
+        and aggregate_gap >= COHORT_CALIBRATION_MIN_AGGREGATE_GAP
+    )
+
+    for dim_name, buckets in cohorts_by_dim.items():
+        for bucket_label, agg in buckets.items():
+            if bucket_label == "missing":
+                continue
+            if agg.get("n", 0) < COHORT_CALIBRATION_MIN_N_FOR_ALERT:
+                continue
+            cohort_gap = agg.get("reliability_gap")
+            if cohort_gap is None:
+                continue
+            if not aggregate_gap_ok_for_ratio:
+                continue
+            ratio = cohort_gap / aggregate_gap if aggregate_gap else 0.0
+            agg["reliability_gap_ratio_vs_aggregate"] = round(ratio, 3)
+            if ratio < COHORT_CALIBRATION_GAP_RATIO_ALERT:
+                continue
+            mean_fv = agg.get("mean_fair_value") or 0.0
+            mean_won = agg.get("mean_won") or 0.0
+            direction = (
+                "over-predicting" if mean_fv > mean_won
+                else "under-predicting"
+            )
+            alerts.append(
+                f"{dim_name}={bucket_label} cohort reliability gap "
+                f"{cohort_gap * 100:.1f}pp (n={agg['n']}, "
+                f"mean_fv {mean_fv * 100:.1f}% vs mean_won "
+                f"{mean_won * 100:.1f}%) >= "
+                f"{COHORT_CALIBRATION_GAP_RATIO_ALERT:.1f}x aggregate "
+                f"gap {aggregate_gap * 100:.1f}pp over trailing "
+                f"{COHORT_CALIBRATION_WINDOW_DAYS}d. Model is "
+                f"{direction} in this cohort -- candidate for a "
+                "Stage-2 / Stage-3 retrain or cohort-specific "
+                "calibration adjustment."
+            )
+
+    # Mirror cohort_roi_health's enrichment suffixes so the alert text
+    # carries the same temporal-coincidence hints.
+    recent_proms: List[Dict[str, Any]] = []
+    recent_demos: List[Dict[str, Any]] = []
+    if session_date is not None:
+        recent_proms = _recent_promotions(
+            today=session_date, log_path=promotion_events_log_path,
+        )
+        recent_demos = _recent_demotions(
+            today=session_date, log_path=promotion_events_log_path,
+        )
+    if recent_proms and alerts:
+        alerts = [
+            _attribute_alert_to_promotions(
+                a, recent_proms, today=session_date or "",
+            )
+            for a in alerts
+        ]
+    if recent_demos and alerts:
+        alerts = [
+            _attribute_alert_to_demotions(
+                a, recent_demos, today=session_date or "",
+            )
+            for a in alerts
+        ]
+    drift_features = _major_drift_features(concept_drift_health)
+    if drift_features and alerts:
+        alerts = [
+            _attribute_alert_to_concept_drift(a, drift_features)
+            for a in alerts
+        ]
+
+    return {
+        "alerts": alerts,
+        "window_days": COHORT_CALIBRATION_WINDOW_DAYS,
+        "n_filled_settled": len(window_bets),
+        "aggregate": aggregate,
+        "cohorts_by_dimension": cohorts_by_dim,
+        "recent_promotions_count": len(recent_proms),
+        "recent_demotions_count": len(recent_demos),
+        "concept_drift_major_features_count": len(drift_features),
+        "thresholds": {
+            "min_n_for_alert": COHORT_CALIBRATION_MIN_N_FOR_ALERT,
+            "gap_ratio_alert": COHORT_CALIBRATION_GAP_RATIO_ALERT,
+            "min_aggregate_gap": COHORT_CALIBRATION_MIN_AGGREGATE_GAP,
+            "aggregate_gap_alert": COHORT_CALIBRATION_AGGREGATE_GAP_ALERT,
+            "aggregate_min_n": COHORT_CALIBRATION_AGGREGATE_MIN_N,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # Concept-drift health (leading-indicator drift on model inputs).
 # ---------------------------------------------------------------------------
 
@@ -2164,6 +2512,233 @@ def _fast_demote_health(
     return payload
 
 
+def _gate_counterfactual_health(
+    *,
+    report_path: Path,
+    session_date: str,
+) -> Dict[str, Any]:
+    """Active #11 (2026-05-17): surface gate counterfactual recommendations.
+
+    Reads the daily artifact built by `build_gate_counterfactual_report.py`
+    and surfaces the top tightening recommendations. Mirrors the
+    highest-impact ones to the top-level Notes block with prefix
+    `Gate-counterfactual:` so operators see them in the daily review
+    without opening the dedicated artifact.
+
+    The counterfactual report itself filters by min blocked-N and a
+    $25 floor; this block applies an additional $40 floor on the
+    Notes-mirror layer so day-to-day single-bet noise stays in the
+    JSON artifact and only the larger signals climb to the operator's
+    attention.
+
+    Surfaces under top-level `notes` with prefix `Gate-counterfactual:`.
+    """
+    payload: Dict[str, Any] = {
+        "artifact_path": str(report_path),
+        "artifact_present": report_path.exists(),
+        "alerts": [],
+        "top_recommendations_30d": [],
+        "top_recommendations_7d": [],
+    }
+    if not report_path.exists():
+        payload["artifact_error"] = (
+            "gate_counterfactual_report missing; check refresh step ran"
+        )
+        return payload
+    try:
+        report = _load_json(report_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        payload["artifact_error"] = f"failed to load: {exc}"
+        return payload
+
+    payload["artifact_generated_at_utc"] = report.get("generated_at_utc")
+    age = _artifact_age_days(
+        report.get("generated_at_utc", ""), session_date,
+    )
+    payload["artifact_age_days"] = age
+    if age is not None and age > GATE_COUNTERFACTUAL_STALE_AGE_DAYS:
+        payload["alerts"].append(
+            f"gate_counterfactual_report is {age:.1f}d old "
+            f"(> {GATE_COUNTERFACTUAL_STALE_AGE_DAYS}d threshold); "
+            "rerun build_gate_counterfactual_report or daily refresh."
+        )
+
+    payload["n_rows"] = report.get("n_rows")
+    payload["date_span"] = report.get("date_span")
+
+    # Compact: keep only the fields operators read in a glance.
+    def _compact(r: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "gate": r.get("gate"),
+            "from_threshold": r.get("from_threshold"),
+            "to_threshold": r.get("to_threshold"),
+            "counterfactual_profit_delta_usd": r.get(
+                "counterfactual_profit_delta_usd",
+            ),
+            "blocked_n_filled": r.get("blocked_n_filled"),
+            "blocked_roi": r.get("blocked_roi"),
+            "kept_roi_after": r.get("kept_roi_after"),
+            "kept_roi_delta_vs_current": r.get("kept_roi_delta_vs_current"),
+            "confidence": r.get("confidence"),
+            "window": r.get("window"),
+        }
+
+    recs_30 = report.get("top_recommendations") or []
+    recs_7 = report.get("top_recommendations_trailing_7d") or []
+    payload["top_recommendations_30d"] = [_compact(r) for r in recs_30]
+    payload["top_recommendations_7d"] = [_compact(r) for r in recs_7]
+
+    # Mirror the top-N (capped) recommendations whose $-savings clear
+    # the Notes-mirror floor. Use trailing-30d ranking because that's
+    # the higher-confidence window; the trailing-7d list stays in the
+    # JSON for operators who want freshest-signal triage.
+    above_floor = [
+        r for r in recs_30
+        if (r.get("counterfactual_profit_delta_usd") or 0.0)
+        >= GATE_COUNTERFACTUAL_NOTES_MIN_DELTA_USD
+    ]
+    for r in above_floor[:GATE_COUNTERFACTUAL_NOTES_MAX_ALERTS]:
+        gate = r.get("gate")
+        cf = float(r.get("counterfactual_profit_delta_usd") or 0.0)
+        n_blocked = int(r.get("blocked_n_filled") or 0)
+        blocked_roi = r.get("blocked_roi")
+        kept_roi = r.get("kept_roi_after")
+        roi_delta = r.get("kept_roi_delta_vs_current")
+        conf = r.get("confidence")
+        msg_parts = [
+            f"`{gate}` tighten {r.get('from_threshold')} -> "
+            f"{r.get('to_threshold')} would have saved "
+            f"${cf:+,.2f} over trailing-30d ",
+            f"(blocked N={n_blocked}",
+        ]
+        if blocked_roi is not None:
+            msg_parts.append(f", blocked ROI {blocked_roi * 100:+.1f}%")
+        msg_parts.append(")")
+        if kept_roi is not None and roi_delta is not None:
+            msg_parts.append(
+                f"; kept ROI lifts to {kept_roi * 100:+.1f}% "
+                f"({roi_delta * 100:+.1f}pp vs current)"
+            )
+        msg_parts.append(
+            f"; confidence={conf}. Cross-check the cert's verdict "
+            "for this gate before changing the live threshold."
+        )
+        payload["alerts"].append("".join(msg_parts))
+    return payload
+
+
+def _loss_attribution_health(
+    *,
+    report_path: Path,
+    session_date: str,
+) -> Dict[str, Any]:
+    """Active #10 (2026-05-17): surface bet-level loss attribution.
+
+    Reads the daily artifact built by `build_loss_attribution_report.py`
+    and exposes the trailing-30d aggregate + top culprit stage. Mirrors
+    a Notes-block alert when:
+      - |aggregate bias| >= LOSS_ATTRIBUTION_NOTES_MIN_ABS_BIAS, AND
+      - some stage owns >= LOSS_ATTRIBUTION_NOTES_MIN_SHARE of the
+        positive bias contribution
+    so the operator sees "Stage X owns the over-prediction; retrain
+    target identified" without opening the dedicated artifact.
+
+    Stale-artifact threshold matches the rest of the drift family.
+    """
+    payload: Dict[str, Any] = {
+        "artifact_path": str(report_path),
+        "artifact_present": report_path.exists(),
+        "alerts": [],
+        "trailing_30d": None,
+        "trailing_7d": None,
+    }
+    if not report_path.exists():
+        payload["artifact_error"] = (
+            "loss_attribution_report missing; check refresh step ran"
+        )
+        return payload
+    try:
+        report = _load_json(report_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        payload["artifact_error"] = f"failed to load: {exc}"
+        return payload
+
+    payload["artifact_generated_at_utc"] = report.get("generated_at_utc")
+    age = _artifact_age_days(
+        report.get("generated_at_utc", ""), session_date,
+    )
+    payload["artifact_age_days"] = age
+    if age is not None and age > LOSS_ATTRIBUTION_STALE_AGE_DAYS:
+        payload["alerts"].append(
+            f"loss_attribution_report is {age:.1f}d old "
+            f"(> {LOSS_ATTRIBUTION_STALE_AGE_DAYS}d threshold); "
+            "rerun build_loss_attribution_report or daily refresh."
+        )
+
+    windows = report.get("windows") or {}
+
+    def _compact(window_name: str) -> Optional[Dict[str, Any]]:
+        w = windows.get(window_name) or {}
+        agg = w.get("aggregate") or {}
+        if not agg or agg.get("n", 0) == 0:
+            return None
+        return {
+            "n": agg.get("n"),
+            "bias": agg.get("bias"),
+            "abs_bias": agg.get("abs_bias"),
+            "bias_direction": agg.get("bias_direction"),
+            "mean_p0": agg.get("mean_p0"),
+            "mean_p3": agg.get("mean_p3"),
+            "mean_won": agg.get("mean_won"),
+            "top_culprits": agg.get("top_culprits") or [],
+            "date_range": w.get("date_range"),
+        }
+
+    payload["trailing_30d"] = _compact("trailing_30d")
+    payload["trailing_7d"] = _compact("trailing_7d")
+
+    primary = payload["trailing_30d"]
+    if not primary:
+        return payload
+
+    abs_bias = primary.get("abs_bias") or 0.0
+    if abs_bias < LOSS_ATTRIBUTION_NOTES_MIN_ABS_BIAS:
+        # Aggregate near-calibrated; no actionable culprit to surface.
+        return payload
+
+    direction = primary.get("bias_direction") or "unknown"
+    bias_pp = (primary.get("bias") or 0.0) * 100
+    n = primary.get("n")
+    top_culprits = primary.get("top_culprits") or []
+    headline_culprit: Optional[Dict[str, Any]] = None
+    for c in top_culprits:
+        if (c.get("attribution_share") or 0.0) >= LOSS_ATTRIBUTION_NOTES_MIN_SHARE:
+            headline_culprit = c
+            break
+    if headline_culprit is None:
+        # Bias exists but no clear single-stage culprit. Still worth
+        # noting the bias direction + breakdown briefly.
+        payload["alerts"].append(
+            f"trailing-30d aggregate bias {bias_pp:+.1f}pp "
+            f"(model {direction}, n={n}); no single stage owns "
+            f"{int(LOSS_ATTRIBUTION_NOTES_MIN_SHARE * 100)}%+ of "
+            "the bias -- read the full report to triage."
+        )
+        return payload
+
+    payload["alerts"].append(
+        f"trailing-30d aggregate bias {bias_pp:+.1f}pp "
+        f"(model {direction}, n={n}); `{headline_culprit['stage']}` "
+        f"owns "
+        f"{(headline_culprit['attribution_share'] or 0.0) * 100:.0f}% "
+        f"of the bias direction (shift "
+        f"{(headline_culprit['mean_shift_in_bias_direction'] or 0.0) * 100:+.1f}pp). "
+        "This is the retrain target -- cross-check with cohort_calibration_health "
+        "and concept_drift_health before changing the live cache."
+    )
+    return payload
+
+
 def _daemon_readiness_health(
     *,
     report_path: Path,
@@ -2628,6 +3203,9 @@ def _build_notes(
     under_book_coverage_health: Optional[Dict[str, Any]] = None,
     settlement_truth_health: Optional[Dict[str, Any]] = None,
     fast_demote_health: Optional[Dict[str, Any]] = None,
+    gate_counterfactual_health: Optional[Dict[str, Any]] = None,
+    cohort_calibration_health: Optional[Dict[str, Any]] = None,
+    loss_attribution_health: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     notes: List[str] = []
     roi = bet_totals.get("roi")
@@ -2683,6 +3261,8 @@ def _build_notes(
         notes.append(f"Regime-mix drift: {alert}")
     for alert in (cohort_roi_health or {}).get("alerts") or []:
         notes.append(f"Cohort-ROI drift: {alert}")
+    for alert in (cohort_calibration_health or {}).get("alerts") or []:
+        notes.append(f"Cohort-calibration: {alert}")
     for alert in (concept_drift_health or {}).get("alerts") or []:
         notes.append(f"Concept-drift: {alert}")
     for alert in (drift_in_drift_health or {}).get("alerts") or []:
@@ -2695,6 +3275,10 @@ def _build_notes(
         notes.append(f"Settlement-truth: {alert}")
     for alert in (fast_demote_health or {}).get("alerts") or []:
         notes.append(f"Fast-demote: {alert}")
+    for alert in (gate_counterfactual_health or {}).get("alerts") or []:
+        notes.append(f"Gate-counterfactual: {alert}")
+    for alert in (loss_attribution_health or {}).get("alerts") or []:
+        notes.append(f"Loss-attribution: {alert}")
     for alert in (reconciler_summary or {}).get("alerts") or []:
         notes.append(f"Reconciler watch: {alert}")
 
@@ -2788,6 +3372,17 @@ def build_report(
         promotion_events_log_path=DEFAULT_PROMOTION_EVENTS_LOG,
         concept_drift_health=concept_drift_health,
     )
+    # Active #9 (2026-05-17): per-cohort calibration drift. Uses the
+    # same trailing-7d window as cohort_roi so the two reports compare
+    # cleanly. Pulls promotion/demotion/concept-drift attribution from
+    # the same helpers.
+    cohort_calibration_health = _cohort_calibration_health(
+        today_bet_rows=bet_rows,
+        trailing_reviews=trailing_reviews,
+        session_date=session_date,
+        promotion_events_log_path=DEFAULT_PROMOTION_EVENTS_LOG,
+        concept_drift_health=concept_drift_health,
+    )
     drift_in_drift_health = _drift_in_drift_health(
         report_path=DEFAULT_DRIFT_IN_DRIFT_REPORT,
         session_date=session_date,
@@ -2809,6 +3404,14 @@ def build_report(
         sessions_dir=sessions_dir,
         today=session_date,
     )
+    gate_counterfactual_health = _gate_counterfactual_health(
+        report_path=DEFAULT_GATE_COUNTERFACTUAL_REPORT,
+        session_date=session_date,
+    )
+    loss_attribution_health = _loss_attribution_health(
+        report_path=DEFAULT_LOSS_ATTRIBUTION_REPORT,
+        session_date=session_date,
+    )
     reconciler_summary = _reconciler_summary(session.get("bets") or [])
     notes = _build_notes(
         session_summary,
@@ -2827,6 +3430,9 @@ def build_report(
         under_book_coverage_health,
         settlement_truth_health,
         fast_demote_health,
+        gate_counterfactual_health,
+        cohort_calibration_health,
+        loss_attribution_health,
     )
     stake_usdc = _safe_float((session.get("params") or {}).get("stake"), 10.0)
     stage2_audit = _stage2_suppression_dollar_audit(
@@ -2868,12 +3474,15 @@ def build_report(
         "signal_quality_health": signal_quality_health,
         "regime_mix_health": regime_mix_health,
         "cohort_roi_health": cohort_roi_health,
+        "cohort_calibration_health": cohort_calibration_health,
+        "loss_attribution_health": loss_attribution_health,
         "concept_drift_health": concept_drift_health,
         "drift_in_drift_health": drift_in_drift_health,
         "daemon_readiness_health": daemon_readiness_health,
         "under_book_coverage_health": under_book_coverage_health,
         "settlement_truth_health": settlement_truth_health,
         "fast_demote_health": fast_demote_health,
+        "gate_counterfactual_health": gate_counterfactual_health,
         "reconciler_summary": reconciler_summary,
         "log_health": log_health,
         "notes": notes,

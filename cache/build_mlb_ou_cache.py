@@ -1000,6 +1000,51 @@ def build_cache(args: argparse.Namespace) -> dict:
 def main() -> None:
     args = parse_args()
     cache = build_cache(args)
+
+    # Active #16 v2 (2026-05-17): stamp build-time lineage on the
+    # Stage-1 cache. Today's loss attribution shipment identified
+    # Stage-1 as owning ~100% of the 27pp aggregate over-prediction
+    # bias; lineage now answers "when was this cache built, on what
+    # data window, by what git_sha?" without git-log archaeology.
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(PROJECT_DIR / "scripts" / "analysis"))
+        from artifact_lineage import compute_lineage as _compute_lineage
+    except ImportError:
+        _compute_lineage = None  # type: ignore[assignment]
+    if _compute_lineage is not None:
+        try:
+            games_root = args.data_dir / "games" / args.season_type
+            cache["lineage"] = _compute_lineage(
+                builder_path=__file__,
+                input_dir_paths=[games_root],
+                project_root=PROJECT_DIR,
+                extra={
+                    "cli_args_summary": {
+                        "season_type": args.season_type,
+                        "game_types": args.game_types,
+                        "lines": args.lines,
+                        "min_games": getattr(args, "min_games", None),
+                        "max_combined": getattr(args, "max_combined", None),
+                        "extras_bucket": getattr(args, "extras_bucket", None),
+                        "history_start_date": str(
+                            getattr(args, "history_start_date", "") or ""
+                        ),
+                        "history_end_date": str(
+                            getattr(args, "history_end_date", "") or ""
+                        ),
+                        "season_weighting_path": str(
+                            getattr(args, "season_weighting_path", "") or ""
+                        ),
+                        "max_files": getattr(args, "max_files", None),
+                        "out": str(args.out),
+                    },
+                },
+            )
+        except Exception as _lineage_exc:  # noqa: BLE001
+            # Lineage stamp MUST NEVER block the cache build.
+            print(f"[lineage] warning: stamp failed: {_lineage_exc!r}")
+
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=2)

@@ -972,13 +972,63 @@ def main(argv: Optional[List[str]] = None) -> None:
     model_fill_runtime_path = args.output_root / "ev_execution_fill_runtime_model.json"
     model_fill_strict_path = args.output_root / "ev_execution_fill_strict_model.json"
 
+    # Active #16 v2 (2026-05-17): stamp build-time lineage on every
+    # artifact this builder produces. The two runtime-loaded JSONs
+    # (ev_signal_win_if_filled_model + ev_execution_fill_runtime_model)
+    # are the highest-value targets -- when fast Wilson-UB demote
+    # fires on the EV policy lever, the operator's first question is
+    # "which fit + which git_sha was in production?" Lineage answers
+    # that. Fail-open: stamp failure must not block the artifact
+    # writes.
+    try:
+        from scripts.analysis.artifact_lineage import compute_lineage as _compute_lineage
+    except ImportError:
+        try:
+            from artifact_lineage import compute_lineage as _compute_lineage  # type: ignore[no-redef]
+        except ImportError:
+            _compute_lineage = None  # type: ignore[assignment]
+    _ev_lineage: Optional[Dict[str, Any]] = None
+    if _compute_lineage is not None:
+        try:
+            from pathlib import Path as _P
+            _project_dir = _P(__file__).resolve().parents[2]
+            _ev_lineage = _compute_lineage(
+                builder_path=__file__,
+                input_paths=[args.table_path, args.manifest_path],
+                project_root=_project_dir,
+                extra={
+                    "cli_args_summary": {
+                        "model_family": args.model_family,
+                        "artifact_purpose": args.artifact_purpose,
+                        "table_path": str(args.table_path),
+                        "manifest_path": str(args.manifest_path),
+                        "output_root": str(args.output_root),
+                    },
+                },
+            )
+        except Exception as _lineage_exc:  # noqa: BLE001
+            LOGGER.warning(
+                "EV-policy lineage stamp failed: %r (artifacts still written)",
+                _lineage_exc,
+            )
+    if _ev_lineage is not None:
+        report["lineage"] = _ev_lineage
+
     _write_json(report_path, report)
     _write_jsonl(scored_path, scored_rows)
     _write_jsonl(val_sel_path, val_selected)
     _write_jsonl(test_sel_path, test_selected)
+    def _with_lineage(payload: Dict[str, Any]) -> Dict[str, Any]:
+        # Mutate-then-return so the lineage block sits on the same
+        # artifact dict the runtime will read. Fail-open: no lineage
+        # available simply leaves the artifact unstamped.
+        if _ev_lineage is not None:
+            payload["lineage"] = _ev_lineage
+        return payload
+
     _write_json(
         model_win_path,
-        _model_artifact_payload(
+        _with_lineage(_model_artifact_payload(
             trained=artifact_win_model,
             artifact_role="ev_policy_signal_win_if_filled",
             runtime_safe=True,
@@ -986,11 +1036,11 @@ def main(argv: Optional[List[str]] = None) -> None:
             model_family=args.model_family,
             artifact_purpose=args.artifact_purpose,
             evaluation_metrics=win_model.metrics,
-        ),
+        )),
     )
     _write_json(
         model_fill_runtime_path,
-        _model_artifact_payload(
+        _with_lineage(_model_artifact_payload(
             trained=artifact_runtime_fill_model,
             artifact_role="ev_policy_execution_fill_runtime",
             runtime_safe=True,
@@ -998,11 +1048,11 @@ def main(argv: Optional[List[str]] = None) -> None:
             model_family=args.model_family,
             artifact_purpose=args.artifact_purpose,
             evaluation_metrics=runtime_fill_model.metrics,
-        ),
+        )),
     )
     _write_json(
         model_fill_strict_path,
-        _model_artifact_payload(
+        _with_lineage(_model_artifact_payload(
             trained=artifact_strict_fill_model,
             artifact_role="ev_policy_execution_fill_strict",
             runtime_safe=False,
@@ -1010,7 +1060,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             model_family=args.model_family,
             artifact_purpose=args.artifact_purpose,
             evaluation_metrics=strict_fill_model.metrics,
-        ),
+        )),
     )
 
     LOGGER.info("Wrote %s", report_path)

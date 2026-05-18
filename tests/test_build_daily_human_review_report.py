@@ -3069,5 +3069,687 @@ class UnderBookCoverageHealthTests(unittest.TestCase):
         self.assertIn("0.40", prefixed[0])
 
 
+class GateCounterfactualHealthTests(unittest.TestCase):
+    """Active #11 (2026-05-17): the daily-review block reads the
+    gate_counterfactual_report.json artifact and mirrors top tightening
+    recommendations whose $-savings clear the Notes-mirror floor to
+    the top-level Notes block."""
+
+    def _write_report(
+        self, path: Path, *,
+        top_30d=None, top_7d=None,
+        generated="2026-05-17T01:00:00Z",
+        n_rows=100,
+    ):
+        payload = {
+            "generated_at_utc": generated,
+            "schema_version": 1,
+            "n_rows": n_rows,
+            "date_span": {"first": "2026-05-01", "last": "2026-05-17"},
+            "windows": {
+                "all": {"date_range": ["2026-05-01", "2026-05-17"], "n_rows": n_rows},
+                "trailing_30d": {
+                    "date_range": ["2026-04-18", "2026-05-17"], "n_rows": n_rows,
+                },
+                "trailing_7d": {
+                    "date_range": ["2026-05-11", "2026-05-17"], "n_rows": 30,
+                },
+            },
+            "config": {
+                "min_blocked_n": 5,
+                "recommendation_min_delta_usd": 25.0,
+            },
+            "gates": [],
+            "top_recommendations": top_30d or [],
+            "top_recommendations_trailing_7d": top_7d or [],
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    @staticmethod
+    def _make_rec(
+        gate="gate_extreme_edge",
+        from_threshold=0.22,
+        to_threshold=0.18,
+        delta=75.0,
+        blocked_n=15,
+        blocked_roi=-0.45,
+        kept_roi=0.10,
+        kept_delta=0.05,
+        confidence="medium",
+        window="trailing_30d",
+    ):
+        return {
+            "gate": gate,
+            "from_threshold": from_threshold,
+            "to_threshold": to_threshold,
+            "counterfactual_profit_delta_usd": delta,
+            "blocked_n_filled": blocked_n,
+            "blocked_roi": blocked_roi,
+            "kept_roi_after": kept_roi,
+            "kept_roi_delta_vs_current": kept_delta,
+            "confidence": confidence,
+            "window": window,
+        }
+
+    def test_missing_artifact_records_error_no_alerts(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = bdhr._gate_counterfactual_health(
+                report_path=Path(td) / "missing.json",
+                session_date="2026-05-17",
+            )
+            self.assertFalse(out["artifact_present"])
+            self.assertEqual(out["alerts"], [])
+            self.assertIn("missing", out.get("artifact_error", ""))
+            self.assertEqual(out["top_recommendations_30d"], [])
+
+    def test_no_recommendations_emits_no_alerts(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "gc.json"
+            self._write_report(path, top_30d=[], top_7d=[])
+            out = bdhr._gate_counterfactual_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertEqual(out["alerts"], [])
+            self.assertEqual(out["top_recommendations_30d"], [])
+
+    def test_recommendation_above_floor_fires_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "gc.json"
+            self._write_report(
+                path,
+                top_30d=[
+                    self._make_rec(gate="gate_min_entry_ask", delta=75.6),
+                ],
+            )
+            out = bdhr._gate_counterfactual_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertEqual(len(out["alerts"]), 1)
+            alert = out["alerts"][0]
+            self.assertIn("gate_min_entry_ask", alert)
+            self.assertIn("$+75.60", alert)
+            self.assertIn("trailing-30d", alert)
+
+    def test_recommendation_below_floor_suppressed(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "gc.json"
+            # $30 > builder $25 floor but < daily-review $40 mirror floor
+            self._write_report(
+                path,
+                top_30d=[self._make_rec(delta=30.0)],
+            )
+            out = bdhr._gate_counterfactual_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertEqual(out["alerts"], [])
+            # But the JSON-level compact list still surfaces it
+            self.assertEqual(len(out["top_recommendations_30d"]), 1)
+            self.assertEqual(
+                out["top_recommendations_30d"][0]["gate"],
+                "gate_extreme_edge",
+            )
+
+    def test_caps_alerts_at_max(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "gc.json"
+            self._write_report(path, top_30d=[
+                self._make_rec(gate=f"gate_{i}", delta=100.0 - i)
+                for i in range(10)
+            ])
+            out = bdhr._gate_counterfactual_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            # GATE_COUNTERFACTUAL_NOTES_MAX_ALERTS is 3
+            self.assertEqual(len(out["alerts"]), 3)
+            # The 3 chosen are the first 3 (highest $-savings)
+            self.assertIn("gate_0", out["alerts"][0])
+            self.assertIn("gate_2", out["alerts"][2])
+
+    def test_stale_artifact_age_fires_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "gc.json"
+            self._write_report(
+                path,
+                generated="2026-04-01T00:00:00Z",   # > 14d old vs 2026-05-17
+                top_30d=[],
+            )
+            out = bdhr._gate_counterfactual_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertTrue(any(
+                "is" in a and "old" in a for a in out["alerts"]
+            ), out["alerts"])
+
+    def test_compact_recommendation_carries_required_fields(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "gc.json"
+            self._write_report(path, top_30d=[self._make_rec(delta=100)])
+            out = bdhr._gate_counterfactual_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            rec = out["top_recommendations_30d"][0]
+            for k in (
+                "gate", "from_threshold", "to_threshold",
+                "counterfactual_profit_delta_usd",
+                "blocked_n_filled", "blocked_roi",
+                "kept_roi_after", "kept_roi_delta_vs_current",
+                "confidence", "window",
+            ):
+                self.assertIn(k, rec)
+
+    def test_trailing_7d_recommendations_passed_through(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "gc.json"
+            self._write_report(
+                path,
+                top_30d=[],
+                top_7d=[self._make_rec(gate="gate_7d_only", delta=60)],
+            )
+            out = bdhr._gate_counterfactual_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            # 7d list goes in JSON but is NOT mirrored to Notes (only 30d).
+            self.assertEqual(len(out["top_recommendations_7d"]), 1)
+            self.assertEqual(out["alerts"], [])
+
+    def test_corrupt_json_emits_artifact_error_no_alerts(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "gc.json"
+            path.write_text("not json", encoding="utf-8")
+            out = bdhr._gate_counterfactual_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertEqual(out["alerts"], [])
+            self.assertIn("failed to load", out.get("artifact_error", ""))
+
+    def test_notes_block_carries_gate_counterfactual_prefix(self):
+        gch = {"alerts": ["`gate_x` tighten 0.55 -> 0.65 would have saved..."]}
+        notes = bdhr._build_notes(
+            session_summary={}, bet_totals={}, candidate_rollup={},
+            log_health={}, gate_counterfactual_health=gch,
+        )
+        prefixed = [n for n in notes if n.startswith("Gate-counterfactual:")]
+        self.assertEqual(len(prefixed), 1)
+
+
+class CohortCalibrationHealthTests(unittest.TestCase):
+    """Active #9 (2026-05-17): the 8th drift dimension. Mirrors the
+    cohort_roi_health decomposition on the calibration axis: per-cohort
+    reliability gap vs aggregate reliability gap. Two alert classes:
+
+      1. Aggregate-level: whole-model reliability gap >= 10pp
+         (fires regardless of any cohort's individual deviation)
+      2. Per-cohort vs aggregate ratio: bucket gap >= 2x aggregate
+         AND bucket has >= 30 settled bets
+    """
+
+    @staticmethod
+    def _bet(*, fv, won, edge=0.15, ask=0.70, inning=6, line=8.5,
+             cse=0.05, status="filled"):
+        return {
+            "status": status,
+            "fair_value": fv,
+            "won": won,
+            "edge": edge,
+            "entry_ask": ask,
+            "inning": inning,
+            "line": line,
+            "current_state_value_edge": cse,
+            "profit": 0.0,
+            "fill_cost_usdc": 10.0,
+        }
+
+    @staticmethod
+    def _review(bets):
+        return [{"bets": bets}]
+
+    # ---- _bet_is_calibratable filter tests ----
+    def test_filter_rejects_cancelled(self):
+        self.assertFalse(bdhr._bet_is_calibratable(
+            self._bet(fv=0.6, won=True, status="cancelled"),
+        ))
+
+    def test_filter_rejects_none_won(self):
+        self.assertFalse(bdhr._bet_is_calibratable(
+            self._bet(fv=0.6, won=None),
+        ))
+
+    def test_filter_rejects_none_fv(self):
+        self.assertFalse(bdhr._bet_is_calibratable(
+            self._bet(fv=None, won=True),
+        ))
+
+    def test_filter_rejects_out_of_range_fv(self):
+        self.assertFalse(bdhr._bet_is_calibratable(
+            self._bet(fv=1.5, won=True),
+        ))
+        self.assertFalse(bdhr._bet_is_calibratable(
+            self._bet(fv=-0.1, won=True),
+        ))
+
+    def test_filter_accepts_clean_filled_settled(self):
+        self.assertTrue(bdhr._bet_is_calibratable(
+            self._bet(fv=0.6, won=True),
+        ))
+
+    # ---- _aggregate_calibration math tests ----
+    def test_aggregate_empty_returns_none_fields(self):
+        agg = bdhr._aggregate_calibration([])
+        self.assertEqual(agg["n"], 0)
+        for k in ("mean_fair_value", "mean_won", "reliability_gap", "brier"):
+            self.assertIsNone(agg[k])
+
+    def test_aggregate_perfectly_calibrated_zero_gap(self):
+        # 5 bets: predicted 0.5, half win half lose -> mean_won=0.5
+        bets = [self._bet(fv=0.5, won=True)] * 2 + [self._bet(fv=0.5, won=False)] * 2
+        agg = bdhr._aggregate_calibration(bets)
+        self.assertEqual(agg["n"], 4)
+        self.assertEqual(agg["mean_fair_value"], 0.5)
+        self.assertEqual(agg["mean_won"], 0.5)
+        self.assertEqual(agg["reliability_gap"], 0.0)
+        # Brier = mean((fv-y)^2) = (0.25 + 0.25 + 0.25 + 0.25)/4 = 0.25
+        self.assertEqual(agg["brier"], 0.25)
+
+    def test_aggregate_over_predicting_positive_gap(self):
+        # Model says 80% win, reality 40% win -> gap = 0.4
+        bets = [self._bet(fv=0.8, won=True)] * 2 + [self._bet(fv=0.8, won=False)] * 3
+        agg = bdhr._aggregate_calibration(bets)
+        self.assertEqual(agg["mean_fair_value"], 0.8)
+        self.assertEqual(agg["mean_won"], 0.4)
+        self.assertEqual(agg["reliability_gap"], 0.4)
+
+    def test_aggregate_under_predicting_also_positive_gap(self):
+        # Gap is absolute value -- both directions show as positive.
+        bets = [self._bet(fv=0.3, won=True)] * 4 + [self._bet(fv=0.3, won=False)]
+        agg = bdhr._aggregate_calibration(bets)
+        self.assertEqual(agg["mean_fair_value"], 0.3)
+        self.assertEqual(agg["mean_won"], 0.8)
+        self.assertEqual(agg["reliability_gap"], 0.5)
+
+    # ---- _cohort_calibration_health alert tests ----
+    def test_aggregate_alert_fires_at_threshold_with_min_n(self):
+        # 20 bets: mean_fv=0.80, mean_won=0.60 -> gap=0.20 >= 0.10
+        # n=20 >= aggregate_min_n=15
+        bets = [self._bet(fv=0.8, won=True)] * 12 + [self._bet(fv=0.8, won=False)] * 8
+        out = bdhr._cohort_calibration_health(
+            today_bet_rows=bets, trailing_reviews=[],
+        )
+        agg_alerts = [a for a in out["alerts"] if a.startswith("aggregate")]
+        self.assertEqual(len(agg_alerts), 1, out["alerts"])
+        self.assertIn("over-predicting", agg_alerts[0])
+        self.assertIn("20.0pp", agg_alerts[0])
+
+    def test_aggregate_alert_does_not_fire_below_threshold(self):
+        # Gap=0.05 < threshold=0.10
+        bets = [self._bet(fv=0.55, won=True)] * 10 + [self._bet(fv=0.55, won=False)] * 10
+        out = bdhr._cohort_calibration_health(
+            today_bet_rows=bets, trailing_reviews=[],
+        )
+        agg_alerts = [a for a in out["alerts"] if a.startswith("aggregate")]
+        self.assertEqual(agg_alerts, [])
+
+    def test_aggregate_alert_does_not_fire_below_min_n(self):
+        # n=10 < aggregate_min_n=15, even with large gap
+        bets = [self._bet(fv=0.9, won=False)] * 10
+        out = bdhr._cohort_calibration_health(
+            today_bet_rows=bets, trailing_reviews=[],
+        )
+        agg_alerts = [a for a in out["alerts"] if a.startswith("aggregate")]
+        self.assertEqual(agg_alerts, [])
+
+    def test_under_predicting_alert_carries_correct_direction(self):
+        # FV=0.3, won rate=0.9 -> gap=0.6, model under-predicts
+        bets = [self._bet(fv=0.3, won=True)] * 18 + [self._bet(fv=0.3, won=False)] * 2
+        out = bdhr._cohort_calibration_health(
+            today_bet_rows=bets, trailing_reviews=[],
+        )
+        agg_alerts = [a for a in out["alerts"] if a.startswith("aggregate")]
+        self.assertTrue(any("under-predicting" in a for a in agg_alerts))
+
+    def test_per_cohort_alert_fires_at_2x_aggregate_with_n_30(self):
+        # Aggregate: 80 bets, gap = small (~5pp).
+        # One cohort (inning_bucket=>=8): 35 bets with gap = 30pp (6x aggregate).
+        # Other 45 bets distributed in different bucket with near-perfect cal.
+        aggregate_bets = (
+            [self._bet(fv=0.5, won=True, inning=5)] * 23
+            + [self._bet(fv=0.5, won=False, inning=5)] * 22
+        )
+        cohort_bets = (
+            [self._bet(fv=0.9, won=True, inning=8)] * 21
+            + [self._bet(fv=0.9, won=False, inning=8)] * 14
+        )
+        bets = aggregate_bets + cohort_bets
+        out = bdhr._cohort_calibration_health(
+            today_bet_rows=bets, trailing_reviews=[],
+        )
+        cohort_alerts = [
+            a for a in out["alerts"]
+            if "inning_bucket=>=8" in a and "cohort" in a
+        ]
+        self.assertEqual(len(cohort_alerts), 1, out["alerts"])
+
+    def test_per_cohort_alert_suppressed_below_n_30(self):
+        # 25 cohort bets with huge gap -- below the 30 threshold
+        aggregate_bets = (
+            [self._bet(fv=0.5, won=True, inning=5)] * 30
+            + [self._bet(fv=0.5, won=False, inning=5)] * 30
+        )
+        thin_cohort = [self._bet(fv=0.9, won=False, inning=8)] * 25
+        bets = aggregate_bets + thin_cohort
+        out = bdhr._cohort_calibration_health(
+            today_bet_rows=bets, trailing_reviews=[],
+        )
+        cohort_alerts = [
+            a for a in out["alerts"] if "inning_bucket=>=8" in a
+        ]
+        self.assertEqual(cohort_alerts, [], out["alerts"])
+
+    def test_per_cohort_alert_suppressed_when_aggregate_gap_too_small(self):
+        # Aggregate near-perfect (gap < min_aggregate_gap=0.01) ->
+        # ratio test disabled. Cohort gap of 10pp would otherwise be
+        # >> 2x but we skip ratio when aggregate is too noisy a base.
+        # n=60 in cohort makes both alerts available structurally.
+        bets = (
+            [self._bet(fv=0.500, won=True, inning=5)] * 30
+            + [self._bet(fv=0.500, won=False, inning=5)] * 30
+        )
+        # Aggregate gap is 0; ratio division would explode.
+        # Add an inn=8 cohort that's mis-calibrated.
+        bets += (
+            [self._bet(fv=0.7, won=True, inning=8)] * 17
+            + [self._bet(fv=0.7, won=False, inning=8)] * 13
+        )
+        out = bdhr._cohort_calibration_health(
+            today_bet_rows=bets, trailing_reviews=[],
+        )
+        # Aggregate gap on full bag: mean_fv=(0.5*60+0.7*30)/90=0.567,
+        # mean_won=(30+17)/90=0.522, gap=0.044 -- > 0.01 floor.
+        # Ratio test active. Cohort gap on inn=8: |0.7 - 17/30| = 0.133
+        # Ratio = 0.133/0.044 = 3.02 >= 2.0 -> fires. n=30 OK.
+        cohort_alerts = [
+            a for a in out["alerts"]
+            if "inning_bucket=>=8" in a and "cohort" in a
+        ]
+        self.assertEqual(len(cohort_alerts), 1, out["alerts"])
+
+    def test_missing_bucket_excluded_from_cohort_alerts(self):
+        # 30 bets with no inning -> bucket = "missing"; must not alert
+        # even at a giant gap.
+        bets = [self._bet(fv=0.95, won=False, inning=None)] * 30
+        out = bdhr._cohort_calibration_health(
+            today_bet_rows=bets, trailing_reviews=[],
+        )
+        missing_alerts = [a for a in out["alerts"] if "missing" in a]
+        self.assertEqual(missing_alerts, [])
+
+    def test_trailing_reviews_contribute_to_window(self):
+        # Today: 5 bets (below min_n for aggregate alert).
+        # Trailing window: 20 more identical bets -> total 25 still
+        # below 15 wouldn't trigger. Push to 20 trailing -> total 25
+        # passes aggregate_min_n=15. Use big gap to ensure firing.
+        today = [self._bet(fv=0.9, won=False)] * 5
+        trailing = self._review([self._bet(fv=0.9, won=False)] * 20)
+        out = bdhr._cohort_calibration_health(
+            today_bet_rows=today, trailing_reviews=trailing,
+        )
+        self.assertEqual(out["n_filled_settled"], 25)
+        agg_alerts = [a for a in out["alerts"] if a.startswith("aggregate")]
+        self.assertEqual(len(agg_alerts), 1)
+
+    def test_returns_complete_schema_keys(self):
+        out = bdhr._cohort_calibration_health(
+            today_bet_rows=[self._bet(fv=0.5, won=True)],
+            trailing_reviews=[],
+        )
+        for key in (
+            "alerts", "window_days", "n_filled_settled", "aggregate",
+            "cohorts_by_dimension", "recent_promotions_count",
+            "recent_demotions_count", "concept_drift_major_features_count",
+            "thresholds",
+        ):
+            self.assertIn(key, out)
+
+    def test_promotion_attribution_appends_to_alert(self):
+        # Set up a real promotion-events log so the attribution helper
+        # picks it up. Mirror cohort_roi's test pattern.
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / "promo.jsonl"
+            log.write_text(
+                json.dumps({
+                    "direction": "promote",
+                    "action": "promoted",
+                    "lever": "stage2",
+                    "generated_at_utc": "2026-05-15T01:00:00Z",
+                }) + "\n",
+                encoding="utf-8",
+            )
+            # 20 bets with 20pp aggregate gap to trigger the alert
+            bets = [bdhr.__dict__.get("_session_date_for_test")]  # noqa: placeholder
+            bets = [
+                self._bet(fv=0.8, won=False),
+            ] * 18 + [self._bet(fv=0.8, won=True)] * 2
+            out = bdhr._cohort_calibration_health(
+                today_bet_rows=bets, trailing_reviews=[],
+                session_date="2026-05-17",
+                promotion_events_log_path=log,
+            )
+            self.assertTrue(any(
+                "stage2" in a and "coincides with" in a
+                for a in out["alerts"]
+            ), out["alerts"])
+
+    def test_notes_block_carries_cohort_calibration_prefix(self):
+        cch = {"alerts": ["aggregate calibration reliability gap 22.1pp ..."]}
+        notes = bdhr._build_notes(
+            session_summary={}, bet_totals={}, candidate_rollup={},
+            log_health={}, cohort_calibration_health=cch,
+        )
+        prefixed = [n for n in notes if n.startswith("Cohort-calibration:")]
+        self.assertEqual(len(prefixed), 1)
+
+
+class LossAttributionHealthTests(unittest.TestCase):
+    """Active #10 (2026-05-17): daily-review block reads the loss
+    attribution artifact and surfaces the trailing-30d aggregate +
+    top culprit. Mirrors a single Notes-line alert pointing at the
+    retrain target when bias is materially large AND some stage owns
+    >= 50% of the bias direction."""
+
+    def _write_report(
+        self, path: Path, *, trailing_30d=None, trailing_7d=None,
+        generated="2026-05-17T01:00:00Z",
+    ):
+        def _aggregate(*, n=87, bias=0.27, direction="over_predicting",
+                       mean_p0=0.92, mean_p3=0.92, mean_won=0.65,
+                       culprits=None):
+            return {
+                "n": n,
+                "bias": bias,
+                "abs_bias": abs(bias),
+                "bias_direction": direction,
+                "mean_p0": mean_p0,
+                "mean_p3": mean_p3,
+                "mean_won": mean_won,
+                "top_culprits": culprits or [],
+            }
+        payload = {
+            "schema_version": 1,
+            "generated_at_utc": generated,
+            "n_bets": (trailing_30d or {}).get("n", 87),
+            "windows": {
+                "all": {"date_range": ["2026-04-01", "2026-05-17"],
+                        "aggregate": trailing_30d
+                        or _aggregate()},
+                "trailing_30d": {
+                    "date_range": ["2026-04-17", "2026-05-16"],
+                    "aggregate": trailing_30d or _aggregate(),
+                },
+                "trailing_7d": {
+                    "date_range": ["2026-05-10", "2026-05-16"],
+                    "aggregate": trailing_7d or _aggregate(n=44),
+                },
+            },
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    @staticmethod
+    def _agg(*, n=87, bias=0.27, mean_p0=0.92, mean_p3=0.92,
+             mean_won=0.65, direction="over_predicting", culprits=None):
+        return {
+            "n": n,
+            "bias": bias,
+            "abs_bias": abs(bias),
+            "bias_direction": direction,
+            "mean_p0": mean_p0,
+            "mean_p3": mean_p3,
+            "mean_won": mean_won,
+            "top_culprits": culprits or [],
+        }
+
+    def test_missing_artifact_emits_error_no_alerts(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = bdhr._loss_attribution_health(
+                report_path=Path(td) / "missing.json",
+                session_date="2026-05-17",
+            )
+            self.assertFalse(out["artifact_present"])
+            self.assertEqual(out["alerts"], [])
+            self.assertIn("missing", out.get("artifact_error", ""))
+
+    def test_corrupt_json_emits_error_no_alerts(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "loss.json"
+            path.write_text("not json", encoding="utf-8")
+            out = bdhr._loss_attribution_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertEqual(out["alerts"], [])
+            self.assertIn("failed to load", out.get("artifact_error", ""))
+
+    def test_clear_culprit_above_share_fires_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "loss.json"
+            self._write_report(path, trailing_30d=self._agg(
+                bias=0.27,
+                culprits=[{
+                    "stage": "stage1_baseline",
+                    "attribution_share": 0.95,
+                    "mean_shift_in_bias_direction": 0.42,
+                }],
+            ))
+            out = bdhr._loss_attribution_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertEqual(len(out["alerts"]), 1)
+            alert = out["alerts"][0]
+            self.assertIn("stage1_baseline", alert)
+            self.assertIn("+27.0pp", alert)
+            self.assertIn("retrain target", alert)
+
+    def test_no_single_culprit_emits_softer_alert(self):
+        # Bias material but no stage owns >= 50%
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "loss.json"
+            self._write_report(path, trailing_30d=self._agg(
+                bias=0.15,
+                culprits=[
+                    {"stage": "stage1_baseline", "attribution_share": 0.30,
+                     "mean_shift_in_bias_direction": 0.15},
+                    {"stage": "calibration", "attribution_share": 0.30,
+                     "mean_shift_in_bias_direction": 0.15},
+                ],
+            ))
+            out = bdhr._loss_attribution_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertEqual(len(out["alerts"]), 1)
+            alert = out["alerts"][0]
+            self.assertIn("no single stage owns", alert)
+            self.assertNotIn("retrain target", alert)
+
+    def test_small_bias_does_not_fire(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "loss.json"
+            # bias=2pp < 5pp floor
+            self._write_report(path, trailing_30d=self._agg(
+                bias=0.02,
+                culprits=[{
+                    "stage": "stage1_baseline",
+                    "attribution_share": 0.95,
+                    "mean_shift_in_bias_direction": 0.02,
+                }],
+            ))
+            out = bdhr._loss_attribution_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertEqual(out["alerts"], [])
+
+    def test_under_predicting_alert_carries_direction(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "loss.json"
+            self._write_report(path, trailing_30d=self._agg(
+                bias=-0.20, direction="under_predicting",
+                culprits=[{
+                    "stage": "stage2_run_env",
+                    "attribution_share": 0.80,
+                    "mean_shift_in_bias_direction": 0.15,
+                }],
+            ))
+            out = bdhr._loss_attribution_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertIn("under_predicting", out["alerts"][0])
+            self.assertIn("stage2_run_env", out["alerts"][0])
+
+    def test_empty_trailing_30d_no_alerts(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "loss.json"
+            empty_agg = {"n": 0, "bias": None, "abs_bias": None,
+                         "bias_direction": None, "top_culprits": []}
+            self._write_report(path, trailing_30d=empty_agg)
+            out = bdhr._loss_attribution_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertEqual(out["alerts"], [])
+            self.assertIsNone(out["trailing_30d"])
+
+    def test_stale_artifact_age_fires_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "loss.json"
+            self._write_report(
+                path,
+                generated="2026-04-01T00:00:00Z",  # > 14d vs 2026-05-17
+                trailing_30d=self._agg(bias=0.0),
+            )
+            out = bdhr._loss_attribution_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertTrue(any("old" in a for a in out["alerts"]))
+
+    def test_compact_carries_required_fields(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "loss.json"
+            self._write_report(path)
+            out = bdhr._loss_attribution_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            compact = out["trailing_30d"]
+            for k in (
+                "n", "bias", "abs_bias", "bias_direction",
+                "mean_p0", "mean_p3", "mean_won", "top_culprits",
+                "date_range",
+            ):
+                self.assertIn(k, compact)
+
+    def test_notes_block_carries_loss_attribution_prefix(self):
+        lah = {"alerts": ["stage1_baseline owns 100% ..."]}
+        notes = bdhr._build_notes(
+            session_summary={}, bet_totals={}, candidate_rollup={},
+            log_health={}, loss_attribution_health=lah,
+        )
+        prefixed = [n for n in notes if n.startswith("Loss-attribution:")]
+        self.assertEqual(len(prefixed), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

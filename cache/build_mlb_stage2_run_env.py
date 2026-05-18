@@ -800,6 +800,45 @@ def main() -> None:
         "tables": full_tables,
     }
 
+    # Active #16 v2 (2026-05-17): stamp build-time lineage on the
+    # Stage-2 cache. Same pattern as Stage-1; lets the operator
+    # trace any Stage-2 promotion (or post-hoc demotion) back to the
+    # exact build sha + input data window.
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(PROJECT_DIR / "scripts" / "analysis"))
+        from artifact_lineage import compute_lineage as _compute_lineage
+    except ImportError:
+        _compute_lineage = None  # type: ignore[assignment]
+    if _compute_lineage is not None:
+        try:
+            games_root = args.data_dir / "games" / args.season_type
+            payload["lineage"] = _compute_lineage(
+                builder_path=__file__,
+                input_paths=[args.stage1_cache],
+                input_dir_paths=[games_root],
+                project_root=PROJECT_DIR,
+                extra={
+                    "cli_args_summary": {
+                        "season_type": args.season_type,
+                        "game_types": args.game_types,
+                        "train_end_year": getattr(
+                            args, "train_end_year", None,
+                        ),
+                        "validation_start_year": getattr(
+                            args, "validation_start_year", None,
+                        ),
+                        "max_total_delta": getattr(
+                            args, "max_total_delta", None,
+                        ),
+                        "stage1_cache": str(args.stage1_cache),
+                        "out": str(args.out),
+                    },
+                },
+            )
+        except Exception as _lineage_exc:  # noqa: BLE001
+            print(f"[lineage] warning: stamp failed: {_lineage_exc!r}")
+
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
