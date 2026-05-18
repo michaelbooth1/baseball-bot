@@ -136,6 +136,67 @@ PaperBet = BetRecord
 
 
 # ---------------------------------------------------------------------------
+# Startup-time artifact lineage helper (Active #16 v3, 2026-05-17).
+# ---------------------------------------------------------------------------
+
+
+def _log_artifact_lineage_summary(
+    label: str,
+    path,
+    *,
+    expected: bool = True,
+) -> None:
+    """Read the lineage block from an artifact at `path` and log a
+    one-line summary at INFO level. Fail-open: ANY error reading the
+    artifact (missing, malformed, missing lineage block) is logged at
+    DEBUG and silently swallowed. Startup must never block on a
+    lineage read.
+
+    `expected=True` means the artifact is required for the engine to
+    function (Stage-1/Stage-2/Calibrator); a missing-lineage warning
+    surfaces at INFO. `expected=False` means the artifact is optional
+    (Stage-3 v2 weights override that may not exist yet); missing
+    artifact silently logged at DEBUG.
+    """
+    try:
+        import sys as _sys
+        analysis_dir = PROJECT_DIR / "scripts" / "analysis"
+        if str(analysis_dir) not in _sys.path:
+            _sys.path.insert(0, str(analysis_dir))
+        from artifact_lineage import (
+            _read_lineage_from_path,
+            format_lineage_summary_line,
+        )
+    except ImportError as exc:
+        LOGGER.debug(
+            "Could not import artifact_lineage for %s: %s", label, exc,
+        )
+        return
+
+    try:
+        p = Path(path) if path is not None else None
+        if p is None or not p.exists():
+            if expected:
+                LOGGER.info(
+                    "Artifact lineage: %s: artifact not found at %s",
+                    label, path,
+                )
+            else:
+                LOGGER.debug(
+                    "Artifact lineage: %s: optional artifact not present at %s",
+                    label, path,
+                )
+            return
+        lineage = _read_lineage_from_path(p)
+        line = format_lineage_summary_line(label, lineage)
+        LOGGER.info("Artifact lineage: %s", line)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.debug(
+            "Artifact lineage logging failed for %s: %r", label, exc,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Paper trading engine
 # ---------------------------------------------------------------------------
 
@@ -150,6 +211,12 @@ class SignalEngine(MLBPolymarketMonitor):
         self._load_weather_feature_cache()
         self.cache = OUCache(trade_args.cache_path)
         LOGGER.info("Cache loaded: %d cells", len(self.cache.cells))
+        # Active #16 v3 (2026-05-17): log build-time lineage for each
+        # artifact loaded at boot. Operator can grep the runtime log
+        # for "Artifact lineage:" and see which Stage-1/2/3/calibrator
+        # version was in production for any given session. Fail-open:
+        # any error reading the lineage block must not block startup.
+        _log_artifact_lineage_summary("stage1_cache", trade_args.cache_path)
 
         # [Stage-2] Park/weather run-environment model.
         try:
@@ -160,6 +227,9 @@ class SignalEngine(MLBPolymarketMonitor):
                 "Stage-2 run-env model loaded: lines=%s  max_delta=%.2f",
                 self.stage2_model.lines,
                 self.stage2_model.max_total_abs_delta,
+            )
+            _log_artifact_lineage_summary(
+                "stage2_cache", trade_args.stage2_model_path,
             )
         except Exception as exc:
             LOGGER.warning("Stage-2 model not loaded (%s); park/weather adjustments disabled.", exc)
@@ -175,6 +245,16 @@ class SignalEngine(MLBPolymarketMonitor):
             self.offense_model.mlb_avg_rpg,
             self.offense_model.mlb_avg_total,
             self.offense_model.n_games,
+        )
+        # The Stage-3 v2 weights JSON (produced by promote_team_offense_v2.py)
+        # is auto-loaded by TeamOffenseModel.load when present. Surface
+        # its lineage independently so the operator can verify which
+        # weights version was active without grepping the model state.
+        _stage3_weights_path = (
+            PROJECT_DIR / "cache" / "team_offense_v2_weights.json"
+        )
+        _log_artifact_lineage_summary(
+            "stage3_v2_weights", _stage3_weights_path, expected=False,
         )
 
         self._prob_calibration_mode = str(
@@ -208,6 +288,9 @@ class SignalEngine(MLBPolymarketMonitor):
                     self._prob_calibrator.method,
                     self._prob_calibration_path,
                 )
+                _log_artifact_lineage_summary(
+                    "calibrator", self._prob_calibration_path,
+                )
                 # Identity = no-op. Mode says shadow/enforce, but the artifact
                 # short-circuits to the raw probability, so calibrated_fv_*
                 # rows in the candidate ledger and downstream maturity reports
@@ -230,6 +313,31 @@ class SignalEngine(MLBPolymarketMonitor):
                 )
                 self._prob_calibration_mode = "off"
                 self._prob_calibrator = None
+
+        # Active #8 prep (2026-05-17). Stage-1 shadow empirical
+        # override. Default `off`; operator opts in via
+        # `--stage1-shadow-empirical-override shadow` on
+        # live_engine_cli.py (live_engine.py bridges live_args ->
+        # trade_args). When `shadow`, the post-FV phase computes
+        # `fair_value_alt_empirical` alongside production fair_value
+        # whenever the cell's empirical estimate is present, and
+        # logs both on the candidate row. NO effect on decisions.
+        self._stage1_shadow_empirical_mode = str(
+            getattr(trade_args, "stage1_shadow_empirical_mode", "off")
+            or "off"
+        ).strip().lower()
+        if self._stage1_shadow_empirical_mode not in {"off", "shadow"}:
+            LOGGER.warning(
+                "Unknown stage1 shadow empirical mode '%s'; forcing off.",
+                self._stage1_shadow_empirical_mode,
+            )
+            self._stage1_shadow_empirical_mode = "off"
+        if self._stage1_shadow_empirical_mode == "shadow":
+            LOGGER.info(
+                "Stage-1 shadow empirical override mode: shadow "
+                "(logs fair_value_alt_empirical per candidate; no "
+                "decision change)"
+            )
 
         # Phase C C1+C2+C3+C4 shadow (2026-05-17). Two-sided quote
         # engine. Default `off`; operator opts in via

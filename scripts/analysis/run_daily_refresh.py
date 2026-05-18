@@ -2442,6 +2442,55 @@ def build_refresh_steps(config: RefreshConfig, session_dates: Sequence[str], max
         ],
     ))
 
+    # Active #8 prep (2026-05-17): Stage-1 shadow override report.
+    # Replays two candidate Stage-1 fixes (empirical-when-available +
+    # block-deep-fallback) against actual training-table outcomes and
+    # surfaces "if we'd shipped this alt, the trailing-30d bias would
+    # have been X% instead of Y%". The shadow-first evidence path
+    # that precedes the eventual Active #8 runtime change.
+    steps.append(RefreshStep(
+        name="stage1_shadow_override_report",
+        description=(
+            "Replay two candidate Stage-1 fixes (empirical-when-"
+            "available + block-deep-fallback) against actual bet "
+            "outcomes; surface counterfactual bias deltas + P&L "
+            "delta + recommendation verdicts so Active #8's runtime "
+            "change has shadow evidence before promotion."
+        ),
+        command=[
+            _python(),
+            _script(
+                "scripts/analysis/build_stage1_shadow_override_report.py"
+            ),
+        ],
+    ))
+
+    # Active #10 follow-up (2026-05-17): Stage-1 cell-conditional loss
+    # attribution. Drills the standard loss attribution into Stage-1's
+    # INTERNAL cohort dimensions (fallback level, line fallback mode,
+    # used_fallback, sample size, Poisson-vs-empirical gap) so the
+    # operator can see WHICH Stage-1 cells own the bias before
+    # Active #8 rebuilds the cache. Reads signal_training_table.jsonl;
+    # output under data/analysis_output/stage1_cell_loss_attribution/.
+    steps.append(RefreshStep(
+        name="stage1_cell_loss_attribution",
+        description=(
+            "Drill today's Active #10 finding (Stage-1 owns the "
+            "aggregate bias) into Stage-1-internal cohort cuts: "
+            "fallback level, line fallback mode, used_fallback, "
+            "cell sample size, Poisson-vs-empirical gap. Surfaces "
+            "the cohort culprits that narrow Active #8's retrain "
+            "surface from 'rebuild Stage-1' to 'fix THIS Stage-1 "
+            "cohort.'"
+        ),
+        command=[
+            _python(),
+            _script(
+                "scripts/analysis/build_stage1_cell_loss_attribution.py"
+            ),
+        ],
+    ))
+
     # Active #10 (2026-05-17): bet-level loss attribution report.
     # Decomposes each filled+settled bet's calibrated FV via the
     # logit-additive chain (p0 -> p1 -> p2 -> p3) into per-stage

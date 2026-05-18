@@ -560,6 +560,12 @@ def _write_history_rows(path: Path, payload: Dict[str, Any]) -> None:
     """Append one row per feature per day to the history file. Same-day
     re-runs append additional rows; analysis can dedupe by
     `(active_date, feature)` if needed.
+
+    Active #14 (2026-05-17): after appending, trim rows older than
+    PSI_HISTORY_RETENTION_DAYS (default 365). The drift-in-drift
+    analyzer (and every other consumer) only looks at the trailing
+    30d, so older rows are pure storage cost. Trim is cheap (~7
+    features/day x 365 days = ~2.5k rows max).
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     active_date = payload["active_date"]
@@ -578,6 +584,88 @@ def _write_history_rows(path: Path, payload: Dict[str, Any]) -> None:
                 "baseline_n": info.get("baseline_n"),
             }
             f.write(json.dumps(row) + "\n")
+    _trim_psi_history(path, retention_days=PSI_HISTORY_RETENTION_DAYS)
+
+
+# Active #14 (2026-05-17): retention policy on psi_history.jsonl.
+# Drift-in-drift only looks at the trailing 30 days; everything else
+# (concept_drift, daily_review) reads only the latest row per feature.
+# 365 days is generous enough to debug a "this drift started last
+# year" investigation if the operator wants while bounding the file
+# at ~2.5k rows.
+PSI_HISTORY_RETENTION_DAYS = 365
+
+
+def _trim_psi_history(path: Path, *, retention_days: int) -> None:
+    """Rewrite `path` keeping only rows whose `active_date` is within
+    `retention_days` of the LATEST date in the file. Atomic rewrite via
+    tmp file. Best-effort: ANY error is silently swallowed so the
+    refresh pipeline never blocks on GC.
+    """
+    if not path.exists() or retention_days <= 0:
+        return
+    try:
+        rows: List[Dict[str, Any]] = []
+        n_input_lines = 0
+        n_skipped_corrupt = 0
+        with open(path, "r", encoding="utf-8") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                n_input_lines += 1
+                try:
+                    rows.append(json.loads(raw))
+                except json.JSONDecodeError:
+                    # Skip corrupted lines but DO rewrite (their
+                    # presence is itself a reason to clean up).
+                    n_skipped_corrupt += 1
+                    continue
+        if not rows:
+            return
+        # Cutoff anchored on the LATEST active_date in the file, not
+        # today's date -- ensures the trim is stable even if the
+        # operator runs the refresh on a stale corpus.
+        from datetime import datetime as _dt, timedelta as _td
+        latest_date: Optional[_dt] = None
+        for r in rows:
+            d_str = str(r.get("active_date") or "")
+            try:
+                d = _dt.strptime(d_str, "%Y-%m-%d")
+            except ValueError:
+                continue
+            if latest_date is None or d > latest_date:
+                latest_date = d
+        if latest_date is None:
+            return
+        cutoff = latest_date - _td(days=retention_days - 1)
+
+        def _within(row: Dict[str, Any]) -> bool:
+            d_str = str(row.get("active_date") or "")
+            try:
+                d = _dt.strptime(d_str, "%Y-%m-%d")
+            except ValueError:
+                # Rows without a parseable active_date are kept --
+                # we don't drop data on parse errors.
+                return True
+            return d >= cutoff
+
+        kept = [r for r in rows if _within(r)]
+        # Rewrite when EITHER (a) we dropped retention rows, OR (b)
+        # we skipped corrupted lines (which would otherwise stay on
+        # disk forever).
+        if len(kept) == len(rows) and n_skipped_corrupt == 0:
+            return  # nothing to trim, file is clean
+        # Atomic rewrite via tmp file so a crash mid-trim doesn't
+        # corrupt the history.
+        tmp = path.with_suffix(path.suffix + ".trim_tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            for r in kept:
+                f.write(json.dumps(r) + "\n")
+        import os as _os
+        _os.replace(tmp, path)
+    except OSError:
+        return
 
 
 def _render_markdown(payload: Dict[str, Any]) -> str:

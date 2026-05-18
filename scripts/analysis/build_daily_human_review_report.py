@@ -228,6 +228,59 @@ DEFAULT_LOSS_ATTRIBUTION_REPORT = (
     / "loss_attribution_report.json"
 )
 LOSS_ATTRIBUTION_STALE_AGE_DAYS = 14
+
+# Stage-1 cell loss attribution (Active #10 follow-up, 2026-05-17).
+# Reads the per-cohort drill-down built by
+# build_stage1_cell_loss_attribution.py and surfaces the top Stage-1
+# cohort culprit + an alert when the aggregate Stage-1 bias is material
+# AND fallback_rate is high (the signal that Active #8 needs surgical
+# attention to the fallback path).
+DEFAULT_STAGE1_CELL_LOSS_REPORT = (
+    PROJECT_DIR / "data" / "analysis_output"
+    / "stage1_cell_loss_attribution"
+    / "stage1_cell_loss_attribution.json"
+)
+STAGE1_CELL_LOSS_STALE_AGE_DAYS = 14
+
+# Stage-1 shadow override report (Active #8 prep, 2026-05-17).
+# Replays two candidate Stage-1 fixes (Alt A: empirical-when-available,
+# Alt B: block deep fallback) against actual outcomes. This block
+# surfaces the trailing-30d bias delta from Alt A + the counterfactual
+# $ delta from Alt B, plus any recommendation that fired.
+DEFAULT_STAGE1_SHADOW_OVERRIDE_REPORT = (
+    PROJECT_DIR / "data" / "analysis_output"
+    / "stage1_shadow_override"
+    / "stage1_shadow_override_report.json"
+)
+STAGE1_SHADOW_OVERRIDE_STALE_AGE_DAYS = 14
+# Notes-mirror floor for the aggregate Stage-1 bias. Below 5pp the
+# Stage-1 contribution is approximately neutral and there's nothing
+# surgical to attack.
+STAGE1_CELL_LOSS_MIN_ABS_BIAS = 0.05
+# Fallback-rate notes floor. A fallback rate above this AND a
+# material Stage-1 bias is the signature that the fallback path
+# (not the exact-cell math) owns the over/under-prediction.
+STAGE1_CELL_LOSS_FALLBACK_RATE_NOTES_FLOOR = 0.50
+
+# Cache lineage freshness (Active #16 v3, 2026-05-17). Each major
+# cache file (Stage-1, Stage-2, Stage-3 v2 weights, calibrator) now
+# carries an embedded lineage block (v2 shipped earlier today). This
+# block surfaces the build_at_utc + git_sha summary in the daily
+# review so operators see "Stage-1 cache last built 12 days ago on
+# data through 2026-05-15" without opening each artifact.
+# Mirrors any cache whose build_age exceeds the warn threshold to
+# Notes with prefix `Cache-lineage:`.
+DEFAULT_STAGE1_CACHE_PATH = PROJECT_DIR / "cache" / "mlb_ou_cache.json"
+DEFAULT_STAGE2_CACHE_PATH = PROJECT_DIR / "cache" / "mlb_stage2_run_env.json"
+DEFAULT_STAGE3_V2_WEIGHTS_PATH = (
+    PROJECT_DIR / "cache" / "team_offense_v2_weights.json"
+)
+# 14d default threshold for "your cache is getting stale." The Stage-1
+# cache currently rebuilds inside the daily refresh on a StalenessCheck
+# (rebuilds when input data has changed), so this threshold should
+# rarely fire under healthy operation. It DOES fire when the daily
+# refresh is broken or skipped for two weeks; cheap canary.
+CACHE_LINEAGE_BUILD_AGE_WARN_DAYS = 14
 # Don't fire on tiny biases -- if the model's aggregate bias is
 # < 5pp we have a near-calibrated model and attribution is noise.
 # The aggregate_health block (Active #9) handles the "is there a
@@ -2739,6 +2792,335 @@ def _loss_attribution_health(
     return payload
 
 
+def _stage1_cell_loss_health(
+    *,
+    report_path: Path,
+    session_date: str,
+) -> Dict[str, Any]:
+    """Active #10 follow-up (2026-05-17): surface Stage-1 cell-conditional
+    loss attribution.
+
+    Reads the artifact built by `build_stage1_cell_loss_attribution.py`
+    and surfaces the trailing-30d aggregate Stage-1 bias + top cohort
+    culprit. Mirrors a Notes-line alert when:
+      - |aggregate stage1_bias| >= STAGE1_CELL_LOSS_MIN_ABS_BIAS, AND
+      - fallback_rate >= STAGE1_CELL_LOSS_FALLBACK_RATE_NOTES_FLOOR
+        (i.e. the bias is concentrated in fallback cells, the
+        signature that Active #8 should fix the fallback path rather
+        than rebuild the cache wholesale)
+    so the operator gets a one-line retrain-target pointer without
+    opening the artifact.
+    """
+    payload: Dict[str, Any] = {
+        "artifact_path": str(report_path),
+        "artifact_present": report_path.exists(),
+        "alerts": [],
+        "trailing_30d": None,
+        "top_culprits_30d": [],
+    }
+    if not report_path.exists():
+        payload["artifact_error"] = (
+            "stage1_cell_loss_attribution missing; check refresh step ran"
+        )
+        return payload
+    try:
+        report = _load_json(report_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        payload["artifact_error"] = f"failed to load: {exc}"
+        return payload
+
+    payload["artifact_generated_at_utc"] = report.get("generated_at_utc")
+    age = _artifact_age_days(
+        report.get("generated_at_utc", ""), session_date,
+    )
+    payload["artifact_age_days"] = age
+    if age is not None and age > STAGE1_CELL_LOSS_STALE_AGE_DAYS:
+        payload["alerts"].append(
+            f"stage1_cell_loss_attribution report is {age:.1f}d old "
+            f"(> {STAGE1_CELL_LOSS_STALE_AGE_DAYS}d threshold); "
+            "rerun build_stage1_cell_loss_attribution or daily refresh."
+        )
+
+    windows = report.get("windows") or {}
+    w30 = windows.get("trailing_30d") or {}
+    agg = w30.get("aggregate") or {}
+    if agg.get("n", 0) == 0:
+        # No data; nothing to surface. Block still informative as a
+        # "module ran" canary.
+        return payload
+
+    payload["trailing_30d"] = {
+        "n": agg.get("n"),
+        "stage1_bias": agg.get("stage1_bias"),
+        "mean_p0": agg.get("mean_p0"),
+        "mean_won": agg.get("mean_won"),
+        "fallback_rate": agg.get("fallback_rate"),
+        "mean_poisson_minus_empirical": agg.get(
+            "mean_poisson_minus_empirical",
+        ),
+        "n_with_empirical": agg.get("n_with_empirical"),
+        "date_range": w30.get("date_range"),
+    }
+    payload["top_culprits_30d"] = w30.get("top_culprits") or []
+
+    abs_bias = abs(agg.get("stage1_bias") or 0.0)
+    fallback_rate = agg.get("fallback_rate") or 0.0
+    if (
+        abs_bias >= STAGE1_CELL_LOSS_MIN_ABS_BIAS
+        and fallback_rate >= STAGE1_CELL_LOSS_FALLBACK_RATE_NOTES_FLOOR
+    ):
+        n = agg.get("n")
+        bias_pp = (agg.get("stage1_bias") or 0.0) * 100
+        gap = agg.get("mean_poisson_minus_empirical")
+        culprit_msg = ""
+        culprits = payload["top_culprits_30d"]
+        if culprits:
+            top = culprits[0]
+            culprit_msg = (
+                f" Top culprit: `{top['dimension']}={top['bucket']}` "
+                f"(bias {(top['stage1_bias'] or 0) * 100:+.1f}pp, "
+                f"n={top['n']}, "
+                f"ratio_vs_agg="
+                f"{(top.get('stage1_bias_vs_aggregate_ratio') or 0):.2f}x)."
+            )
+        gap_msg = ""
+        if gap is not None:
+            gap_pp = gap * 100
+            if abs(gap_pp) >= 5:
+                gap_msg = (
+                    f" Poisson smoothing diverges from empirical by "
+                    f"{gap_pp:+.1f}pp on average -- candidate fix is the "
+                    "Stage-1 smoothing, not the fallback path."
+                )
+        payload["alerts"].append(
+            f"trailing-30d Stage-1 bias {bias_pp:+.1f}pp on n={n} bets "
+            f"with fallback_rate={fallback_rate * 100:.0f}% -- "
+            "Active #8 retrain surface narrows to the Stage-1 "
+            "fallback path." + culprit_msg + gap_msg
+        )
+
+    return payload
+
+
+def _stage1_shadow_override_health(
+    *,
+    report_path: Path,
+    session_date: str,
+) -> Dict[str, Any]:
+    """Active #8 prep (2026-05-17): surface Stage-1 shadow-override
+    counterfactual evidence.
+
+    Reads the trailing-30d aggregate from
+    `build_stage1_shadow_override_report.py` and surfaces:
+      - Alt A bias delta vs production (the empirical-when-available
+        improvement)
+      - Alt B blocked count + counterfactual P&L delta
+      - any recommendations that fired (>= 1pp + >= 25% coverage for
+        Alt A; >= $20 + >= 3 blocked for Alt B)
+
+    Mirrors recommendation alerts to Notes with prefix
+    `Stage1-shadow:` so the operator sees actionable shadow evidence
+    in the daily review.
+    """
+    payload: Dict[str, Any] = {
+        "artifact_path": str(report_path),
+        "artifact_present": report_path.exists(),
+        "alerts": [],
+        "trailing_30d": None,
+        "recommendations_30d": [],
+    }
+    if not report_path.exists():
+        payload["artifact_error"] = (
+            "stage1_shadow_override_report missing; "
+            "check refresh step ran"
+        )
+        return payload
+    try:
+        report = _load_json(report_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        payload["artifact_error"] = f"failed to load: {exc}"
+        return payload
+
+    payload["artifact_generated_at_utc"] = report.get("generated_at_utc")
+    age = _artifact_age_days(
+        report.get("generated_at_utc", ""), session_date,
+    )
+    payload["artifact_age_days"] = age
+    if age is not None and age > STAGE1_SHADOW_OVERRIDE_STALE_AGE_DAYS:
+        payload["alerts"].append(
+            f"stage1_shadow_override_report is {age:.1f}d old "
+            f"(> {STAGE1_SHADOW_OVERRIDE_STALE_AGE_DAYS}d threshold)."
+        )
+
+    windows = report.get("windows") or {}
+    w30 = windows.get("trailing_30d") or {}
+    n_bets = w30.get("n_bets", 0)
+    if n_bets == 0:
+        return payload
+
+    prod = w30.get("production") or {}
+    alt_a = w30.get("alt_a_empirical_when_available") or {}
+    alt_b = w30.get("alt_b_block_fallback_level_2plus") or {}
+    payload["trailing_30d"] = {
+        "n_bets": n_bets,
+        "production_bias": prod.get("bias"),
+        "alt_a_bias": alt_a.get("bias"),
+        "alt_a_bias_delta_pp": alt_a.get("bias_delta_vs_prod_pp"),
+        "alt_a_n_changed": alt_a.get("n_changed"),
+        "alt_a_coverage_rate": alt_a.get("n_coverage_rate"),
+        "alt_b_n_blocked": alt_b.get("n_blocked"),
+        "alt_b_n_kept": alt_b.get("n_kept"),
+        "alt_b_counterfactual_profit_delta_usd": (
+            alt_b.get("counterfactual_profit_delta_usd")
+        ),
+        "alt_b_blocked_n_wins": alt_b.get("blocked_n_wins"),
+        "alt_b_blocked_n_losses": alt_b.get("blocked_n_losses"),
+        "date_range": w30.get("date_range"),
+    }
+    payload["recommendations_30d"] = w30.get("recommendations") or []
+
+    # Mirror recommendation rationales to Notes.
+    for rec in payload["recommendations_30d"]:
+        alt = rec.get("alt", "?")
+        payload["alerts"].append(
+            f"{alt}: {rec.get('verdict')} -- " + rec.get("rationale", "")
+        )
+    return payload
+
+
+def _cache_lineage_freshness_health(
+    *,
+    stage1_path: Path = DEFAULT_STAGE1_CACHE_PATH,
+    stage2_path: Path = DEFAULT_STAGE2_CACHE_PATH,
+    stage3_v2_path: Path = DEFAULT_STAGE3_V2_WEIGHTS_PATH,
+    calibrator_path: Path = DEFAULT_CALIBRATION_ARTIFACT,
+    calibrator_under_path: Path = DEFAULT_CALIBRATION_ARTIFACT_UNDER,
+    build_age_warn_days: float = CACHE_LINEAGE_BUILD_AGE_WARN_DAYS,
+) -> Dict[str, Any]:
+    """Active #16 v3 (2026-05-17): surface embedded lineage from each
+    major cache + calibrator artifact.
+
+    Reads the `lineage` block stamped by v2 (today's earlier shipment)
+    on each cache file and produces:
+      - per-artifact compact summary (builder_path, git_sha,
+        built_at_utc, build_age_days, input_summary)
+      - alert when any cache's build age exceeds the warn threshold
+
+    Mirrors any stale-cache alerts to top-level Notes with prefix
+    `Cache-lineage:`. Complementary to `artifact_lineage_freshness`
+    (which checks mtime + upstream-input ordering); this block reads
+    the embedded build-time metadata only.
+
+    Caches that pre-date v2 (no lineage block yet) are surfaced with
+    a "no lineage" status rather than treated as an error -- the
+    block will go fully green after the next refresh stamps lineage
+    on every cache.
+    """
+    payload: Dict[str, Any] = {
+        "alerts": [],
+        "artifacts": {},
+        "thresholds": {
+            "build_age_warn_days": build_age_warn_days,
+        },
+    }
+
+    # Lazy import to keep build_daily_human_review_report's import
+    # graph small for callers that only want the lighter blocks.
+    try:
+        from scripts.analysis.artifact_lineage import (  # noqa: WPS433
+            _read_lineage_from_path,
+            format_lineage_summary_line,
+            _age_days,
+        )
+    except ImportError:
+        try:
+            from artifact_lineage import (  # type: ignore[no-redef]
+                _read_lineage_from_path,
+                format_lineage_summary_line,
+                _age_days,
+            )
+        except ImportError:
+            payload["alerts"].append(
+                "artifact_lineage module unavailable; cache lineage "
+                "freshness check skipped."
+            )
+            return payload
+
+    artifact_specs = [
+        ("stage1_cache", stage1_path, True),
+        ("stage2_cache", stage2_path, True),
+        ("stage3_v2_weights", stage3_v2_path, False),
+        ("calibrator_over", calibrator_path, True),
+        ("calibrator_under", calibrator_under_path, False),
+    ]
+
+    for label, path, expected in artifact_specs:
+        artifact_info: Dict[str, Any] = {
+            "path": str(path),
+            "expected": expected,
+            "exists": path.exists() if path is not None else False,
+        }
+        if not artifact_info["exists"]:
+            artifact_info["status"] = (
+                "missing_required" if expected else "missing_optional"
+            )
+            artifact_info["summary"] = (
+                f"{label}: artifact not found"
+            )
+            payload["artifacts"][label] = artifact_info
+            if expected:
+                payload["alerts"].append(
+                    f"{label} artifact not found at {path}; "
+                    "engine boot would fail-closed on this cache."
+                )
+            continue
+        lineage = _read_lineage_from_path(path)
+        if lineage is None:
+            artifact_info["status"] = "no_lineage_pre_v2"
+            artifact_info["summary"] = format_lineage_summary_line(
+                label, None,
+            )
+            payload["artifacts"][label] = artifact_info
+            # Pre-V2 artifacts are a transient state; the next refresh
+            # stamps lineage. Don't alert; surfacing in the panel is
+            # enough.
+            continue
+        # Lineage present. Compact summary + build-age check.
+        build_age = _age_days(lineage.get("built_at_utc"))
+        artifact_info["status"] = "ok"
+        artifact_info["built_at_utc"] = lineage.get("built_at_utc")
+        artifact_info["build_age_days"] = (
+            round(build_age, 2) if build_age is not None else None
+        )
+        artifact_info["git_sha"] = lineage.get("git_sha")
+        artifact_info["git_dirty"] = lineage.get("git_dirty")
+        artifact_info["git_branch"] = lineage.get("git_branch")
+        artifact_info["builder_path"] = lineage.get("builder_path")
+        artifact_info["input_hash_count"] = len(
+            lineage.get("input_hashes") or {},
+        )
+        artifact_info["input_dir_count"] = len(
+            lineage.get("input_dir_summaries") or {},
+        )
+        artifact_info["summary"] = format_lineage_summary_line(
+            label, lineage,
+        )
+        if (
+            build_age is not None
+            and build_age > build_age_warn_days
+        ):
+            payload["alerts"].append(
+                f"{label} cache built {build_age:.1f}d ago "
+                f"(> {build_age_warn_days:.0f}d warn threshold); "
+                "daily refresh may have skipped this builder. "
+                "Check refresh_health_rollup or rerun the relevant "
+                "refresh step."
+            )
+        payload["artifacts"][label] = artifact_info
+
+    return payload
+
+
 def _daemon_readiness_health(
     *,
     report_path: Path,
@@ -3206,6 +3588,9 @@ def _build_notes(
     gate_counterfactual_health: Optional[Dict[str, Any]] = None,
     cohort_calibration_health: Optional[Dict[str, Any]] = None,
     loss_attribution_health: Optional[Dict[str, Any]] = None,
+    cache_lineage_freshness_health: Optional[Dict[str, Any]] = None,
+    stage1_cell_loss_health: Optional[Dict[str, Any]] = None,
+    stage1_shadow_override_health: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     notes: List[str] = []
     roi = bet_totals.get("roi")
@@ -3279,6 +3664,12 @@ def _build_notes(
         notes.append(f"Gate-counterfactual: {alert}")
     for alert in (loss_attribution_health or {}).get("alerts") or []:
         notes.append(f"Loss-attribution: {alert}")
+    for alert in (cache_lineage_freshness_health or {}).get("alerts") or []:
+        notes.append(f"Cache-lineage: {alert}")
+    for alert in (stage1_cell_loss_health or {}).get("alerts") or []:
+        notes.append(f"Stage1-cell-loss: {alert}")
+    for alert in (stage1_shadow_override_health or {}).get("alerts") or []:
+        notes.append(f"Stage1-shadow: {alert}")
     for alert in (reconciler_summary or {}).get("alerts") or []:
         notes.append(f"Reconciler watch: {alert}")
 
@@ -3412,6 +3803,22 @@ def build_report(
         report_path=DEFAULT_LOSS_ATTRIBUTION_REPORT,
         session_date=session_date,
     )
+    # Active #16 v3 (2026-05-17): surface the embedded lineage block
+    # from each major cache + calibrator artifact in the daily review.
+    # Complementary to the artifact_lineage_freshness mtime check.
+    cache_lineage_freshness_health = _cache_lineage_freshness_health()
+    # Active #10 follow-up (2026-05-17): drill the Stage-1 ownership
+    # of the aggregate bias into Stage-1-internal cohorts so the
+    # operator sees which cells need surgical attention.
+    stage1_cell_loss_health = _stage1_cell_loss_health(
+        report_path=DEFAULT_STAGE1_CELL_LOSS_REPORT,
+        session_date=session_date,
+    )
+    # Active #8 prep: surface the shadow-override counterfactual.
+    stage1_shadow_override_health = _stage1_shadow_override_health(
+        report_path=DEFAULT_STAGE1_SHADOW_OVERRIDE_REPORT,
+        session_date=session_date,
+    )
     reconciler_summary = _reconciler_summary(session.get("bets") or [])
     notes = _build_notes(
         session_summary,
@@ -3433,6 +3840,9 @@ def build_report(
         gate_counterfactual_health,
         cohort_calibration_health,
         loss_attribution_health,
+        cache_lineage_freshness_health,
+        stage1_cell_loss_health,
+        stage1_shadow_override_health,
     )
     stake_usdc = _safe_float((session.get("params") or {}).get("stake"), 10.0)
     stage2_audit = _stage2_suppression_dollar_audit(
@@ -3476,6 +3886,9 @@ def build_report(
         "cohort_roi_health": cohort_roi_health,
         "cohort_calibration_health": cohort_calibration_health,
         "loss_attribution_health": loss_attribution_health,
+        "cache_lineage_freshness_health": cache_lineage_freshness_health,
+        "stage1_cell_loss_health": stage1_cell_loss_health,
+        "stage1_shadow_override_health": stage1_shadow_override_health,
         "concept_drift_health": concept_drift_health,
         "drift_in_drift_health": drift_in_drift_health,
         "daemon_readiness_health": daemon_readiness_health,

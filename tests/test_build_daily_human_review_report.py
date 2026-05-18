@@ -3751,5 +3751,489 @@ class LossAttributionHealthTests(unittest.TestCase):
         self.assertEqual(len(prefixed), 1)
 
 
+class CacheLineageFreshnessHealthTests(unittest.TestCase):
+    """Active #16 v3 (2026-05-17): reads the embedded lineage block
+    from each major cache + calibrator artifact and surfaces a per-
+    artifact summary + a stale-cache alert when build_age exceeds the
+    warn threshold."""
+
+    @staticmethod
+    def _write_artifact(
+        path: Path, *, lineage=None, payload_extras=None,
+    ):
+        payload = dict(payload_extras or {})
+        if lineage is not None:
+            payload["lineage"] = lineage
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    @staticmethod
+    def _lineage(
+        *, built_at_utc="2026-05-17T01:00:00Z",
+        git_sha="abc1234567ef", git_dirty=False, git_branch="main",
+        builder_path="cache/build_mlb_ou_cache.py",
+        input_hashes=None, input_dir_summaries=None,
+    ):
+        return {
+            "schema_version": 1,
+            "built_at_utc": built_at_utc,
+            "builder_path": builder_path,
+            "git_sha": git_sha,
+            "git_branch": git_branch,
+            "git_dirty": git_dirty,
+            "input_hashes": input_hashes or {},
+            "input_dir_summaries": (
+                input_dir_summaries
+                or {"data/games/regular": {"n_files": 2400}}
+            ),
+            "python_version": "3.11.0",
+        }
+
+    def test_returns_per_artifact_panel_with_required_keys(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            s1 = tmp / "s1.json"; self._write_artifact(s1, lineage=self._lineage())
+            s2 = tmp / "s2.json"; self._write_artifact(s2, lineage=self._lineage())
+            s3 = tmp / "s3.json"
+            cov = tmp / "cov.json"; self._write_artifact(cov, lineage=self._lineage())
+            cun = tmp / "cun.json"; self._write_artifact(cun, lineage=self._lineage())
+            out = bdhr._cache_lineage_freshness_health(
+                stage1_path=s1, stage2_path=s2,
+                stage3_v2_path=s3,
+                calibrator_path=cov, calibrator_under_path=cun,
+            )
+            for label in ("stage1_cache", "stage2_cache",
+                          "stage3_v2_weights",
+                          "calibrator_over", "calibrator_under"):
+                self.assertIn(label, out["artifacts"])
+
+    def test_missing_required_artifact_fires_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            out = bdhr._cache_lineage_freshness_health(
+                stage1_path=tmp / "missing_s1.json",
+                stage2_path=tmp / "missing_s2.json",
+                stage3_v2_path=tmp / "missing_s3.json",
+                calibrator_path=tmp / "missing_cov.json",
+                calibrator_under_path=tmp / "missing_cun.json",
+            )
+            # 3 required artifacts (stage1, stage2, calibrator_over)
+            # should fire alerts; stage3 + calibrator_under (optional)
+            # should NOT.
+            required_misses = [
+                a for a in out["alerts"]
+                if "stage1_cache" in a or "stage2_cache" in a
+                or "calibrator_over" in a
+            ]
+            self.assertEqual(len(required_misses), 3)
+            # Optional ones don't alert
+            self.assertFalse(any(
+                "stage3_v2_weights" in a for a in out["alerts"]
+            ))
+
+    def test_pre_v2_artifact_emits_status_not_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            s1 = tmp / "s1.json"
+            # Pre-V2 artifact: exists but no `lineage` key
+            self._write_artifact(s1, lineage=None,
+                                 payload_extras={"cells": {}})
+            out = bdhr._cache_lineage_freshness_health(
+                stage1_path=s1,
+                stage2_path=tmp / "s2.json",
+                stage3_v2_path=tmp / "s3.json",
+                calibrator_path=tmp / "cov.json",
+                calibrator_under_path=tmp / "cun.json",
+            )
+            info = out["artifacts"]["stage1_cache"]
+            self.assertEqual(info["status"], "no_lineage_pre_v2")
+            # Pre-V2 should NOT add an alert -- transient state
+            self.assertFalse(any(
+                "stage1_cache" in a and "stale" in a
+                for a in out["alerts"]
+            ))
+
+    def test_stale_build_age_fires_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            s1 = tmp / "s1.json"
+            self._write_artifact(s1, lineage=self._lineage(
+                built_at_utc="2026-04-01T00:00:00Z",  # ~46d before 2026-05-17
+            ))
+            out = bdhr._cache_lineage_freshness_health(
+                stage1_path=s1,
+                stage2_path=tmp / "s2.json",
+                stage3_v2_path=tmp / "s3.json",
+                calibrator_path=tmp / "cov.json",
+                calibrator_under_path=tmp / "cun.json",
+            )
+            stale_alerts = [
+                a for a in out["alerts"]
+                if "stage1_cache" in a and "built" in a
+            ]
+            self.assertEqual(len(stale_alerts), 1, out["alerts"])
+            self.assertIn("warn threshold", stale_alerts[0])
+
+    def test_fresh_build_does_not_fire_stale_alert(self):
+        from datetime import datetime, timezone
+        # Stamp built_at_utc = NOW so age < threshold
+        fresh_iso = datetime.now(timezone.utc).isoformat().replace(
+            "+00:00", "Z",
+        )
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            s1 = tmp / "s1.json"
+            self._write_artifact(s1, lineage=self._lineage(
+                built_at_utc=fresh_iso,
+            ))
+            out = bdhr._cache_lineage_freshness_health(
+                stage1_path=s1,
+                stage2_path=tmp / "s2.json",
+                stage3_v2_path=tmp / "s3.json",
+                calibrator_path=tmp / "cov.json",
+                calibrator_under_path=tmp / "cun.json",
+            )
+            stale_alerts = [
+                a for a in out["alerts"]
+                if "stage1_cache" in a and "built" in a
+            ]
+            self.assertEqual(stale_alerts, [])
+
+    def test_artifact_info_carries_git_sha_when_present(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            s1 = tmp / "s1.json"
+            self._write_artifact(s1, lineage=self._lineage(
+                git_sha="deadbeefcafe", git_dirty=True,
+            ))
+            out = bdhr._cache_lineage_freshness_health(
+                stage1_path=s1,
+                stage2_path=tmp / "s2.json",
+                stage3_v2_path=tmp / "s3.json",
+                calibrator_path=tmp / "cov.json",
+                calibrator_under_path=tmp / "cun.json",
+            )
+            info = out["artifacts"]["stage1_cache"]
+            self.assertEqual(info["git_sha"], "deadbeefcafe")
+            self.assertTrue(info["git_dirty"])
+
+    def test_notes_block_carries_cache_lineage_prefix(self):
+        clf = {"alerts": ["stage1_cache built 30d ago ..."]}
+        notes = bdhr._build_notes(
+            session_summary={}, bet_totals={}, candidate_rollup={},
+            log_health={}, cache_lineage_freshness_health=clf,
+        )
+        prefixed = [n for n in notes if n.startswith("Cache-lineage:")]
+        self.assertEqual(len(prefixed), 1)
+
+
+class Stage1CellLossHealthTests(unittest.TestCase):
+    """Active #10 follow-up: daily-review block reads the Stage-1
+    cell-conditional artifact and surfaces the trailing-30d Stage-1
+    bias + top culprit with a Notes alert."""
+
+    @staticmethod
+    def _write_report(
+        path: Path, *, trailing_30d_agg=None,
+        culprits=None, generated="2026-05-17T01:00:00Z",
+    ):
+        if trailing_30d_agg is None:
+            trailing_30d_agg = {
+                "n": 88,
+                "mean_p0": 0.93,
+                "mean_won": 0.65,
+                "stage1_bias": 0.28,
+                "abs_stage1_bias": 0.28,
+                "mean_poisson_minus_empirical": 0.16,
+                "n_with_empirical": 32,
+                "fallback_rate": 0.69,
+                "mean_inferred_state_n": 150.0,
+            }
+        payload = {
+            "schema_version": 1,
+            "generated_at_utc": generated,
+            "n_bets": trailing_30d_agg["n"],
+            "windows": {
+                "all": {"date_range": ["2026-04-01", "2026-05-17"],
+                        "aggregate": trailing_30d_agg,
+                        "by_cohort": {}, "top_culprits": []},
+                "trailing_30d": {
+                    "date_range": ["2026-04-17", "2026-05-16"],
+                    "aggregate": trailing_30d_agg,
+                    "by_cohort": {},
+                    "top_culprits": culprits or [],
+                },
+                "trailing_7d": {
+                    "date_range": ["2026-05-10", "2026-05-16"],
+                    "aggregate": {"n": 0, "stage1_bias": None,
+                                  "fallback_rate": None},
+                    "by_cohort": {}, "top_culprits": [],
+                },
+            },
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_missing_artifact_emits_error_no_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = bdhr._stage1_cell_loss_health(
+                report_path=Path(td) / "missing.json",
+                session_date="2026-05-17",
+            )
+            self.assertFalse(out["artifact_present"])
+            self.assertEqual(out["alerts"], [])
+            self.assertIn("missing", out.get("artifact_error", ""))
+
+    def test_high_bias_and_high_fallback_rate_fires_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "s1la.json"
+            self._write_report(path, trailing_30d_agg={
+                "n": 88, "mean_p0": 0.93, "mean_won": 0.65,
+                "stage1_bias": 0.28, "abs_stage1_bias": 0.28,
+                "mean_poisson_minus_empirical": 0.16,
+                "n_with_empirical": 32, "fallback_rate": 0.69,
+                "mean_inferred_state_n": 150.0,
+            }, culprits=[{
+                "dimension": "stage1_fallback_level_bucket",
+                "bucket": "level_2plus_fallback",
+                "stage1_bias": 0.40,
+                "stage1_bias_vs_aggregate_ratio": 1.44,
+                "n": 6,
+                "rationale": "...",
+            }])
+            out = bdhr._stage1_cell_loss_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertEqual(len(out["alerts"]), 1)
+            alert = out["alerts"][0]
+            self.assertIn("+28.0pp", alert)
+            self.assertIn("fallback_rate=69%", alert)
+            self.assertIn("level_2plus_fallback", alert)
+            self.assertIn("Poisson smoothing diverges", alert)
+
+    def test_low_bias_does_not_fire(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "s1la.json"
+            self._write_report(path, trailing_30d_agg={
+                "n": 88, "mean_p0": 0.60, "mean_won": 0.58,
+                "stage1_bias": 0.02, "abs_stage1_bias": 0.02,
+                "fallback_rate": 0.80, "mean_inferred_state_n": 150.0,
+                "mean_poisson_minus_empirical": None,
+                "n_with_empirical": 0,
+            })
+            out = bdhr._stage1_cell_loss_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertEqual(out["alerts"], [])
+
+    def test_low_fallback_rate_does_not_fire(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "s1la.json"
+            self._write_report(path, trailing_30d_agg={
+                "n": 88, "mean_p0": 0.93, "mean_won": 0.65,
+                "stage1_bias": 0.28, "abs_stage1_bias": 0.28,
+                "fallback_rate": 0.20,  # below the 50% floor
+                "mean_inferred_state_n": 150.0,
+                "mean_poisson_minus_empirical": None,
+                "n_with_empirical": 0,
+            })
+            out = bdhr._stage1_cell_loss_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertEqual(out["alerts"], [])
+
+    def test_empty_trailing_30d_does_not_fire(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "s1la.json"
+            self._write_report(path, trailing_30d_agg={
+                "n": 0, "stage1_bias": None,
+                "fallback_rate": None,
+            })
+            out = bdhr._stage1_cell_loss_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertEqual(out["alerts"], [])
+            self.assertIsNone(out["trailing_30d"])
+
+    def test_compact_trailing_30d_carries_required_fields(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "s1la.json"
+            self._write_report(path)
+            out = bdhr._stage1_cell_loss_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            t30 = out["trailing_30d"]
+            for k in (
+                "n", "stage1_bias", "mean_p0", "mean_won",
+                "fallback_rate", "mean_poisson_minus_empirical",
+                "n_with_empirical", "date_range",
+            ):
+                self.assertIn(k, t30)
+
+    def test_stale_artifact_age_fires_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "s1la.json"
+            self._write_report(
+                path, generated="2026-04-01T00:00:00Z",
+            )
+            out = bdhr._stage1_cell_loss_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertTrue(any("old" in a for a in out["alerts"]))
+
+    def test_notes_block_carries_stage1_cell_loss_prefix(self):
+        s1l = {"alerts": ["trailing-30d Stage-1 bias +28pp ..."]}
+        notes = bdhr._build_notes(
+            session_summary={}, bet_totals={}, candidate_rollup={},
+            log_health={}, stage1_cell_loss_health=s1l,
+        )
+        prefixed = [n for n in notes if n.startswith("Stage1-cell-loss:")]
+        self.assertEqual(len(prefixed), 1)
+
+
+class Stage1ShadowOverrideHealthTests(unittest.TestCase):
+    """Active #8 prep: surfaces Alt A bias delta + Alt B counterfactual
+    + recommendation rationale to the daily review."""
+
+    @staticmethod
+    def _write_report(
+        path: Path, *, trailing_30d=None, recommendations=None,
+        generated="2026-05-17T01:00:00Z",
+    ):
+        if trailing_30d is None:
+            trailing_30d = {
+                "n_bets": 87,
+                "production": {"bias": 0.27, "mean_p3": 0.92,
+                               "mean_won": 0.65, "total_profit": -50.0},
+                "alt_a_empirical_when_available": {
+                    "mean_p3": 0.86, "mean_won": 0.65, "bias": 0.21,
+                    "n_changed": 32, "n_coverage_rate": 0.37,
+                    "bias_delta_vs_prod_pp": 6.0,
+                },
+                "alt_b_block_fallback_level_2plus": {
+                    "n_blocked": 6, "n_kept": 81,
+                    "kept_mean_p3": 0.93, "kept_mean_won": 0.66,
+                    "kept_bias": 0.27, "kept_total_profit": -40.0,
+                    "blocked_total_profit": -15.0,
+                    "blocked_n_wins": 3, "blocked_n_losses": 3,
+                    "counterfactual_profit_delta_usd": 15.0,
+                },
+                "recommendations": recommendations or [],
+            }
+        payload = {
+            "schema_version": 1,
+            "generated_at_utc": generated,
+            "n_bets": trailing_30d["n_bets"],
+            "windows": {
+                "all": {"date_range": ["2026-04-01", "2026-05-17"],
+                        **trailing_30d},
+                "trailing_30d": {
+                    "date_range": ["2026-04-17", "2026-05-16"],
+                    **trailing_30d,
+                },
+                "trailing_7d": {
+                    "date_range": ["2026-05-10", "2026-05-16"],
+                    "n_bets": 0,
+                    "production": {"bias": None},
+                    "alt_a_empirical_when_available": {},
+                    "alt_b_block_fallback_level_2plus": {},
+                    "recommendations": [],
+                },
+            },
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_missing_artifact_emits_error_no_alerts(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = bdhr._stage1_shadow_override_health(
+                report_path=Path(td) / "missing.json",
+                session_date="2026-05-17",
+            )
+            self.assertFalse(out["artifact_present"])
+            self.assertEqual(out["alerts"], [])
+            self.assertIn("missing", out.get("artifact_error", ""))
+
+    def test_no_recommendations_no_alerts(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "shadow.json"
+            self._write_report(path, recommendations=[])
+            out = bdhr._stage1_shadow_override_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            # Notes-mirror layer only fires on recommendations
+            recs_alerts = [
+                a for a in out["alerts"] if "promote" in a or "alt_a" in a
+            ]
+            self.assertEqual(recs_alerts, [])
+
+    def test_alt_a_recommendation_mirrors_to_alerts(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "shadow.json"
+            self._write_report(path, recommendations=[{
+                "alt": "alt_a_empirical_when_available",
+                "verdict": "promote_to_runtime_shadow",
+                "rationale": "Alt A reduces aggregate bias by 6.0pp ...",
+            }])
+            out = bdhr._stage1_shadow_override_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertEqual(len(out["alerts"]), 1)
+            self.assertIn("alt_a_empirical_when_available", out["alerts"][0])
+            self.assertIn("promote_to_runtime_shadow", out["alerts"][0])
+
+    def test_trailing_30d_compact_carries_required_fields(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "shadow.json"
+            self._write_report(path)
+            out = bdhr._stage1_shadow_override_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            t30 = out["trailing_30d"]
+            for k in (
+                "n_bets", "production_bias", "alt_a_bias",
+                "alt_a_bias_delta_pp", "alt_a_n_changed",
+                "alt_a_coverage_rate", "alt_b_n_blocked",
+                "alt_b_n_kept",
+                "alt_b_counterfactual_profit_delta_usd",
+                "alt_b_blocked_n_wins", "alt_b_blocked_n_losses",
+                "date_range",
+            ):
+                self.assertIn(k, t30)
+
+    def test_empty_trailing_30d_no_alerts(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "shadow.json"
+            self._write_report(path, trailing_30d={
+                "n_bets": 0,
+                "production": {"bias": None},
+                "alt_a_empirical_when_available": {},
+                "alt_b_block_fallback_level_2plus": {},
+                "recommendations": [],
+            })
+            out = bdhr._stage1_shadow_override_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertEqual(out["alerts"], [])
+            self.assertIsNone(out["trailing_30d"])
+
+    def test_stale_artifact_fires_age_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "shadow.json"
+            self._write_report(
+                path, generated="2026-04-01T00:00:00Z",
+            )
+            out = bdhr._stage1_shadow_override_health(
+                report_path=path, session_date="2026-05-17",
+            )
+            self.assertTrue(any("old" in a for a in out["alerts"]))
+
+    def test_notes_block_carries_stage1_shadow_prefix(self):
+        s1s = {"alerts": ["alt_a: promote_to_runtime_shadow ..."]}
+        notes = bdhr._build_notes(
+            session_summary={}, bet_totals={}, candidate_rollup={},
+            log_health={}, stage1_shadow_override_health=s1s,
+        )
+        prefixed = [n for n in notes if n.startswith("Stage1-shadow:")]
+        self.assertEqual(len(prefixed), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

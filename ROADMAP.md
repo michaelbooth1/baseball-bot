@@ -15,7 +15,82 @@ transition objective. It is split into five sections:
   quoting. Strategic, not a one-week task; phases A-E.
 - **Operational guidance** -- standing rules for day-to-day session work.
 
-Last roadmap review: **2026-05-17** (Active #16 v2 lineage
+Last roadmap review: **2026-05-17** (Active #14 backup retention
++ PSI-history GC shipped: promote.py's `_backup_prior_production`
+now rotates the prior `.prior_promote.json` into a sibling
+`<file>.prior_promote_archive/` directory under a timestamped
+filename BEFORE writing the new backup, then GCs the archive to
+BACKUP_ARCHIVE_KEEP=5 most-recent entries. Preserves the existing
+"latest backup at .prior_promote.json" contract demote relies on
++ adds multi-promotion rollback history. PSI history file now
+trimmed to PSI_HISTORY_RETENTION_DAYS=365 on every append +
+corrupted lines get cleaned. Both pieces are best-effort
+fail-open. Earlier same day:
+`promote.py stage1` +
+`demote stage1` subcommands shipped: closes the last gap in the
+promote.py coverage matrix. Stage-1 was the only major cache
+without promote/demote tooling; now all 5 levers (stage1,
+stage2, stage3-v2, stake-scaling, gate-threshold) flow through
+the same auditable atomic-swap + backup + lineage-stamp + audit-
+row pipeline. Verdict gates on source-file existence +
+lineage.built_at_utc freshness (no Brier history at the
+Stage-1 cache layer). Wired into `promote.py status` and the
+fast Wilson-UB demote check so the auto-daemon sees stage1
+alongside the other 4 levers. Direct prereq for Active #8's
+eventual ENFORCE flip of Alt A. Earlier same day:
+Stage-1 Alt A runtime
+shadow logging shipped: new `--stage1-shadow-empirical-override
+{off,shadow}` CLI flag (default off) wires through
+live_engine_cli -> live_engine.__init__ bridge ->
+SignalEngine -> signal_pipeline_gates_post_fv. When `shadow`,
+the post-FV phase computes `fair_value_alt_empirical = sigmoid(
+logit(empirical) + s2_delta + s3_delta)` then runs it through
+the same production calibrator and logs both prod + alt FVs
+on every candidate row. NO decision change. Training table
+pulls the 5 new alt fields through; offline shadow-override
+report now PREFERS runtime-logged alt over its offline
+fallback (with source breakdown surfaced). This is the
+last code change before Active #8's eventual ENFORCE flip
+(one config change). Earlier same day:
+Stage-1 shadow-override
+report shipped: replays two candidate Stage-1 fixes (Alt A
+empirical-when-available, Alt B block fallback_level >= 2)
+against actual training-table outcomes and surfaces the
+counterfactual impact. **First production run shows Alt A
+would reduce trailing-30d bias from +27.1pp to +21.2pp**
+(6.0pp improvement on 32 of 87 bets = 37% coverage), with
+the recommendation `promote_to_runtime_shadow` firing.
+**Alt B blocks 6 bets, counterfactual delta = +$15** (3W/3L
+blocked, just below the $20 recommendation threshold).
+This is the shadow-first evidence Active #8 needs before
+promoting either change to live FV math. Earlier same day:
+Stage-1 cell-conditional
+loss attribution shipped: drills Active #10's headline finding
+(Stage-1 owns ~100% of the 27pp bias) into Stage-1-internal
+cohort dimensions [fallback level, line fallback mode,
+used_fallback, sample-size bucket, Poisson-vs-empirical gap].
+First production run on 88 settled bets reveals (a)
+**fallback_rate is 69%** -- we mostly bet in cells where the
+runtime fell back to broader buckets, (b) **Poisson smoothing
+inflates by +16pp vs the cell's own empirical rate** when both
+are available -- the smoking gun for the Stage-1 over-prediction,
+(c) `stage1_fallback_level_bucket=level_2plus_fallback` is the
+worst cohort with +40pp bias (1.44x aggregate). This narrows
+Active #8's retrain surface from "rebuild Stage-1 wholesale" to
+specifically (i) tighten the fallback path and/or (ii) revise
+the Poisson smoothing toward empirical-when-available. Earlier
+same day: Active #16 v3 lineage
+visibility shipped: startup-time per-artifact INFO log line on
+every cache load (Stage-1, Stage-2, Stage-3 v2 weights,
+calibrator) so the operator can grep the runtime log to see
+"which version was live during this session"; new
+`cache_lineage_freshness_health` block in daily review surfaces
+each artifact's build-age + git_sha summary + fires a stale-cache
+alert when build_age > 14d. First production run shows
+calibrator artifacts (built earlier today via v1 stamping) have
+proper lineage at 0.8d age; Stage-1/Stage-2 caches show
+`no_lineage_pre_v2` (will get lineage on next refresh).
+Earlier same day: Active #16 v2 lineage
 extension shipped: build-time lineage now stamped on the
 Stage-1 cache, Stage-2 cache, Stage-3 v2 weights, EV-policy
 artifacts (report + 3 model JSONs), and the walk-forward
@@ -94,6 +169,602 @@ state-value report, UNDER walk-forward + certification all live with
 first production data.
 
 ## Recently completed
+
+- **Active #14: backup retention + PSI-history GC** *(2026-05-17)* --
+  closes a documented hygiene gap that became more pressing today
+  with the 5th promotion lever (Stage-1) shipping. Two pieces:
+
+  **Backup archive + GC (`promote.py`)**:
+  - Each promotion calls `_backup_prior_production` to copy current
+    production -> `<file>.prior_promote.json` (the "latest backup"
+    that `demote` reads). Before today, each new promotion silently
+    OVERWROTE the prior backup -- so the operator could only roll
+    back ONE step.
+  - New behavior: BEFORE writing the new backup, the existing
+    `.prior_promote.json` is rotated into a sibling
+    `<file>.prior_promote_archive/<YYYYMMDDTHHMMSSZ>.json` directory
+    (timestamp = the prior backup's mtime, preserving "when was this
+    captured" semantics). After the new backup is safely on disk,
+    the archive is GC'd to `BACKUP_ARCHIVE_KEEP=5` most-recent
+    entries.
+  - **Preserves backward compatibility**: the `.prior_promote.json`
+    single-file contract that `demote` reads is unchanged; the
+    archive is purely additive. Existing tests + the audit-row
+    `backup_path` contract still work.
+  - **Disambiguation**: if two rotations land in the same UTC
+    second (fast-rerun tests), the archive filename gets a `_N`
+    suffix so no entry is lost.
+  - **Fail-open**: rotation + GC both wrapped in try/except so a
+    permissions error / filesystem issue can never block the
+    promotion path. The new backup write still succeeds.
+
+  **PSI-history trim (`build_concept_drift_report.py`)**:
+  - `psi_history.jsonl` grows at ~7 features/day = ~2.5k rows/year.
+    Drift-in-drift only consumes the trailing 30d; older rows are
+    pure storage cost. Trim is overdue.
+  - New behavior: after every append, `_trim_psi_history` rewrites
+    the file keeping only rows whose `active_date` falls within
+    `PSI_HISTORY_RETENTION_DAYS=365` of the LATEST date in the
+    file. Anchoring on latest (not today) keeps the trim stable
+    when the refresh runs against a stale corpus.
+  - **Atomic rewrite via tmp file** so a crash mid-trim can't
+    corrupt the history.
+  - **Cleans corrupted lines** opportunistically: when the parse
+    encounters non-JSON lines, the rewrite drops them (counter +
+    rewrite-anyway logic, not silent-noop). Prevents accumulation
+    of garbage from interrupted writes.
+  - **Unparseable `active_date` rows kept**: we don't drop data
+    just because we can't classify it. The trim is data-loss-averse.
+  - **Fail-open** throughout: any OSError silently swallowed; the
+    next append-and-trim cycle gets a fresh chance.
+
+  **What today's 10-shipment count means for backup volume**:
+  - 5 levers x 1 promotion cycle = 5 backup files in the cache
+    folder. Below today, that grew by 1 per promotion (overwriting
+    the prior). Now each lever can accumulate up to 6 files
+    (1 current + 5 archive), so total cap = 30 backup files across
+    all 5 levers.
+  - For PSI history: today's file is ~7 rows/day x ~10 days
+    elapsed = ~70 rows. The trim is a no-op until the file
+    accumulates 365+ days of data; testing on the live file would
+    leave it untouched.
+
+  **Files**: `scripts/analysis/promote.py` (+155 LOC: new
+  `BACKUP_ARCHIVE_KEEP` constant, `_archive_dir_for`,
+  `_list_archive_backups`, `_gc_archive_backups`,
+  `_rotate_existing_backup_to_archive` helpers; modified
+  `_backup_prior_production` to rotate-then-write-then-gc with
+  fail-open wrappers),
+  `scripts/analysis/build_concept_drift_report.py` (new
+  `PSI_HISTORY_RETENTION_DAYS` constant, `_trim_psi_history`
+  helper, `_write_history_rows` call site). 24 new tests in
+  `test_backup_retention_and_psi_history_gc.py` covering 4 helper
+  classes + 7 trim-history cases including corruption + stale-date
+  anchoring + atomic rewrite verification.
+  **1262 tests + 41 subtests pass.**
+
+- **`promote.py stage1` + `demote stage1` subcommands** *(2026-05-17)* --
+  closes the last gap in the promote.py coverage matrix. Before this
+  ship, 4 of the 5 major levers (stage2, stage3-v2, stake-scaling,
+  gate-threshold) flowed through the auditable promote.py path while
+  Stage-1 was the only one without promote/demote tooling. Today's
+  Stage-1 Alt A runtime shadow logging (shipped earlier) is the
+  active workstream toward an eventual ENFORCE flip; that promotion
+  now has a standard auditable path to flow through.
+
+  **Verdict model** (different from Stage-2's Brier-history-driven
+  verdict because the Stage-1 cache has no validation Brier):
+  - `promote` -- source file exists AND its `lineage.built_at_utc`
+    is at or after production's
+  - `staging_missing` -- source file absent (the operator hasn't
+    written a candidate cache to the staging path)
+  - `production_missing` -- first-time promotion; allowed (no
+    backup to take, but no downgrade risk either)
+  - `source_older_than_production` -- production was built later;
+    refused without `--force` to prevent silent downgrade
+  - `no_lineage_comparison` -- one or both files lack lineage; allow
+    with `--force` after operator inspection
+
+  **`cmd_stage1` semantics** (mirrors `cmd_stage2`):
+  - Reads verdict, prints it with source/production built_at_utc
+    timestamps + reason text
+  - `--dry-run`: writes a dry_run audit row, no file action
+  - Blocked without `--force` when verdict isn't `promote`
+  - On promote: backs up current production atomically to
+    `<file>.prior_promote.json` (via the existing
+    `_backup_prior_production` helper), then atomic-copies source
+    to production, writes a `promoted` (or `forced`) audit row
+    stamped with source-artifact lineage + promotion-time
+    lineage.
+  - Operator checklist prints next-step actions: restart engine,
+    watch cohort_calibration_health + loss_attribution_health for
+    bias reduction, fast Wilson-UB demote is now armed.
+
+  **`cmd_demote_stage1` semantics** (mirrors `cmd_demote_stage2`):
+  - Computes outcome-regression verdict via the standard
+    pre/post 14d ROI window (`stage1_demotion_verdict`)
+  - Restores from `backup_path` recorded on the original
+    promotion event when present
+  - Falls back to deleting current production when no backup
+    exists (next refresh's `stage1_ou_cache` step rebuilds from
+    `data/games/`)
+
+  **Verdict helpers added**:
+  - `_stage1_promotion_verdict(source_path, production_path)` --
+    the 5-outcome decision tree above
+  - `stage1_demotion_verdict(events, sessions_dir)` -- windowed
+    Wilson-UB-style outcome regression, same shape as the other
+    4 levers
+  - `stage1_fast_demote_verdict(events, sessions_dir)` -- fast
+    Wilson UB parallel check (Active #13 pattern); fires within
+    5-6 days of a bad promotion
+
+  **CLI registration**:
+  - New `stage1` subparser under top-level `sub` (default source
+    path: `cache/mlb_ou_cache.staging.json`)
+  - New `demote stage1` subparser under the existing `demote`
+    subparser
+  - `cmd_status` extended to print stage1 verdict alongside the
+    other 4 + include stage1 in the demote + fast-demote verdict
+    dictionaries
+
+  **CLI smoke test** on production data:
+  ```
+  $ python scripts/analysis/promote.py status
+  [stage1] verdict: no_lineage_comparison
+    source path: mlb_ou_cache.staging.json
+    source built_at_utc: <not present>
+    production built_at_utc: <not present>
+    reason: One or both files lack a `lineage.built_at_utc` field. ...
+  ```
+  Today's production caches predate the v2 lineage stamping; after
+  the next refresh rebuilds Stage-1, both files will carry lineage
+  and the verdict will be actionable (`promote` when the operator
+  ships a fresh staging cache).
+
+  **Direct prereq for Active #8**: when Stage-1 Alt A's 30-day
+  shadow window clears and the operator chooses to swap the
+  Stage-1 cache (or after a deeper future cache rebuild), the
+  promotion now flows through the same atomic-swap + backup +
+  lineage-stamp + audit-row pipeline as Stage-2/Stage-3. The
+  ENFORCE flip is a single `promote.py stage1` invocation.
+
+  **Files**: `scripts/analysis/promote.py` (+450 LOC: 2 new
+  default-path constants, `_read_lineage_built_at` + 3 verdict
+  helpers, `cmd_stage1` + `cmd_demote_stage1`, defensive getattr
+  in `cmd_status` for backward-compat with existing
+  SimpleNamespace-based test fixtures, 3 subparser registrations
+  including the stage1 args on the status subparser),
+  `tests/test_promote_stage1_subcommand.py` (20 tests covering all
+  5 verdict outcomes, dry-run / blocked / forced / successful
+  promotion flow with backup + audit row stamping, first-promotion
+  no-backup path, demote restore-from-backup + fallback-delete
+  paths, demotion verdict smoke, subcommand registration).
+  **1238 tests + 41 subtests pass.**
+
+- **Stage-1 Alt A runtime shadow logging (Active #8 prep)** *(2026-05-17)* --
+  the production-runtime layer that completes today's
+  observability → narrowing → shadow-evidence arc. This morning's
+  shadow-override report computes Alt A counterfactuals from settled
+  bets only (~24/week); this runtime hook captures alt FVs on EVERY
+  candidate evaluation (~5000/day) so the eventual Active #8 ENFORCE
+  flip has 200x+ more evidence to weigh.
+
+  **Code path** (touches 4 modules):
+  - **CLI flag**: `--stage1-shadow-empirical-override {off, shadow}`
+    on `scripts/trading/live_engine_cli.py` (default `off`; operator
+    opts in explicitly).
+  - **Bridge**: `LiveTradingEngine.__init__` in
+    `scripts/trading/live_engine.py` copies
+    `live_args.stage1_shadow_empirical_override` ->
+    `trade_args.stage1_shadow_empirical_mode` before delegating to
+    SignalEngine. The explicit bridge keeps the SignalEngine
+    contract clean (engine reads only from trade_args).
+  - **Engine wiring**: `SignalEngine.__init__` parses
+    `trade_args.stage1_shadow_empirical_mode`, validates against
+    {off, shadow}, logs the mode at INFO if shadow is active.
+  - **Runtime computation**: new
+    `_attach_stage1_shadow_empirical_fields` helper in
+    `scripts/trading/signal_pipeline_gates_post_fv.py` runs right
+    after `fair_value` is computed but before post-FV gates. When
+    mode=shadow AND cell empirical is present (0 < empirical < 1):
+    `p2_alt = sigmoid(logit(empirical) + s2_delta + s3_delta)`,
+    then run the SAME production calibrator on p2_alt to get
+    p3_alt. Logs both prod + alt FVs on the candidate row.
+  - **Fail-open contract**: ANY exception in the alt path is logged
+    at DEBUG and silently swallowed; production fair_value is the
+    sole source of truth for decisions. Mode `off` is a fast path
+    that attaches only the mode tag (no math, no calibrator call).
+
+  **Schema additions to candidate row** (and pulled through into
+  `signal_training_table.jsonl` via
+  `scripts/analysis/build_signal_training_table.py`):
+  - `stage1_shadow_empirical_mode` -- `'off'` / `'shadow'`
+  - `fair_value_alt_empirical` -- alt p3 (post calibration); None
+    when mode=off or no empirical
+  - `fair_value_alt_empirical_raw` -- alt p2 (pre calibration)
+  - `fair_value_alt_empirical_delta_vs_prod` -- alt_p3 - prod_p3
+    (signed; negative = alt is more conservative)
+  - `fair_value_alt_empirical_used_empirical` -- True/False; the
+    flag that distinguishes "shadow ran AND used empirical" from
+    "shadow ran but empirical unavailable / unusable"
+  - `fair_value_alt_empirical_p0` -- the empirical input that was
+    substituted for Stage-1's Poisson estimate
+
+  **Offline report integration**:
+  `build_stage1_shadow_override_report.py` now PREFERS the runtime-
+  logged `fair_value_alt_empirical` over its own offline logit-
+  additive fallback. The `alt_a_source` field on each ShadowBet
+  distinguishes `runtime` / `offline` / `no_change`; aggregate
+  payload surfaces an `alt_source_breakdown` so the operator can see
+  the runtime-coverage rollover as the flag accumulates production
+  data. Until the operator enables the flag, the report falls back
+  to offline computation (same behavior as before).
+
+  **Operator path forward**: enable the flag tomorrow with
+  `--stage1-shadow-empirical-override shadow`. The next 30 days of
+  candidate logs accumulate per-tick alt evidence. The daily
+  shadow-override report's `Stage1-shadow:` Notes alert
+  automatically picks up the runtime data and (if the trend holds)
+  continues to recommend `promote_to_runtime_shadow`. After 30
+  clean days of evidence, Active #8's ENFORCE flip is a **single
+  config-file edit** (flag from `shadow` to `enforce` plus a
+  one-line change in the runtime to USE the alt FV for the trade
+  decision instead of just logging it).
+
+  **No production behavior change today**. With the flag at its
+  default `off`, the engine runs identically to yesterday. The
+  only operator-visible difference is `stage1_shadow_empirical_mode:
+  off` showing on each candidate row.
+
+  **Files**: `scripts/trading/live_engine_cli.py` (new CLI flag),
+  `scripts/trading/live_engine.py` (explicit live_args -> trade_args
+  bridge in `__init__`),
+  `scripts/trading/signal_engine.py` (parse + validate + log mode),
+  `scripts/trading/signal_pipeline_gates_post_fv.py` (new
+  `_attach_stage1_shadow_empirical_fields` helper +
+  `_stage1_shadow_logit/_stage1_shadow_sigmoid` math primitives +
+  call site after fair_value computation),
+  `scripts/analysis/build_signal_training_table.py` (5 new
+  PRE_SIGNAL_COLUMNS),
+  `scripts/analysis/build_stage1_shadow_override_report.py`
+  (`alt_a_source` field on ShadowBet + runtime preference logic in
+  `project_bet` + `alt_source_breakdown` in aggregate),
+  `tests/test_signal_engine_phase1_characterization.py` (golden
+  fixture extended with the new fields when mode=off). 20 new tests
+  in `test_stage1_shadow_empirical_runtime.py` (mode=off attaches
+  only tag + skips calibrator, mode=shadow without empirical sets
+  only tag, mode=shadow with empirical computes correct logit-
+  additive math + delta vs prod, calibrator called on alt raw,
+  calibrator shift propagates, fail-open on calibrator raises, mode
+  attr missing treated as off, logit/sigmoid roundtrip, live_args
+  bridge contract, CLI registration end-to-end). 5 new tests in
+  `RuntimeAltSourcePreferenceTests` (runtime preferred over offline,
+  offline fallback when runtime not logged, no_change when neither
+  available, runtime-with-used_empirical=False falls back to
+  offline, source breakdown in aggregate). **1218 tests + 41
+  subtests pass.**
+
+- **Stage-1 shadow-override report (Active #8 prep)** *(2026-05-17)* --
+  the shadow-first evidence layer that precedes the Active #8 runtime
+  change. Today's cell-conditional drill identified two specific
+  candidate fixes (Alt A: prefer empirical-when-available, Alt B:
+  fail-closed on `fallback_level >= 2`). This shipment replays both
+  alts against actual training-table outcomes so the operator sees
+  the counterfactual impact BEFORE changing live FV math.
+
+  **Pattern**: this is the same "shadow-first then promote" pattern
+  the rest of the codebase uses for every risky live-runtime change
+  (no-score drift, EV policy, stake scaling, two-sided quote engine).
+  After this report shows durable improvement over a clean 30d
+  window, Active #8 promotes the alt to live behind a runtime flag.
+
+  **Math** (in `scripts/analysis/build_stage1_shadow_override_report.py`):
+  For each filled+settled bet, compute production p3 + both alt
+  counterfactuals via the logit-additive chain (verified to 0.001
+  on all 87 production bets earlier today):
+  - p0_poisson = `base_fair_value` (production Stage-1)
+  - p0_empirical = `inferred_state_base_empirical` (when present)
+  - p3_alt_A = `sigmoid(logit(p0_empirical) + s2 + s3)` when
+    empirical is in (0, 1); else p3_alt_A = p3_prod (no change)
+  - alt_B_kept = NOT (`fallback_level >= 2`); when False, the bet
+    would not have been placed at all
+  - bias_X = p3_X - won (signed; positive = over-prediction)
+
+  **Aggregation** per window (all / trailing_30d / trailing_7d):
+  - Production aggregate: mean_p3, mean_won, bias, total_profit
+  - Alt A: mean_p3, bias, n_changed, coverage_rate, **bias_delta_vs_prod_pp**
+    (the load-bearing improvement metric)
+  - Alt B: n_blocked, n_kept, kept_bias, blocked W/L split,
+    **counterfactual_profit_delta_usd** (the $-impact of blocking)
+
+  **Recommendations** auto-fire when alt evidence clears the floor:
+  - Alt A: bias improvement >= 1pp AND coverage_rate >= 25% AND
+    n_total >= 30
+  - Alt B: counterfactual_profit_delta >= $20 AND n_blocked >= 3 AND
+    n_total >= 30
+
+  **First production run on 2026-05-17** across 87 settled bets
+  (trailing-30d window):
+  - Production aggregate bias: **+27.1pp** (the value Active #10
+    surfaced this morning).
+  - **Alt A: bias drops to +21.2pp** (6.0pp improvement, applied
+    to 32 of 87 bets = 37% coverage). The reduction is concentrated
+    where empirical data exists; if empirical coverage were 100%,
+    the bias reduction would extrapolate to ~16pp (the per-cell
+    poisson-empirical gap the drill measured earlier).
+  - **Recommendation fires for Alt A**: `promote_to_runtime_shadow`.
+    The operator's next-session action is now well-evidenced.
+  - **Alt B: blocks 6 bets (3W/3L)**, counterfactual delta = +$15.
+    Just below the $20 recommendation threshold -- evidence is real
+    but thin; let it accumulate for another week before acting.
+
+  **Daily-review block** `_stage1_shadow_override_health`
+  reads the artifact and mirrors any firing recommendation to
+  top-level Notes with prefix `Stage1-shadow:`. Surfaces the
+  recommendation's full rationale (not just the verdict tag) so
+  the operator can read the evidence in one line.
+
+  **What v2 should add**:
+  - **Runtime shadow logging**: hook into
+    `signal_pipeline_gates_post_fv.py` to log p3_alt_A alongside
+    p3_prod on every candidate decision (not just settled bets).
+    Lets the operator A/B audit decisions BEFORE outcomes settle.
+  - **Per-cohort alt impact**: extend the report with the standard
+    cohort cuts (edge / ask / inning / line / cse) so the operator
+    can see where Alt A's improvement is concentrated.
+  - **Alt C (Poisson with weight cap on deep fallback)**: shrink
+    the Poisson estimate toward 0.5 at high fallback levels rather
+    than blocking outright. May produce a smoother fix than Alt B.
+
+  **Files**: new `scripts/analysis/build_stage1_shadow_override_report.py`
+  (~545 LOC: ShadowBet projection with pre-computed alt
+  counterfactuals, window slicing, aggregation, recommendation
+  thresholds, markdown render, lineage stamping),
+  `scripts/analysis/run_daily_refresh.py` (new
+  `stage1_shadow_override_report` refresh step right before the
+  cell-conditional drill so it consumes the same training table
+  freshly),
+  `scripts/analysis/build_daily_human_review_report.py` (new
+  `_stage1_shadow_override_health` block + `Stage1-shadow:` Notes
+  mirror + build_report wiring), 25 new tests in
+  `test_build_stage1_shadow_override_report.py` (projection
+  filter, alt-A math identity verification, alt-B threshold
+  semantics, aggregate math including counterfactual P&L direction,
+  recommendation threshold fires/suppresses, window slicing, schema
+  + markdown + empty input), 7 new tests in
+  `Stage1ShadowOverrideHealthTests` (artifact loading, no-rec /
+  rec-mirror semantics, schema completeness, stale artifact,
+  Notes mirror prefix). **1193 tests + 41 subtests pass.**
+
+  **Strategic implication for Active #8**: the rebuild surface has
+  now narrowed three times today:
+  - Original spec: "rebuild Stage-2 + Stage-3 v2"
+  - After Active #10: "rebuild Stage-1 (not Stage-2/3)"
+  - After cell-conditional drill: "fix Stage-1 smoothing toward
+    empirical AND tighten fallback gating"
+  - After this shadow-override report: **"ship Alt A
+    (empirical-when-available) to runtime shadow first; Alt B
+    needs another week of evidence before action"**
+
+  Active #8 next session is now a **targeted runtime change**:
+  add a feature flag to the Stage-1 lookup that prefers empirical
+  when present, log both production and alt FVs in shadow, and
+  let this report's daily output show the cumulative shadow
+  improvement. No full cache rebuild needed.
+
+- **Stage-1 cell-conditional loss attribution** *(2026-05-17)* --
+  the natural drill-down to today's Active #10 shipment. Active
+  #10 told us "Stage-1 owns ~100% of the 27pp bias" at the
+  stage level; this report drills the SAME bets across Stage-1's
+  INTERNAL cohort dimensions so the operator can see WHICH KIND
+  of Stage-1 cells are responsible BEFORE Active #8 fires the
+  rebuild.
+
+  **Cohort dimensions (5 Stage-1-internal cuts)**:
+  - `stage1_fallback_level_bucket` -- 0 (exact cell) /
+    1 (one-level fallback) / 2+ (deeper fallback) / missing
+  - `stage1_line_fallback_mode_bucket` -- exact / extrapolate_*
+    / interpolate / missing
+  - `stage1_used_fallback_bucket` -- True / False (did the runtime
+    lookup land on a fallback at all?)
+  - `stage1_n_bucket` -- <50 / 50-200 / 200-1000 / >=1000
+    (cell sample-size support)
+  - `stage1_poisson_empirical_gap_bucket` -- abs(poisson -
+    empirical) bucketed at <0.05 / 0.05-0.10 / 0.10-0.20 / >=0.20
+
+  **Per-cohort metrics**: n, mean_p0, mean_won, stage1_bias
+  (signed), mean_poisson_minus_empirical (the smoking gun
+  metric -- when present, shows how much the Poisson smoothing
+  inflates above the cell's own historical empirical rate),
+  fallback_rate, mean cell sample size.
+
+  **Top-culprits ranking** flags cohorts where:
+  - n >= 5 (cohort floor)
+  - |stage1_bias| >= 5pp (material)
+  - share of aggregate bias (= cohort_bias / aggregate_bias) >= 25%
+  Helpful cohorts (negative shift in the bias direction) get
+  excluded so the operator only sees cohorts that HURT the model.
+  Ratio can exceed 1.0 (cohort amplifies aggregate); the rationale
+  text explains the amplification.
+
+  **Three windows** (all / trailing_30d / trailing_7d) match the
+  rest of the drift family.
+
+  **First production run on 2026-05-17** across 88 settled bets:
+  - **Trailing-30d Stage-1 bias: +28pp** (mean_p0=92.7%,
+    mean_won=64.8%) -- consistent with Active #10's stage-level
+    finding.
+  - **fallback_rate=69%** -- 60+ of 88 bets landed on fallback
+    cells. The headline driver: the bot is mostly betting in
+    cells where the runtime knew it was on shaky ground.
+  - **mean(poisson - empirical)=+16pp** across 32 cells where
+    both estimates are available. The Stage-1 Poisson smoothing
+    systematically inflates the probability above the cell's
+    OWN historical empirical rate by 16pp. **This is the
+    smoking-gun fix target**: revising the smoothing toward
+    empirical-when-available would close ~16pp of the 28pp gap.
+  - **Top culprit cohort**: `stage1_fallback_level_bucket=level_2plus_fallback`
+    with stage1_bias=+40pp, n=6, ratio_vs_aggregate=1.44x. When
+    the runtime falls back TWO or more levels, the over-prediction
+    is even worse.
+  - 10 cohort culprits cleared the thresholds; most cluster
+    around the same theme (fallback cells + non-trivial Poisson-
+    empirical gaps).
+
+  **Daily-review block** `_stage1_cell_loss_health` reads the
+  artifact and mirrors a one-line Notes alert with prefix
+  `Stage1-cell-loss:` when |aggregate bias| >= 5pp AND
+  fallback_rate >= 50%. Surfaces the top culprit cohort + the
+  Poisson-empirical gap signal. Sample alert:
+  ```
+  Stage1-cell-loss: trailing-30d Stage-1 bias +28.0pp on n=88
+  bets with fallback_rate=69% -- Active #8 retrain surface
+  narrows to the Stage-1 fallback path. Top culprit:
+  `stage1_fallback_level_bucket=level_2plus_fallback`
+  (bias +40.2pp, n=6, ratio_vs_agg=1.44x). Poisson smoothing
+  diverges from empirical by +16.1pp on average -- candidate
+  fix is the Stage-1 smoothing, not the fallback path.
+  ```
+
+  **Strategic implication**: Active #8 originally specced a
+  full Stage-2 + Stage-3 rebuild; Active #10 narrowed that to
+  Stage-1; THIS shipment narrows further to two specific
+  candidate fixes:
+  1. **Tighten the fallback path** (fallback_rate is 69% on our
+     bet selection -- either require deeper fallback to fail
+     closed, or weight the Poisson estimate down at higher
+     fallback levels).
+  2. **Revise the Poisson smoothing** (smoothing inflates by
+     +16pp vs empirical -- shift the runtime lookup toward
+     empirical-when-available, or reduce the Poisson prior
+     weight on low-n cells).
+  The 27pp aggregate bias is approximately decomposable as
+  (16pp smoothing + ~12pp fallback-path amplification), so
+  both fixes would compound to close most of it.
+
+  **Files**: new `scripts/analysis/build_stage1_cell_loss_attribution.py`
+  (~520 LOC: `Stage1Bet` dataclass + projection from training
+  table, 5 cohort bucketers, aggregation math, top-culprits
+  ranking with helpful-cohort exclusion + amplification ratio,
+  3-window slicing, markdown render, end-to-end main with
+  lineage stamping),
+  `scripts/analysis/run_daily_refresh.py` (new
+  `stage1_cell_loss_attribution` refresh step right before the
+  bet-level loss attribution step so the cohort drill is fresh
+  when the operator reads the daily review),
+  `scripts/analysis/build_daily_human_review_report.py` (new
+  `_stage1_cell_loss_health` block + `Stage1-cell-loss:` Notes
+  mirror + build_report wiring), 32 new tests in
+  `test_build_stage1_cell_loss_attribution.py` (projection
+  filter, bucketing semantics, aggregate math, top-culprits
+  ranking + ratio_can_exceed_one + helpful-cohort exclusion +
+  sort order + rationale, window slicing, schema + markdown +
+  empty input), 8 new tests in `Stage1CellLossHealthTests`
+  (artifact loading, alert firing on high bias + high fallback
+  rate, suppression on low bias / low fallback rate / empty
+  window, stale artifact, schema, Notes mirror).
+  **1161 tests + 41 subtests pass.**
+
+- **Active #16 v3: lineage visibility (startup log + daily review)** *(2026-05-17)* --
+  closes the v3 follow-ups documented this morning. V1 stamped
+  lineage on calibration artifacts + 4 promote.py audit rows; V2
+  extended that to the Stage-1/Stage-2/Stage-3-v2/EV-policy
+  builders. V3 makes that lineage **operationally visible**:
+  - **At engine boot**: every cache load (Stage-1, Stage-2,
+    Stage-3 v2 weights, calibrator) now writes a one-line INFO
+    log entry summarising the artifact's lineage. The operator
+    can grep `Artifact lineage:` in the runtime log to answer
+    "which version was live during this session" in seconds.
+  - **In the daily review**: a new `cache_lineage_freshness_health`
+    block reads each cache's embedded lineage and surfaces a
+    per-artifact panel (built_at_utc, build_age_days, git_sha,
+    git_dirty, builder_path, input counts). Fires a stale-cache
+    alert when build_age > 14d AND the lineage is present;
+    pre-V2 artifacts (no lineage block yet) surface as a status,
+    not an alert (they'll get lineage on next refresh).
+
+  **Reusable helpers in `artifact_lineage.py`**:
+  - `_read_lineage_from_path(path)` -- best-effort artifact
+    JSON reader returning the `lineage` dict or None.
+  - `_age_days(iso_ts)` -- timezone-aware ISO timestamp to days
+    elapsed; tolerant of missing/bad input.
+  - `format_lineage_summary_line(label, lineage)` -- canonical
+    one-line summary used by both the startup logger and the
+    daily-review panel so the operator's eye learns one shape.
+
+  **Engine integration** (`scripts/trading/signal_engine.py`):
+  new top-level `_log_artifact_lineage_summary(label, path,
+  expected=True)` helper called once per cache load. Fail-open
+  contract: ANY error reading lineage is logged at DEBUG and
+  silently swallowed so startup never blocks on a lineage read.
+  Wired into the four SignalEngine.__init__ load sites
+  (stage1_cache, stage2_cache, stage3_v2_weights, calibrator).
+  The Stage-3 v2 weights call passes `expected=False` because
+  the v2 weights JSON is an optional override; absence is not
+  an error.
+
+  **Daily-review block** (`build_daily_human_review_report.py`):
+  new `_cache_lineage_freshness_health` reads 5 artifacts
+  (stage1, stage2, stage3-v2, calibrator OVER + UNDER) and
+  produces per-artifact info (status / built_at_utc /
+  build_age_days / git_sha / summary line). Alerts fire when
+  required artifacts are missing or when their build_age
+  exceeds the configurable warn threshold (default 14d).
+  Pre-V2 artifacts are tagged `no_lineage_pre_v2` with no
+  alert; they'll auto-resolve on next refresh. Mirrored to
+  Notes with prefix `Cache-lineage:`.
+
+  **First production smoke test on 2026-05-17**:
+  - `calibrator_over`: `built=2026-05-17T19:31:55Z(0.8d ago)
+    git=0840bb7c1cac(dirty)` -- proper lineage (v1 stamped
+    earlier today).
+  - `calibrator_under`: same shape, `built=2026-05-17T19:37:37Z`.
+  - `stage1_cache`: `no_lineage_pre_v2` (built before v2 wiring;
+    will get lineage on next refresh).
+  - `stage2_cache`: `no_lineage_pre_v2`.
+  - `stage3_v2_weights`: `missing_optional` (artifact not
+    promoted to production yet).
+  - 0 alerts fired (no stale lineage; pre-V2 status is informational).
+
+  **Operational implication**: once today's pre-V2 caches
+  rebuild (next refresh), the operator will be able to see in
+  ONE GLANCE in the daily-review markdown whether each cache is
+  fresh, on what data, and with what git_sha. The startup log
+  line provides the same info during the live session. Combined
+  with the existing `promote.py status` (which already shows
+  lineage from v1), the operator has full audit trail coverage
+  for "which artifact, when built, by what code, when promoted."
+
+  **What's still deferred to v4** (smaller follow-ups; no
+  binding need today):
+  - Lineage-aware `promote.py demote` UX: surface "demoting
+    from sha X built N days ago back to sha Y from N+M days
+    ago." Already partially shipped (`promote.py status`
+    surfaces this) but the demote command itself doesn't echo
+    it in the confirmation flow.
+  - Cross-artifact consistency check: when calibrator was
+    built against an older Stage-1 cache than the one in
+    production, flag the mismatch. Becomes meaningful once a
+    few rebuilds have shipped.
+
+  **Files**: `scripts/analysis/artifact_lineage.py` (~85 new
+  LOC: `_read_lineage_from_path`, `_age_days`,
+  `format_lineage_summary_line`),
+  `scripts/trading/signal_engine.py` (new
+  `_log_artifact_lineage_summary` helper + 4 call sites in
+  `__init__`),
+  `scripts/analysis/build_daily_human_review_report.py` (new
+  `CACHE_LINEAGE_*` constants, new `_cache_lineage_freshness_health`
+  block, `_build_notes` mirror with `Cache-lineage:` prefix,
+  `build_report` wiring + return dict key). 15 new tests in
+  `test_lineage_v3_startup_logging.py` (lineage summary
+  formatting, path reading, age calculation, startup helper
+  fail-open contract end-to-end including log capture). 7 new
+  tests in `CacheLineageFreshnessHealthTests` (schema, required-
+  missing alerts, optional-missing silence, pre-V2 status,
+  stale-build alert firing/suppression, git_sha surfacing,
+  Notes mirror prefix). **1121 tests + 41 subtests pass.**
 
 - **Active #16 v2: artifact lineage extension** *(2026-05-17)* --
   closes out the 5 "Defer to v2" follow-ups documented in this
@@ -2335,19 +3006,18 @@ ledger rows), but the code exists.
 
 ## Hygiene (not blocking, but accumulating debt)
 
-14. **Backup retention policy + PSI-history GC.** Each Stage-2 /
-    Stage-3-v2 promotion writes a `<file>.prior_promote.json`
-    sidecar; demote restores from it. Today nothing cleans them up,
-    so on a long promotion cadence the cache folder accumulates
-    stale backups (currently only 1 each, but the system runs
-    indefinitely). Similarly `psi_history.jsonl` is append-only at
-    7 features/day = ~2.5k rows/year, manageable for now but
-    unbounded. Decision: keep the trailing-N backups per lever
-    (default N=5) and trim psi_history at trailing 365 days
-    (drift-in-drift only uses trailing 30d anyway). Tests verify
-    no demote-target is ever GC'd.
-    - Files: `cache/AGENT_CONTEXT.md` (policy doc),
-      `scripts/analysis/promote.py` (backup-GC on promote),
+14. **Backup retention policy + PSI-history GC.** *Shipped
+    2026-05-17.* See the Recently Completed "Active #14: backup
+    retention + PSI-history GC" entry for full details. Final
+    design: keep `.prior_promote.json` as the single "latest
+    backup" (demote contract unchanged), rotate the prior backup
+    into a sibling `.prior_promote_archive/` directory with a
+    timestamped filename BEFORE the new write, GC the archive to
+    BACKUP_ARCHIVE_KEEP=5 most recent. PSI history trimmed to
+    PSI_HISTORY_RETENTION_DAYS=365 on every append, anchored on
+    the LATEST date in the file (not today's wall clock) so the
+    trim is stable on stale corpus runs.
+    - Files: `scripts/analysis/promote.py` (archive + GC helpers),
       `scripts/analysis/build_concept_drift_report.py` (psi_history
       trim on append).
 
@@ -2380,9 +3050,11 @@ ledger rows), but the code exists.
     2026-05-17 (same day)**: lineage now also stamped on the
     Stage-1 cache, Stage-2 cache, Stage-3 v2 weights, EV-policy
     artifacts (report + 3 model JSONs), and walk-forward
-    certification report. Remaining v3 follow-ups: live-engine
-    startup-time lineage logging + cache-freshness daily-review
-    block.
+    certification report. **V3 shipped same day**: lineage
+    visibility via startup-time INFO log per cache load + new
+    `cache_lineage_freshness_health` daily-review block.
+    Remaining v4 follow-ups: lineage-aware demote UX +
+    cross-artifact consistency check.
 
 ## Bidirectional trading -> market-making (long-horizon)
 

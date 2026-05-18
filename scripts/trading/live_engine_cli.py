@@ -285,6 +285,30 @@ def parse_live_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace, 
                        "to quote_engine_shadow/<date>_quotes.jsonl; "
                        "NO order is placed. (default: off)"
                    ))
+    # Active #8 prep (2026-05-17). Stage-1 shadow empirical override
+    # entry point. Defaults to OFF; operator opts in explicitly. The
+    # offline shadow-override report (build_stage1_shadow_override_report.py)
+    # already produces Alt A counterfactuals from settled bets (~24/week);
+    # this runtime hook adds per-candidate shadow logging so the
+    # eventual ENFORCE flip has 200x+ more evidence to weigh. shadow
+    # mode: compute fair_value_alt_empirical alongside production
+    # fair_value when the cell has an empirical estimate, log both on
+    # the candidate row, NO effect on decisions / orders.
+    p.add_argument("--stage1-shadow-empirical-override",
+                   choices=["off", "shadow"],
+                   default="off",
+                   help=(
+                       "Stage-1 Alt A (empirical-when-available) "
+                       "runtime mode. off = no alt computation "
+                       "(default; existing behavior). shadow = compute "
+                       "fair_value_alt_empirical alongside production "
+                       "fair_value when cell empirical is available; "
+                       "log both on candidate row; NO change to "
+                       "production decisions or trades. The offline "
+                       "build_stage1_shadow_override_report.py "
+                       "consumes the logged alt FVs to surface the "
+                       "cumulative shadow improvement. (default: off)"
+                   ))
     p.add_argument("--calibrated-stake-min-multiplier",
                    type=float,
                    default=DEFAULT_CALIBRATED_STAKE_MIN_MULTIPLIER,

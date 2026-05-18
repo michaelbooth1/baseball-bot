@@ -291,6 +291,16 @@ class LiveTradingEngine(SignalEngine):
         # Patch paper_root so parent writes to live_trading/ not paper_trading/
         trade_args.paper_root = self._live_root
 
+        # Active #8 prep (2026-05-17): bridge live-only CLI flags onto
+        # trade_args so SignalEngine.__init__ can read them via the
+        # standard getattr(trade_args, ..., default) pattern. This is
+        # the explicit alternative to the implicit "add to both parsers"
+        # approach; it keeps the runtime contract clean (engine reads
+        # only from trade_args) without duplicating flag registration.
+        trade_args.stage1_shadow_empirical_mode = getattr(
+            live_args, "stage1_shadow_empirical_override", "off",
+        )
+
         super().__init__(args=args, trade_args=trade_args)
 
         self.live_args = live_args

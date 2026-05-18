@@ -87,6 +87,23 @@ from scripts.trading.live_engine_overrides import (  # noqa: E402
 
 
 DEFAULT_STAGE2_STAGING_PATH = PROJECT_DIR / "cache" / "mlb_stage2_run_env.staging.json"
+
+# Stage-1 cache promotion (2026-05-17). The Stage-1 cache builder
+# currently writes directly to production (cache/mlb_ou_cache.json) on
+# every refresh, so there's no automated staging path the way Stage-2
+# has. The `promote stage1` subcommand exists for two reasons:
+#   (1) Operator-driven rebuilds (a hand-built Stage-1 cache the
+#       operator wants to swap in atomically with backup, audit-logged
+#       and lineage-stamped just like Stage-2/Stage-3 promotions).
+#   (2) Active #8 prep -- when a future Stage-1 rebuild ships behind
+#       a feature flag (Alt A empirical-when-available, or a deeper
+#       cache rebuild), the swap needs to flow through the same
+#       auditable promote.py path.
+# Default `--stage1-source-path` points at a staging file that the
+# builder may write to in the future; today it's an opt-in path the
+# operator chooses with `--stage1-source-path PATH`.
+DEFAULT_STAGE1_CACHE_PATH = PROJECT_DIR / "cache" / "mlb_ou_cache.json"
+DEFAULT_STAGE1_STAGING_PATH = PROJECT_DIR / "cache" / "mlb_ou_cache.staging.json"
 DEFAULT_PROMOTION_EVENTS_LOG = (
     PROJECT_DIR / "data" / "analysis_output" / "promotion_events.jsonl"
 )
@@ -290,6 +307,106 @@ def _backup_path(prod_path: Path) -> Path:
     return prod_path.with_suffix(prod_path.suffix + ".prior_promote.json")
 
 
+# Active #14 (2026-05-17): backup retention. Each promotion writes a
+# single backup at `<file>.prior_promote.json` (the rolling latest
+# that demote restores from). To keep history beyond the most-recent
+# promotion, the OLD backup (if any) is rotated into a sibling
+# `<file>.prior_promote_archive/` directory under a timestamped
+# filename BEFORE the new backup is written. The archive directory
+# is then GC'd to the most-recent BACKUP_ARCHIVE_KEEP entries so it
+# doesn't grow unbounded across many promotions.
+BACKUP_ARCHIVE_KEEP = 5
+
+
+def _archive_dir_for(prod_path: Path) -> Path:
+    """Sibling directory holding the timestamped archive of prior
+    backups (one entry per past promotion, GC'd to the most recent
+    BACKUP_ARCHIVE_KEEP)."""
+    return prod_path.parent / (prod_path.name + ".prior_promote_archive")
+
+
+def _list_archive_backups(prod_path: Path) -> List[Path]:
+    """Return existing archive backups sorted by mtime ASC
+    (oldest first)."""
+    archive = _archive_dir_for(prod_path)
+    if not archive.exists() or not archive.is_dir():
+        return []
+    entries: List[Path] = []
+    for p in archive.iterdir():
+        if p.is_file() and p.suffix == ".json":
+            entries.append(p)
+    entries.sort(key=lambda p: p.stat().st_mtime)
+    return entries
+
+
+def _gc_archive_backups(
+    prod_path: Path, *, keep: int = BACKUP_ARCHIVE_KEEP,
+) -> List[Path]:
+    """Trim the archive directory to the `keep` most-recent files.
+    Returns the list of deleted paths (oldest first)."""
+    if keep < 0:
+        keep = 0
+    entries = _list_archive_backups(prod_path)
+    if len(entries) <= keep:
+        return []
+    to_delete = entries[: len(entries) - keep]
+    deleted: List[Path] = []
+    for p in to_delete:
+        try:
+            p.unlink()
+            deleted.append(p)
+        except OSError:
+            # Best-effort GC: failures don't block the promotion path.
+            continue
+    return deleted
+
+
+def _rotate_existing_backup_to_archive(prod_path: Path) -> Optional[Path]:
+    """If `<file>.prior_promote.json` already exists, move it into
+    the archive directory under a timestamped filename so the new
+    backup can be written to the canonical path without losing the
+    prior one. Returns the archive path on success, None when no
+    prior backup existed.
+    """
+    current_backup = _backup_path(prod_path)
+    if not current_backup.exists():
+        return None
+    archive = _archive_dir_for(prod_path)
+    archive.mkdir(parents=True, exist_ok=True)
+    # Timestamp the archive file by the prior backup's mtime so the
+    # archive preserves "when this backup was originally captured"
+    # rather than "when it was archived." Format compact + sortable.
+    try:
+        mtime = current_backup.stat().st_mtime
+    except OSError:
+        mtime = None
+    if mtime is not None:
+        stamp = datetime.fromtimestamp(
+            mtime, tz=timezone.utc,
+        ).strftime("%Y%m%dT%H%M%SZ")
+    else:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    target = archive / f"{stamp}.json"
+    # Disambiguate if the same-second timestamp collides with an
+    # existing archive file (could happen on a fast-rerun test).
+    suffix = 0
+    while target.exists():
+        suffix += 1
+        target = archive / f"{stamp}_{suffix}.json"
+    try:
+        os.replace(current_backup, target)
+    except OSError:
+        # If rename fails (different filesystems, permission, etc.),
+        # fall back to copy-then-unlink. Best-effort; promotion path
+        # MUST NOT block on backup-archive failure.
+        try:
+            shutil.copy2(current_backup, target)
+            current_backup.unlink()
+        except OSError:
+            return None
+    return target
+
+
 def _backup_prior_production(prod_path: Path) -> Optional[Path]:
     """Atomically copy the current production file to its backup
     location BEFORE a swap. Returns the backup path on success, None
@@ -298,14 +415,34 @@ def _backup_prior_production(prod_path: Path) -> Optional[Path]:
 
     Atomic-write pattern matches `_atomic_copy` so a crash mid-backup
     can't leave a partial backup that demotion would then trust.
+
+    Active #14 (2026-05-17): before writing the new backup, rotate
+    any EXISTING backup into the sibling archive directory + GC the
+    archive to BACKUP_ARCHIVE_KEEP most-recent entries. This gives
+    the operator multi-promotion rollback history without breaking
+    the existing "latest backup at .prior_promote.json" contract
+    demote relies on.
     """
     if not prod_path.exists():
         return None
     backup = _backup_path(prod_path)
     backup.parent.mkdir(parents=True, exist_ok=True)
+    # Rotate existing backup into archive (best-effort; failure does
+    # not block the new backup write).
+    try:
+        _rotate_existing_backup_to_archive(prod_path)
+    except Exception:  # noqa: BLE001
+        pass
     tmp = backup.with_suffix(backup.suffix + ".backup_tmp")
     shutil.copy2(prod_path, tmp)
     os.replace(tmp, backup)
+    # GC the archive AFTER the new backup is safely on disk so a
+    # crash mid-GC can never leave the operator with too few
+    # backups + no new one.
+    try:
+        _gc_archive_backups(prod_path)
+    except Exception:  # noqa: BLE001
+        pass
     return backup
 
 
@@ -917,12 +1054,183 @@ def gate_threshold_fast_demote_verdict(
 
 
 # ---------------------------------------------------------------------------
+# Stage-1 cache promotion verdict (2026-05-17). Unlike Stage-2's
+# Brier-history-driven verdict, Stage-1 has no automated quality metric
+# at the cache layer (the cache is just the empirical+Poisson lookup
+# table). Promotion gating is based on source-file existence + lineage
+# freshness vs production. The operator is expected to have validated
+# the source artifact via the offline analysis suite (loss attribution,
+# shadow-override report, cell-conditional drill) BEFORE running
+# `promote stage1`.
+# ---------------------------------------------------------------------------
+
+
+def _read_lineage_built_at(path: Path) -> Optional[str]:
+    """Read `lineage.built_at_utc` from a Stage-1 cache JSON. Returns
+    None when the file is missing, unreadable, or has no lineage block.
+    """
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    lineage = payload.get("lineage")
+    if not isinstance(lineage, dict):
+        return None
+    return lineage.get("built_at_utc")
+
+
+def _stage1_promotion_verdict(
+    *,
+    source_path: Path,
+    production_path: Path,
+) -> Dict[str, Any]:
+    """Promote Stage-1 source -> production when source exists AND has
+    lineage that's newer than (or equal to) production's lineage.
+
+    Verdict values:
+      - `promote` -- source exists, source built >= production
+      - `staging_missing` -- source file absent
+      - `source_older_than_production` -- source's built_at_utc is
+        BEFORE production's; refusing would be a no-op but we surface
+        as a blocker so `--force` is required (prevents silent
+        downgrade)
+      - `no_lineage_comparison` -- one or both files lack lineage
+        blocks; allow with --force after operator inspection
+
+    `from_lineage` / `to_lineage` are surfaced on the verdict for the
+    audit trail so the operator sees what they're swapping.
+    """
+    prod_built = _read_lineage_built_at(production_path)
+    src_built = _read_lineage_built_at(source_path)
+    payload: Dict[str, Any] = {
+        "source_path": str(source_path),
+        "production_path": str(production_path),
+        "source_exists": source_path.exists(),
+        "production_exists": production_path.exists(),
+        "source_built_at_utc": src_built,
+        "production_built_at_utc": prod_built,
+    }
+    if not source_path.exists():
+        payload["verdict"] = "staging_missing"
+        payload["verdict_reason"] = (
+            f"Source file {source_path.name} does not exist. The Stage-1 "
+            "cache builder does not write to this path automatically; "
+            "either rebuild Stage-1 to this path or pass --stage1-source-path "
+            "pointing at the cache you want to promote."
+        )
+        return payload
+    if not production_path.exists():
+        # First-ever promotion. Allowed (no backup to take, but no
+        # downgrade risk either). Set verdict=promote so the operator
+        # doesn't need --force on the first-time bootstrap path.
+        payload["verdict"] = "promote"
+        payload["verdict_reason"] = (
+            f"No production Stage-1 cache at {production_path.name} -- "
+            "first-time promotion. No backup will be written."
+        )
+        return payload
+    if src_built is None or prod_built is None:
+        payload["verdict"] = "no_lineage_comparison"
+        payload["verdict_reason"] = (
+            "One or both files lack a `lineage.built_at_utc` field. "
+            "Cannot verify the source is fresher than production. "
+            "Pass --force to proceed after manual inspection."
+        )
+        return payload
+    if src_built < prod_built:
+        payload["verdict"] = "source_older_than_production"
+        payload["verdict_reason"] = (
+            f"Source built {src_built} is BEFORE production built "
+            f"{prod_built}. Swapping would downgrade Stage-1 to an older "
+            "version. Pass --force to override (e.g. intentional rollback)."
+        )
+        return payload
+    payload["verdict"] = "promote"
+    payload["verdict_reason"] = (
+        f"Source built {src_built} is at or after production built "
+        f"{prod_built}; safe to swap."
+    )
+    return payload
+
+
+def stage1_demotion_verdict(
+    *, events: List[Dict[str, Any]], sessions_dir: Path,
+    window_days: int = DEMOTE_PRE_POST_WINDOW_DAYS,
+    min_filled: int = DEMOTE_MIN_FILLED_PER_WINDOW,
+    regression_threshold: float = DEMOTE_ROI_REGRESSION_THRESHOLD,
+) -> Dict[str, Any]:
+    """Outcome-regression demote verdict for Stage-1.
+
+    Same pre/post 14d ROI window pattern as Stage-2/Stage-3. Stage-1
+    affects every bet (it's the base FV), so no bet_filter is needed.
+    """
+    return _per_lever_demotion_verdict(
+        lever="stage1",
+        promotion_event=latest_promotion_event_for_lever(events, "stage1"),
+        sessions_dir=sessions_dir,
+        bet_filter=None,
+        window_days=window_days,
+        min_filled=min_filled,
+        regression_threshold=regression_threshold,
+    )
+
+
+def stage1_fast_demote_verdict(
+    *, events: List[Dict[str, Any]], sessions_dir: Path,
+    min_post_fills: int = FAST_DEMOTE_MIN_POST_FILLS,
+    z: float = FAST_DEMOTE_Z,
+    grace_days: int = FAST_DEMOTE_GRACE_DAYS,
+    today: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Wilson-UB fast demote verdict for Stage-1 (parallel to the
+    windowed verdict above; fires sooner when evidence is clear)."""
+    return _per_lever_fast_demote_verdict(
+        lever="stage1",
+        promotion_event=latest_promotion_event_for_lever(events, "stage1"),
+        sessions_dir=sessions_dir, bet_filter=None,
+        min_post_fills=min_post_fills, z=z, grace_days=grace_days, today=today,
+    )
+
+
+# ---------------------------------------------------------------------------
 # `status` subcommand: read all four verdicts and print one summary.
 # ---------------------------------------------------------------------------
 
 
 def cmd_status(args: argparse.Namespace) -> int:
     _print_header("Promotion verdict status")
+
+    # Stage-1 (2026-05-17). Defensive getattr keeps existing tests
+    # that pass a minimal SimpleNamespace working; the real CLI
+    # parser sets these defaults.
+    s1_source_path = getattr(
+        args, "stage1_source_path", DEFAULT_STAGE1_STAGING_PATH,
+    )
+    s1_cache_path = getattr(
+        args, "stage1_cache_path", DEFAULT_STAGE1_CACHE_PATH,
+    )
+    s1_verdict = _stage1_promotion_verdict(
+        source_path=s1_source_path,
+        production_path=s1_cache_path,
+    )
+    print()
+    print(f"[stage1] verdict: {s1_verdict['verdict']}")
+    _print_block("source path", s1_source_path.name)
+    _print_block(
+        "source built_at_utc",
+        s1_verdict.get("source_built_at_utc") or "<not present>",
+    )
+    _print_block(
+        "production built_at_utc",
+        s1_verdict.get("production_built_at_utc") or "<not present>",
+    )
+    if s1_verdict.get("verdict_reason"):
+        _print_block("reason", s1_verdict["verdict_reason"])
 
     # Stage-2
     s2_history = _load_stage2_brier_history(args.stage2_brier_history_path)
@@ -992,6 +1300,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     sessions_dir = getattr(args, "sessions_dir", DEFAULT_SESSIONS_DIR)
     events = load_promotion_events(args.event_log_path)
     demotion_verdicts = {
+        "stage1": stage1_demotion_verdict(events=events, sessions_dir=sessions_dir),
         "stage2": stage2_demotion_verdict(events=events, sessions_dir=sessions_dir),
         "stage3-v2": stage3_v2_demotion_verdict(events=events, sessions_dir=sessions_dir),
         "stake-scaling": stake_scaling_demotion_verdict(events=events, sessions_dir=sessions_dir),
@@ -1002,6 +1311,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     # demotion; the fast verdict typically fires sooner (5-6 days
     # vs 14+ days) when the evidence is statistically clear.
     fast_verdicts = {
+        "stage1": stage1_fast_demote_verdict(events=events, sessions_dir=sessions_dir),
         "stage2": stage2_fast_demote_verdict(events=events, sessions_dir=sessions_dir),
         "stage3-v2": stage3_v2_fast_demote_verdict(events=events, sessions_dir=sessions_dir),
         "stake-scaling": stake_scaling_fast_demote_verdict(events=events, sessions_dir=sessions_dir),
@@ -1248,6 +1558,284 @@ def cmd_stage2(args: argparse.Namespace) -> int:
             f"If outcomes regress, run `promote.py demote stage2` to restore from "
             f"{backup.name if backup else '<no backup>'}.",
             f"Audit trail: see {args.event_log_path} for this promotion's row.",
+        ]
+    )
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# `stage1` subcommand (2026-05-17): atomic swap of a Stage-1 cache
+# source -> production with backup + audit + lineage.
+# ---------------------------------------------------------------------------
+
+
+def cmd_stage1(args: argparse.Namespace) -> int:
+    _print_header("Promote Stage-1 cache: source -> production")
+    operator = _resolve_operator(args.operator)
+    verdict = _stage1_promotion_verdict(
+        source_path=args.stage1_source_path,
+        production_path=args.stage1_cache_path,
+    )
+    _print_block("verdict", verdict["verdict"])
+    _print_block("source path", args.stage1_source_path.name)
+    _print_block("production path", args.stage1_cache_path.name)
+    if verdict.get("source_built_at_utc"):
+        _print_block("source built_at_utc", verdict["source_built_at_utc"])
+    if verdict.get("production_built_at_utc"):
+        _print_block(
+            "production built_at_utc", verdict["production_built_at_utc"],
+        )
+    if verdict.get("verdict_reason"):
+        _print_block("reason", verdict["verdict_reason"])
+
+    if verdict["verdict"] != "promote" and not args.force:
+        msg = (
+            f"verdict is '{verdict['verdict']}', not 'promote'; "
+            "refusing to promote (use --force to override)"
+        )
+        print(f"\nBLOCKED {msg}")
+        write_promotion_event(
+            PromotionEvent(
+                lever="stage1",
+                action="blocked",
+                operator=operator,
+                verdict_snapshot=verdict,
+                block_reason=msg,
+            ),
+            log_path=args.event_log_path,
+        )
+        return 1
+
+    if args.dry_run:
+        backup_target = _backup_path(args.stage1_cache_path)
+        if args.stage1_cache_path.exists():
+            print(
+                f"\nDRY-RUN would atomically copy "
+                f"{args.stage1_source_path.name} -> "
+                f"{args.stage1_cache_path.name} (backing up prior production "
+                f"to {backup_target.name} first)"
+            )
+        else:
+            print(
+                f"\nDRY-RUN would atomically copy "
+                f"{args.stage1_source_path.name} -> "
+                f"{args.stage1_cache_path.name} (no prior production; no "
+                "backup)"
+            )
+        write_promotion_event(
+            PromotionEvent(
+                lever="stage1",
+                action="dry_run",
+                direction="promote",
+                operator=operator,
+                verdict_snapshot=verdict,
+                from_state={
+                    "production_built_at_utc": verdict.get(
+                        "production_built_at_utc",
+                    ),
+                },
+                to_state={
+                    "source_built_at_utc": verdict.get(
+                        "source_built_at_utc",
+                    ),
+                },
+            ),
+            log_path=args.event_log_path,
+        )
+        return 0
+
+    # Backup current production (if any) before the atomic swap.
+    backup: Optional[Path] = None
+    if args.stage1_cache_path.exists():
+        try:
+            backup = _backup_prior_production(args.stage1_cache_path)
+        except OSError as exc:
+            print(f"\nERROR backup failed: {exc!r}", file=sys.stderr)
+            write_promotion_event(
+                PromotionEvent(
+                    lever="stage1",
+                    action="blocked",
+                    direction="promote",
+                    operator=operator,
+                    verdict_snapshot=verdict,
+                    block_reason=f"backup failed: {exc!r}",
+                ),
+                log_path=args.event_log_path,
+            )
+            return 3
+
+    try:
+        _atomic_copy(args.stage1_source_path, args.stage1_cache_path)
+    except OSError as exc:
+        print(f"\nERROR file swap failed: {exc!r}", file=sys.stderr)
+        write_promotion_event(
+            PromotionEvent(
+                lever="stage1",
+                action="blocked",
+                direction="promote",
+                operator=operator,
+                verdict_snapshot=verdict,
+                block_reason=f"file swap failed: {exc!r}",
+                backup_path=str(backup) if backup else None,
+            ),
+            log_path=args.event_log_path,
+        )
+        return 3
+
+    print(
+        f"\nPROMOTED Stage-1: {args.stage1_source_path.name} -> "
+        f"{args.stage1_cache_path.name}"
+        + (f"\n  prior production backed up to {backup.name}" if backup else "")
+    )
+    write_promotion_event(
+        PromotionEvent(
+            lever="stage1",
+            action="forced" if (
+                verdict["verdict"] != "promote" and args.force
+            ) else "promoted",
+            direction="promote",
+            operator=operator,
+            verdict_snapshot=verdict,
+            from_state={
+                "production_built_at_utc": verdict.get(
+                    "production_built_at_utc",
+                ),
+            },
+            to_state={
+                "source_built_at_utc": verdict.get(
+                    "source_built_at_utc",
+                ),
+            },
+            backup_path=str(backup) if backup else None,
+            # Source-artifact lineage from the Stage-1 cache being
+            # promoted; promotion-time lineage so fast_demote
+            # investigations answer "which Stage-1 was live + by
+            # what code at promote time".
+            source_artifact_lineage=_capture_artifact_lineage(
+                args.stage1_source_path,
+            ),
+            promotion_lineage=_compute_promotion_lineage(),
+        ),
+        log_path=args.event_log_path,
+    )
+    _print_checklist(
+        [
+            "Restart `live_engine.py` (or wait for next session) so the new "
+            "Stage-1 cache loads. The startup INFO log will surface "
+            "`Artifact lineage: stage1_cache built=...` to confirm.",
+            "Watch the next refresh's `cohort_calibration_health` + "
+            "`loss_attribution_health` blocks for bias reduction.",
+            "Active #13 fast Wilson-UB demote check is now armed on "
+            "stage1 -- a bad promotion will be flagged within ~5-6 days.",
+            f"Audit trail: see {args.event_log_path} for this promotion's row.",
+            f"If outcomes regress, run `promote.py demote stage1` to restore "
+            f"from {backup.name if backup else '<no backup>'}.",
+        ]
+    )
+    return 0
+
+
+def cmd_demote_stage1(args: argparse.Namespace) -> int:
+    _print_header("Demote Stage-1: restore prior production cache from backup")
+    operator = _resolve_operator(args.operator)
+    events = load_promotion_events(args.event_log_path)
+    verdict = stage1_demotion_verdict(
+        events=events, sessions_dir=args.sessions_dir,
+    )
+    _print_demotion_verdict_block(verdict)
+
+    gate = _demote_verdict_gate(
+        verdict=verdict, args=args, operator=operator, lever="stage1",
+    )
+    if gate is not None:
+        return gate
+
+    pe = verdict.get("promotion_event") or {}
+    backup_str = pe.get("backup_path")
+    backup_path: Optional[Path] = Path(backup_str) if backup_str else None
+
+    if args.dry_run:
+        if backup_path:
+            print(
+                f"\nDRY-RUN would atomically restore "
+                f"{backup_path.name} -> {args.stage1_cache_path.name}"
+            )
+        else:
+            print(
+                f"\nDRY-RUN would delete {args.stage1_cache_path.name} "
+                "(no prior backup; the next refresh's stage1_ou_cache "
+                "step will rebuild from data/games/)"
+            )
+        write_promotion_event(
+            PromotionEvent(
+                lever="stage1",
+                action="dry_run",
+                direction="demote",
+                operator=operator,
+                verdict_snapshot=verdict,
+                from_state={"production_path": str(args.stage1_cache_path)},
+                to_state={
+                    "restored_from": str(backup_path) if backup_path else None,
+                },
+            ),
+            log_path=args.event_log_path,
+        )
+        return 0
+
+    try:
+        if backup_path and backup_path.exists():
+            _atomic_copy(backup_path, args.stage1_cache_path)
+            print(
+                f"\nDEMOTED Stage-1: restored {backup_path.name} -> "
+                f"{args.stage1_cache_path.name}"
+            )
+        else:
+            if args.stage1_cache_path.exists():
+                args.stage1_cache_path.unlink()
+            print(
+                f"\nDEMOTED Stage-1: removed {args.stage1_cache_path.name} "
+                "(no backup found; next refresh's stage1_ou_cache "
+                "will rebuild)"
+            )
+    except OSError as exc:
+        print(f"\nERROR demote file action failed: {exc!r}", file=sys.stderr)
+        write_promotion_event(
+            PromotionEvent(
+                lever="stage1",
+                action="blocked",
+                direction="demote",
+                operator=operator,
+                verdict_snapshot=verdict,
+                block_reason=f"file action failed: {exc!r}",
+            ),
+            log_path=args.event_log_path,
+        )
+        return 3
+
+    write_promotion_event(
+        PromotionEvent(
+            lever="stage1",
+            action="forced" if (
+                verdict.get("verdict") != "demote" and args.force
+            ) else "demoted",
+            direction="demote",
+            operator=operator,
+            verdict_snapshot=verdict,
+            from_state={"production_path": str(args.stage1_cache_path)},
+            to_state={
+                "restored_from": str(backup_path) if backup_path else None,
+            },
+        ),
+        log_path=args.event_log_path,
+    )
+    _print_checklist(
+        [
+            "Restart `live_engine.py` (or wait for next session) so the "
+            "restored Stage-1 cache loads.",
+            "If outcomes recover, the demote was correct. If not, "
+            "the regression source was downstream of Stage-1 -- "
+            "investigate Stage-2 / calibration / gates next.",
+            f"Audit trail: see {args.event_log_path} for this demotion's row.",
         ]
     )
     return 0
@@ -2379,7 +2967,17 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     sub = p.add_subparsers(dest="lever", required=True)
 
     # status
-    p_status = sub.add_parser("status", help="Read all four verdicts and print one summary.")
+    p_status = sub.add_parser("status", help="Read all promotion verdicts and print one summary.")
+    p_status.add_argument(
+        "--stage1-source-path",
+        type=Path,
+        default=DEFAULT_STAGE1_STAGING_PATH,
+    )
+    p_status.add_argument(
+        "--stage1-cache-path",
+        type=Path,
+        default=DEFAULT_STAGE1_CACHE_PATH,
+    )
     p_status.add_argument(
         "--stage2-brier-history-path",
         type=Path,
@@ -2417,6 +3015,33 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     # stage2
     p_s2 = sub.add_parser("stage2", help="Promote Stage-2 staging cache -> production cache.")
+    # stage1
+    p_s1 = sub.add_parser(
+        "stage1",
+        help=(
+            "Promote a Stage-1 cache source file -> production with backup. "
+            "Verdict gates on source existence + lineage freshness."
+        ),
+    )
+    _add_common_flags(p_s1)
+    p_s1.add_argument(
+        "--stage1-source-path",
+        type=Path,
+        default=DEFAULT_STAGE1_STAGING_PATH,
+        help=(
+            "Path to the candidate Stage-1 cache to promote. Default: "
+            "cache/mlb_ou_cache.staging.json (operator-supplied; the "
+            "automated refresh does not write there today)."
+        ),
+    )
+    p_s1.add_argument(
+        "--stage1-cache-path",
+        type=Path,
+        default=DEFAULT_STAGE1_CACHE_PATH,
+        help="Production Stage-1 cache path (the runtime loads this).",
+    )
+    p_s1.set_defaults(handler=cmd_stage1)
+
     _add_common_flags(p_s2)
     p_s2.add_argument(
         "--stage2-brier-history-path",
@@ -2505,6 +3130,24 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Roll back a prior promotion (mirror of promote subcommands).",
     )
     demote_sub = p_demote.add_subparsers(dest="demote_lever", required=True)
+
+    p_d_s1 = demote_sub.add_parser(
+        "stage1",
+        help="Restore prior Stage-1 production cache from backup.",
+    )
+    _add_common_flags(p_d_s1)
+    p_d_s1.add_argument(
+        "--stage1-cache-path",
+        type=Path,
+        default=DEFAULT_STAGE1_CACHE_PATH,
+    )
+    p_d_s1.add_argument(
+        "--sessions-dir",
+        type=Path,
+        default=DEFAULT_SESSIONS_DIR,
+        help="Live sessions directory (read for pre/post-promotion ROI comparison).",
+    )
+    p_d_s1.set_defaults(handler=cmd_demote_stage1)
 
     p_d_s2 = demote_sub.add_parser("stage2", help="Restore prior Stage-2 production cache from backup.")
     _add_common_flags(p_d_s2)

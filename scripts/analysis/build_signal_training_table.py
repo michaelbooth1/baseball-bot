@@ -173,6 +173,17 @@ PRE_SIGNAL_COLUMNS = [
     *INFERENCE_PANEL_COLUMNS,
     "stage2_run_env_delta",
     "team_offense_delta",
+    # Active #8 prep (2026-05-17): runtime-logged Stage-1 shadow
+    # empirical override fields. Populated only when the live engine
+    # ran with --stage1-shadow-empirical-override shadow; absent
+    # before then. The offline shadow-override report reads these to
+    # surface per-candidate evidence (not just settled-bet evidence).
+    "stage1_shadow_empirical_mode",
+    "fair_value_alt_empirical",
+    "fair_value_alt_empirical_raw",
+    "fair_value_alt_empirical_delta_vs_prod",
+    "fair_value_alt_empirical_used_empirical",
+    "fair_value_alt_empirical_p0",
     "edge_at_ask",
     "state_value_strategy",
     "current_state_value_base_poisson",

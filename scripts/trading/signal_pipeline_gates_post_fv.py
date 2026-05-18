@@ -236,6 +236,132 @@ def _rollup_state_label(
     )
 
 
+# ---------------------------------------------------------------------------
+# Active #8 prep (2026-05-17): Stage-1 shadow empirical override helper.
+# ---------------------------------------------------------------------------
+
+
+def _stage1_shadow_logit(p: float) -> float:
+    _eps = 1e-6
+    p = max(_eps, min(1.0 - _eps, p))
+    return math.log(p / (1.0 - p))
+
+
+def _stage1_shadow_sigmoid(x: float) -> float:
+    if x >= 0:
+        return 1.0 / (1.0 + math.exp(-x))
+    z = math.exp(x)
+    return z / (1.0 + z)
+
+
+def _attach_stage1_shadow_empirical_fields(
+    self: "SignalEngine",
+    *,
+    candidate_payload: Dict[str, object],
+    base_fair_value_poisson: float,
+    stage2_run_env_delta: float,
+    team_offense_delta: float,
+    line: str,
+    inning: int,
+    decision_ask: float,
+) -> None:
+    """Attach Stage-1 shadow empirical override diagnostics.
+
+    When the engine is in `shadow` mode AND the inferred cell carries
+    an empirical estimate, computes the alt FV under "prefer empirical
+    over Poisson" and attaches both raw and calibrated alt FVs to the
+    candidate payload alongside production fields. Per-tick logging;
+    NO decision change.
+
+    When the mode is `off` (default) OR no empirical is available,
+    attaches only the mode tag so downstream consumers can distinguish
+    "shadow ran but no empirical" from "shadow off." Fail-open: ANY
+    exception is logged at DEBUG and silently swallowed; production
+    fair_value is unaffected.
+
+    Schema additions:
+      - `stage1_shadow_empirical_mode` : 'off' / 'shadow'
+      - `fair_value_alt_empirical` : alt p3 (post calibration) when
+        mode=shadow AND empirical available; else None
+      - `fair_value_alt_empirical_raw` : alt p2 (pre calibration);
+        the value before the calibrator runs
+      - `fair_value_alt_empirical_delta_vs_prod` : alt_p3 - prod_p3
+        (signed; negative = alt is more conservative than production)
+      - `fair_value_alt_empirical_used_empirical` : True/False
+      - `fair_value_alt_empirical_p0` : the empirical input used
+    """
+    mode = getattr(self, "_stage1_shadow_empirical_mode", "off")
+    candidate_payload["stage1_shadow_empirical_mode"] = mode
+    candidate_payload["fair_value_alt_empirical"] = None
+    candidate_payload["fair_value_alt_empirical_raw"] = None
+    candidate_payload["fair_value_alt_empirical_delta_vs_prod"] = None
+    candidate_payload["fair_value_alt_empirical_used_empirical"] = False
+    candidate_payload["fair_value_alt_empirical_p0"] = None
+
+    if mode != "shadow":
+        return
+
+    empirical_raw = candidate_payload.get("inferred_state_base_empirical")
+    try:
+        empirical = float(empirical_raw) if empirical_raw is not None else None
+    except (TypeError, ValueError):
+        empirical = None
+    if empirical is None:
+        return
+    if not (0.0 < empirical < 1.0):
+        # Boundary values would blow up the logit transform; leave the
+        # alt fields None and the operator can see "shadow ran but
+        # empirical was unusable."
+        return
+
+    try:
+        # Step 1: replace Stage-1 Poisson with empirical, apply
+        # Stage-2 + Stage-3 logit-additive deltas. This matches the
+        # offline shadow-override report's math exactly.
+        p2_alt = _stage1_shadow_sigmoid(
+            _stage1_shadow_logit(empirical)
+            + stage2_run_env_delta
+            + team_offense_delta
+        )
+
+        # Step 2: calibrate p2_alt through the SAME calibrator
+        # production uses. Keeps the alt FV directly comparable to
+        # the production fair_value (which is post-calibration).
+        # Currently calibration is in shadow mode and applies no
+        # shift; the calibrator call is cheap and future-proofs the
+        # comparison when calibration eventually flips to enforce.
+        p3_alt = p2_alt
+        calibrated_fv, _ = self._calibrate_fair_value(
+            raw_prob=p2_alt,
+            line=line,
+            inning=inning,
+            decision_ask=decision_ask,
+            model_family=SCORE_EVENT_TRANSITION,
+        )
+        if calibrated_fv is not None:
+            p3_alt = float(calibrated_fv)
+
+        prod_p3 = candidate_payload.get("fair_value")
+        delta = (
+            p3_alt - float(prod_p3) if prod_p3 is not None else None
+        )
+
+        candidate_payload["fair_value_alt_empirical"] = p3_alt
+        candidate_payload["fair_value_alt_empirical_raw"] = p2_alt
+        candidate_payload["fair_value_alt_empirical_delta_vs_prod"] = (
+            delta
+        )
+        candidate_payload["fair_value_alt_empirical_used_empirical"] = True
+        candidate_payload["fair_value_alt_empirical_p0"] = empirical
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.debug(
+            "Stage-1 shadow empirical override failed for "
+            "cell empirical=%s s2=%s s3=%s: %r",
+            empirical, stage2_run_env_delta, team_offense_delta, exc,
+        )
+        # Already initialized to None above; leave them as-is.
+
+
 def run_inference_and_fv_phase(
     self: "SignalEngine",
     ctx: "TickContext",
@@ -597,6 +723,26 @@ def run_inference_and_fv_phase(
     candidate_payload["team_offense_delta"] = team_offense_delta
     candidate_payload["signal_model_family"] = SCORE_EVENT_TRANSITION
     candidate_payload["state_value_strategy"] = SCORE_EVENT_TRANSITION
+
+    # Active #8 prep (2026-05-17): Stage-1 shadow empirical override.
+    # When the engine is running in `shadow` mode, compute the
+    # alternative FV chain replacing the Stage-1 Poisson estimate with
+    # the cell's own empirical rate (when available), then run the same
+    # Stage-2 / Stage-3 / calibration pipeline on top. Log both
+    # production and alt FV on the candidate row. NO effect on
+    # decisions -- pure logging. Fail-open contract: any exception in
+    # the alt computation is swallowed; production FV stays the source
+    # of truth.
+    _attach_stage1_shadow_empirical_fields(
+        self,
+        candidate_payload=candidate_payload,
+        base_fair_value_poisson=base_fv,
+        stage2_run_env_delta=stage2_run_env_delta,
+        team_offense_delta=team_offense_delta,
+        line=market.line,
+        inning=inning,
+        decision_ask=ask,
+    )
 
     current_state_snapshot = _compute_state_value_snapshot(self, ctx)
     _attach_score_transition_shadow_fields(

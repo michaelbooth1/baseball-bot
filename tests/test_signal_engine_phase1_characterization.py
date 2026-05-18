@@ -1194,6 +1194,15 @@ class SignalEngineCandidateLoggingCharacterizationTests(unittest.TestCase):
                     "base_fair_value": 0.75,
                     "stage2_run_env_delta": 0.0,
                     "team_offense_delta": 0.0,
+                    # Active #8 prep (2026-05-17): Stage-1 shadow
+                    # empirical override runs in 'off' mode for this
+                    # characterization fixture so only the mode tag
+                    # + the False used_empirical flag appear in the
+                    # candidate payload (the other alt-FV fields stay
+                    # None and are dropped by the drop_none_values
+                    # pass before serialization).
+                    "stage1_shadow_empirical_mode": "off",
+                    "fair_value_alt_empirical_used_empirical": False,
                     "edge": 0.75 - 0.67,
                     "min_edge_base": 0.16,
                     "min_edge_ask_boost": 0.0,
