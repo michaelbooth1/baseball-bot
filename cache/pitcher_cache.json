@@ -1,5 +1,5 @@
 {
-  "built_at": "2026-05-17T17:52:38.794651+00:00",
+  "built_at": "2026-05-19T13:05:39.811801+00:00",
   "season": 2026,
   "min_ip_threshold": 5.0,
   "mlb_avg_era": 4.2,
@@ -35,12 +35,6 @@
       "ip": 53.0,
       "gs": 9
     },
-    "694973": {
-      "name": "Paul Skenes",
-      "era": 1.94,
-      "ip": 51.0,
-      "gs": 10
-    },
     "519242": {
       "name": "Chris Sale",
       "era": 1.96,
@@ -65,11 +59,11 @@
       "ip": 51.0,
       "gs": 9
     },
-    "684007": {
-      "name": "Shota Imanaga",
-      "era": 2.32,
-      "ip": 54.3,
-      "gs": 9
+    "650633": {
+      "name": "Michael King",
+      "era": 2.31,
+      "ip": 58.3,
+      "gs": 10
     },
     "800048": {
       "name": "Parker Messick",
@@ -107,22 +101,16 @@
       "ip": 53.3,
       "gs": 9
     },
-    "650633": {
-      "name": "Michael King",
-      "era": 2.63,
-      "ip": 51.3,
-      "gs": 9
+    "694973": {
+      "name": "Paul Skenes",
+      "era": 2.62,
+      "ip": 55.0,
+      "gs": 10
     },
     "681190": {
       "name": "Randy V\u00e1squez",
       "era": 2.68,
       "ip": 50.3,
-      "gs": 9
-    },
-    "650644": {
-      "name": "Aaron Civale",
-      "era": 2.7,
-      "ip": 46.7,
       "gs": 9
     },
     "608379": {
@@ -131,23 +119,23 @@
       "ip": 57.3,
       "gs": 9
     },
-    "669923": {
-      "name": "George Kirby",
-      "era": 2.84,
-      "ip": 57.0,
-      "gs": 9
-    },
-    "671737": {
-      "name": "Taj Bradley",
-      "era": 2.87,
-      "ip": 47.0,
-      "gs": 8
+    "676974": {
+      "name": "Max Meyer",
+      "era": 2.85,
+      "ip": 53.7,
+      "gs": 10
     },
     "690997": {
       "name": "Nolan McLean",
       "era": 2.92,
       "ip": 52.3,
       "gs": 9
+    },
+    "669372": {
+      "name": "J.T. Ginn",
+      "era": 2.98,
+      "ip": 51.3,
+      "gs": 8
     },
     "676106": {
       "name": "Emerson Hancock",
@@ -161,22 +149,16 @@
       "ip": 50.7,
       "gs": 9
     },
-    "642547": {
-      "name": "Freddy Peralta",
-      "era": 3.04,
-      "ip": 50.3,
-      "gs": 10
-    },
-    "592662": {
-      "name": "Robbie Ray",
-      "era": 3.04,
-      "ip": 50.3,
-      "gs": 9
-    },
     "677952": {
       "name": "Braxton Ashcraft",
       "era": 3.09,
       "ip": 55.3,
+      "gs": 9
+    },
+    "656876": {
+      "name": "Drew Rasmussen",
+      "era": 3.19,
+      "ip": 48.0,
       "gs": 9
     },
     "657746": {
@@ -191,22 +173,28 @@
       "ip": 47.7,
       "gs": 9
     },
-    "676974": {
-      "name": "Max Meyer",
-      "era": 3.21,
-      "ip": 47.7,
-      "gs": 9
-    },
-    "656876": {
-      "name": "Drew Rasmussen",
-      "era": 3.21,
-      "ip": 47.7,
-      "gs": 9
-    },
     "608331": {
       "name": "Max Fried",
       "era": 3.21,
       "ip": 61.7,
+      "gs": 10
+    },
+    "642547": {
+      "name": "Freddy Peralta",
+      "era": 3.31,
+      "ip": 54.3,
+      "gs": 10
+    },
+    "808967": {
+      "name": "Yoshinobu Yamamoto",
+      "era": 3.32,
+      "ip": 57.0,
+      "gs": 9
+    },
+    "684007": {
+      "name": "Shota Imanaga",
+      "era": 3.38,
+      "ip": 58.7,
       "gs": 10
     },
     "676282": {
@@ -215,23 +203,35 @@
       "ip": 50.3,
       "gs": 10
     },
-    "701542": {
-      "name": "Will Warren",
-      "era": 3.42,
-      "ip": 47.3,
-      "gs": 9
+    "669923": {
+      "name": "George Kirby",
+      "era": 3.45,
+      "ip": 62.7,
+      "gs": 10
     },
-    "641927": {
-      "name": "Bailey Ober",
-      "era": 3.46,
-      "ip": 52.0,
-      "gs": 9
+    "592332": {
+      "name": "Kevin Gausman",
+      "era": 3.45,
+      "ip": 57.3,
+      "gs": 10
     },
     "694738": {
       "name": "Landen Roupp",
       "era": 3.49,
       "ip": 49.0,
       "gs": 9
+    },
+    "647336": {
+      "name": "Michael Soroka",
+      "era": 3.49,
+      "ip": 49.0,
+      "gs": 9
+    },
+    "693433": {
+      "name": "Bryan Woo",
+      "era": 3.51,
+      "ip": 59.0,
+      "gs": 10
     },
     "656492": {
       "name": "Foster Griffin",
@@ -245,52 +245,52 @@
       "ip": 63.7,
       "gs": 10
     },
+    "677960": {
+      "name": "Ryan Weathers",
+      "era": 3.58,
+      "ip": 50.3,
+      "gs": 9
+    },
     "656605": {
       "name": "Mitch Keller",
       "era": 3.59,
       "ip": 52.7,
       "gs": 9
     },
-    "808967": {
-      "name": "Yoshinobu Yamamoto",
-      "era": 3.6,
-      "ip": 50.0,
-      "gs": 8
+    "543135": {
+      "name": "Nathan Eovaldi",
+      "era": 3.62,
+      "ip": 54.7,
+      "gs": 9
+    },
+    "641927": {
+      "name": "Bailey Ober",
+      "era": 3.63,
+      "ip": 57.0,
+      "gs": 10
     },
     "668909": {
       "name": "Gavin Williams",
       "era": 3.67,
-      "ip": 56.3,
+      "ip": 61.3,
       "gs": 10
     },
     "607625": {
       "name": "Seth Lugo",
-      "era": 3.76,
-      "ip": 52.7,
-      "gs": 9
+      "era": 3.68,
+      "ip": 58.7,
+      "gs": 10
     },
-    "592332": {
-      "name": "Kevin Gausman",
-      "era": 3.86,
-      "ip": 51.3,
-      "gs": 9
+    "605488": {
+      "name": "Jeffrey Springs",
+      "era": 3.93,
+      "ip": 55.0,
+      "gs": 10
     },
-    "693433": {
-      "name": "Bryan Woo",
-      "era": 3.91,
-      "ip": 53.0,
-      "gs": 9
-    },
-    "681517": {
-      "name": "Kyle Leahy",
-      "era": 3.94,
-      "ip": 45.7,
-      "gs": 9
-    },
-    "608372": {
-      "name": "Tomoyuki Sugano",
-      "era": 4.02,
-      "ip": 47.0,
+    "669467": {
+      "name": "Andre Pallante",
+      "era": 4.04,
+      "ip": 49.0,
       "gs": 9
     },
     "665795": {
@@ -323,11 +323,11 @@
       "ip": 52.0,
       "gs": 10
     },
-    "543135": {
-      "name": "Nathan Eovaldi",
-      "era": 4.15,
-      "ip": 47.7,
-      "gs": 8
+    "672282": {
+      "name": "Reid Detmers",
+      "era": 4.2,
+      "ip": 49.3,
+      "gs": 9
     },
     "671096": {
       "name": "Andrew Abbott",
@@ -335,34 +335,16 @@
       "ip": 51.3,
       "gs": 10
     },
-    "680694": {
-      "name": "Kyle Bradish",
-      "era": 4.21,
-      "ip": 47.0,
-      "gs": 9
-    },
-    "605488": {
-      "name": "Jeffrey Springs",
-      "era": 4.22,
-      "ip": 49.0,
-      "gs": 9
-    },
-    "664285": {
-      "name": "Framber Valdez",
-      "era": 4.32,
-      "ip": 50.0,
-      "gs": 9
+    "592662": {
+      "name": "Robbie Ray",
+      "era": 4.28,
+      "ip": 54.7,
+      "gs": 10
     },
     "683004": {
       "name": "Jack Leiter",
       "era": 4.35,
       "ip": 49.7,
-      "gs": 9
-    },
-    "672282": {
-      "name": "Reid Detmers",
-      "era": 4.38,
-      "ip": 49.3,
       "gs": 9
     },
     "669461": {
@@ -383,17 +365,29 @@
       "ip": 56.7,
       "gs": 10
     },
-    "669022": {
-      "name": "MacKenzie Gore",
-      "era": 4.5,
-      "ip": 48.0,
-      "gs": 9
-    },
     "686799": {
       "name": "Jack Kochanowicz",
       "era": 4.56,
       "ip": 51.3,
       "gs": 9
+    },
+    "664285": {
+      "name": "Framber Valdez",
+      "era": 4.58,
+      "ip": 55.0,
+      "gs": 10
+    },
+    "668678": {
+      "name": "Zac Gallen",
+      "era": 4.78,
+      "ip": 49.0,
+      "gs": 10
+    },
+    "669022": {
+      "name": "MacKenzie Gore",
+      "era": 4.78,
+      "ip": 49.0,
+      "gs": 10
     },
     "669160": {
       "name": "Dustin May",
@@ -419,6 +413,18 @@
       "ip": 49.7,
       "gs": 9
     },
+    "677944": {
+      "name": "Slade Cecconi",
+      "era": 5.16,
+      "ip": 52.3,
+      "gs": 10
+    },
+    "605288": {
+      "name": "Adrian Houser",
+      "era": 5.25,
+      "ip": 48.0,
+      "gs": 9
+    },
     "669358": {
       "name": "Shane Baz",
       "era": 5.26,
@@ -427,27 +433,21 @@
     },
     "691587": {
       "name": "Eury P\u00e9rez",
-      "era": 5.26,
-      "ip": 51.3,
+      "era": 5.33,
+      "ip": 52.3,
       "gs": 10
-    },
-    "669194": {
-      "name": "Ryne Nelson",
-      "era": 5.4,
-      "ip": 45.0,
-      "gs": 9
-    },
-    "641816": {
-      "name": "Tyler Mahle",
-      "era": 5.59,
-      "ip": 46.7,
-      "gs": 9
     },
     "681347": {
       "name": "Mike Burrows",
       "era": 5.72,
       "ip": 50.3,
       "gs": 9
+    },
+    "547179": {
+      "name": "Michael Lorenzen",
+      "era": 7.03,
+      "ip": 48.7,
+      "gs": 10
     }
   }
 }

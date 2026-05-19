@@ -20,7 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -281,6 +281,159 @@ DEFAULT_STAGE3_V2_WEIGHTS_PATH = (
 # rarely fire under healthy operation. It DOES fire when the daily
 # refresh is broken or skipped for two weeks; cheap canary.
 CACHE_LINEAGE_BUILD_AGE_WARN_DAYS = 14
+
+# Active #8 (2026-05-17): Stage-1 Alt-A staging cache. The refresh
+# step `stage1_ou_cache_alt_a` materializes the runtime's on-the-fly
+# Alt-A shadow (today's shadow-override report: -6pp aggregate bias
+# on 30d) as a real cache file at this staging path. Operator runs
+# `promote.py stage1 --source <this>` to atomically swap it into
+# production after paper-mode validation clears its bar. The daily
+# review surfaces existence + age + override stats so operators see
+# the staging cache is being maintained.
+DEFAULT_STAGE1_ALT_A_STAGING_PATH = (
+    PROJECT_DIR / "cache" / "mlb_ou_cache_alt_a.staging.json"
+)
+# Same 14d threshold as cache_lineage_freshness_health, for the same
+# reason: under healthy refresh the StalenessCheck rebuilds the
+# staging cache when game data changes. Past 14d without rebuild =
+# the refresh step is broken or the host has been offline.
+STAGE1_ALT_A_STAGING_AGE_WARN_DAYS = 14
+
+# Active #15 (2026-05-19): Promotion-lag tracker.
+# Every promote.py file-swap changes a cache file (or the runtime-
+# overrides JSON), but the live engine loads those files at NEXT
+# SESSION BOOT. Operators have asked "is my promote in effect yet?"
+# enough times to deserve a structured answer in the daily review.
+# Per-lever logic: compare each lever's cache mtime against the most
+# recent engine-boot timestamp (proxied by first-bet `placed_at`
+# from the latest session file). If cache mtime > latest engine boot
+# → the promote hasn't taken effect yet, lag clock starts.
+PROMOTION_LAG_LEVERS: Tuple[Tuple[str, str], ...] = (
+    # (lever_name, repo-relative cache/override path)
+    ("stage1", "cache/mlb_ou_cache.json"),
+    ("stage2", "cache/mlb_stage2_run_env.json"),
+    ("stage3_v2", "cache/team_offense_v2_weights.json"),
+    # stake-scaling + gate-threshold both mutate the same overrides
+    # JSON. The lag verdict is identical for both -- any promote of
+    # either lever bumps the file mtime, so both report the same
+    # status. We surface them separately so the operator who promoted
+    # one sees the line under that lever's name.
+    ("stake_scaling", "cache/live_engine_overrides.json"),
+    ("gate_threshold", "cache/live_engine_overrides.json"),
+)
+# Sessions can be either paper or live; the engine boots the same way
+# in both modes. Walk both dirs so an operator running in paper-mode
+# (today's scenario) still gets accurate "is my promote in effect"
+# answers.
+PROMOTION_LAG_SESSION_ROOTS: Tuple[str, ...] = (
+    "data/live_trading/sessions",
+    "data/paper_trading/sessions",
+)
+# Alert threshold: if a promote has been pending engine-boot for more
+# than this many hours, surface a Notes line. 24h matches the typical
+# daily-session cadence -- a pending promote that survives one
+# overnight window almost certainly means the operator promoted but
+# never restarted the engine.
+PROMOTION_LAG_PENDING_HOURS_WARN = 24.0
+
+# Phase A5 follow-up (2026-05-19): UNDER candidate emission
+# observability. The A5 ship turned on `--under-emission-mode shadow`
+# which emits a sibling UNDER candidate row alongside every OVER
+# FV-phase tick. This block closes the loop by surfacing the rate
+# of UNDER emission + decision breakdown + price-quality summary
+# the operator needs to validate the runtime.
+#
+# Three statuses possible:
+#   - `not_emitting`: 0 `side=under` candidate rows today. The
+#     operator did not pass `--under-emission-mode shadow`. No alert;
+#     valid operator choice.
+#   - `no_liquidity`: UNDER rows exist but 100% are
+#     `gate_no_under_liquidity` skips. Mode active, but the UNDER
+#     book is empty across the session. Surface but no alert
+#     (could be a session-wide market issue, not actionable).
+#   - `ok`: UNDER emission is producing decisions; alerts gated on
+#     sample-size thresholds below.
+#
+# Alert thresholds (only fire when status == ok):
+UNDER_COVERAGE_RATE_LOW_WARN = 0.50
+UNDER_COVERAGE_MIN_N_FOR_ALERT = 50
+# `shadow_under` rate above this = either genuine UNDER edge or
+# UNDER gates too loose (most likely the borrowed OVER edge_threshold
+# is wrong for UNDER's price dynamics). Surfaces a human-read
+# prompt, not a directional alert.
+UNDER_SHADOW_UNDER_RATE_HIGH_WARN = 0.50
+UNDER_SHADOW_UNDER_MIN_N_FOR_ALERT_HIGH = 20
+# `shadow_under` rate below this AND enough samples to be confident =
+# UNDER gates likely too tight; tune UNDER-specific min_edge.
+UNDER_SHADOW_UNDER_RATE_LOW_WARN = 0.02
+UNDER_SHADOW_UNDER_MIN_N_FOR_ALERT_LOW = 100
+# FV histogram buckets for the per-day UNDER price-distribution
+# panel. Asymmetric -- UNDER FVs cluster low (high-scoring environments
+# are common), so the smaller buckets carry more granularity.
+UNDER_FV_BUCKETS: Tuple[Tuple[str, float, float], ...] = (
+    ("0.00-0.20", 0.00, 0.20),
+    ("0.20-0.40", 0.20, 0.40),
+    ("0.40-0.60", 0.40, 0.60),
+    ("0.60-0.80", 0.60, 0.80),
+    ("0.80-1.00", 0.80, 1.00),
+)
+
+# Phase A5 follow-up #2 (2026-05-19): UNDER outcomes counterfactual.
+# For each `shadow_under` candidate the engine emitted today, settle
+# against the game's final_total: UNDER wins iff `final_total < line`.
+# Counterfactual P&L = (stake / entry_ask) - stake if won, -stake if
+# lost (same paper-mode taker formula production uses for OVER bets).
+# Answers the operationally critical question "would the bot have made
+# money trading UNDER?" -- the data point Phase B4 (60-session UNDER
+# paper-bet validation milestone) ultimately depends on.
+UNDER_OUTCOMES_DEFAULT_STAKE = 10.0
+UNDER_OUTCOMES_PROFITABLE_ROI_WARN = 0.05  # +5%
+UNDER_OUTCOMES_UNPROFITABLE_ROI_WARN = -0.05  # -5%
+UNDER_OUTCOMES_MIN_N_FOR_ALERT = 30
+# Trailing-7d aggregate thresholds (2026-05-19 follow-up). Higher
+# min-n than the per-day window because the trailing aggregate has
+# ~7x the reach -- we want stronger evidence before alerting on it.
+UNDER_OUTCOMES_TRAILING_DAYS = 7
+UNDER_OUTCOMES_TRAILING_MIN_N_FOR_ALERT = 50
+
+# Cross-artifact consistency check (Active #16 v4, 2026-05-17).
+# Every artifact stamped by lineage v2 records `input_hashes[path]`
+# at build time. After build, those inputs may be updated by the
+# next daily refresh -- when that happens the downstream artifact
+# is "stale relative to its inputs" until it rebuilds. This block
+# reads each artifact's lineage and surfaces:
+#   (a) per-(artifact, input) stale verdicts (recorded hash !=
+#       current file hash)
+#   (b) cross-artifact divergence (two artifacts share an input
+#       path but recorded different hashes -- one was built before
+#       a refresh, the other after)
+# Mirrored alerts surface with prefix `Cross-artifact:`. Complements
+# the existing `cache_lineage_freshness_health` (which surfaces
+# build-age of each artifact independently); this block surfaces
+# the DEPENDENCY graph between them.
+CROSS_ARTIFACT_CONSISTENCY_PATHS: Tuple[Tuple[str, str], ...] = (
+    # (label, repo-relative-path-from-project-root)
+    ("stage1_cache", "cache/mlb_ou_cache.json"),
+    ("stage2_cache", "cache/mlb_stage2_run_env.json"),
+    ("stage3_v2_weights", "cache/team_offense_v2_weights.json"),
+    ("calibrator_over",
+     "data/analysis_output/calibration/signal_win_calibration.json"),
+    ("calibrator_under",
+     "data/analysis_output/calibration/signal_win_calibration_under.json"),
+    ("walk_forward_cert",
+     "data/analysis_output/walk_forward_certification/"
+     "walk_forward_certification.json"),
+    ("ev_policy_report",
+     "data/analysis_output/ev_policy/ev_policy_report.json"),
+    ("loss_attribution",
+     "data/analysis_output/loss_attribution/loss_attribution_report.json"),
+    ("stage1_shadow_override",
+     "data/analysis_output/stage1_shadow_override/"
+     "stage1_shadow_override_report.json"),
+    ("stage1_cell_loss_attribution",
+     "data/analysis_output/stage1_cell_loss_attribution/"
+     "stage1_cell_loss_attribution.json"),
+)
 # Don't fire on tiny biases -- if the model's aggregate bias is
 # < 5pp we have a near-calibrated model and attribution is noise.
 # The aggregate_health block (Active #9) handles the "is there a
@@ -741,6 +894,74 @@ def _artifact_age_days(generated_at_iso: str, today: str) -> Optional[float]:
     except ValueError:
         return None
     return round((today_dt - gen.replace(tzinfo=None)).total_seconds() / 86400.0, 2)
+
+
+def _parse_iso_to_epoch_safe(value: Any) -> Optional[float]:
+    """Parse an ISO-8601 string to a UTC epoch float. Fail-open: None
+    on bad input rather than raise.
+
+    Used by the promotion-lag tracker to convert session `placed_at`
+    timestamps (e.g., "2026-05-19T00:07:38.915271Z") into comparable
+    epoch floats against file mtimes.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.rstrip("Z")).replace(
+            tzinfo=timezone.utc,
+        ).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def _latest_session_start_utc(
+    project_root: Path = PROJECT_DIR,
+    session_roots: Sequence[str] = PROMOTION_LAG_SESSION_ROOTS,
+) -> Optional[Tuple[str, float, str]]:
+    """Return (session_filename, epoch, iso_string) for the most recent
+    engine startup proxy across paper + live session roots.
+
+    The proxy is the FIRST bet's `placed_at` in the latest session
+    file by name (filenames are YYYY-MM-DD_session.json, so
+    lexicographic sort is chronological). Sessions with zero bets
+    fall back to the session file's `generated_at` (less precise,
+    but better than nothing for engines that boot then place no
+    bets that day).
+
+    Fail-open: returns None if no session file is parseable.
+    """
+    candidates: List[Tuple[str, float, str, str]] = []
+    for root_rel in session_roots:
+        root = project_root / root_rel
+        if not root.exists():
+            continue
+        for entry in sorted(root.iterdir()):
+            name = entry.name
+            if not name.endswith("_session.json"):
+                continue
+            try:
+                with open(entry, encoding="utf-8") as f:
+                    session = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            bets = session.get("bets") or []
+            first_placed = None
+            for bet in bets:
+                placed = bet.get("placed_at")
+                if isinstance(placed, str) and placed:
+                    if first_placed is None or placed < first_placed:
+                        first_placed = placed
+            # Fall back to generated_at if no bets carried placed_at.
+            chosen = first_placed or session.get("generated_at")
+            epoch = _parse_iso_to_epoch_safe(chosen)
+            if epoch is None:
+                continue
+            candidates.append((name, epoch, chosen, root_rel))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[1])  # ascending; we want max
+    name, epoch, iso, _root = candidates[-1]
+    return name, epoch, iso
 
 
 def _per_family_calibration_metrics(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -2985,6 +3206,66 @@ def _stage1_shadow_override_health(
         payload["alerts"].append(
             f"{alt}: {rec.get('verdict')} -- " + rec.get("rationale", "")
         )
+
+    # 2026-05-19 follow-up: surface the cohort breakdown's top
+    # findings so the operator sees WHERE Alt A helps most. Unlocks
+    # the scoped-promotion path (enforce Alt A on specific cohorts
+    # rather than globally) instead of an all-or-nothing ENFORCE
+    # flip.
+    cohort = report.get("cohort_breakdown_trailing_30d") or {}
+    if cohort.get("n_bets_total"):
+        top = cohort.get("top_cohorts") or {}
+        payload["cohort_breakdown_30d"] = {
+            "n_bets_total": cohort.get("n_bets_total"),
+            "min_n_per_cohort": cohort.get("min_n_per_cohort"),
+            "most_improved": (top.get("most_improved") or [])[:3],
+            "regressions": (top.get("regressions") or [])[:3],
+            "highest_coverage": (top.get("highest_coverage") or [])[:3],
+            "largest_alt_b_savings": [
+                e for e in (top.get("largest_alt_b_savings") or [])
+                if (e.get("alt_b_counterfactual_usd") or 0.0) > 0
+            ][:3],
+        }
+        # Alert: surface the single best Alt A cohort if its
+        # bias_delta clears the same 1pp floor the aggregate
+        # recommendation uses. This catches "aggregate says Alt A
+        # doesn't help but cohort X gets a 10pp improvement" --
+        # exactly the scoped-promotion case.
+        most_improved = top.get("most_improved") or []
+        if most_improved:
+            best = most_improved[0]
+            delta = best.get("bias_delta_vs_prod_pp") or 0.0
+            if delta >= 1.0:
+                cov = best.get("coverage_rate")
+                cov_str = (
+                    f"{cov * 100:.0f}%" if cov is not None else "n/a"
+                )
+                payload["alerts"].append(
+                    f"cohort `{best.get('dimension')}="
+                    f"{best.get('bucket')}` (n={best.get('n_bets')}) "
+                    f"sees Alt A reduce bias by {delta:+.2f}pp "
+                    f"(coverage={cov_str}). "
+                    "Consider a scoped promotion on this cohort "
+                    "before flipping Alt A globally."
+                )
+        # Alert: surface a regression if any cohort shows Alt A
+        # making bias WORSE by >= 2pp -- a stronger threshold than
+        # for improvements because a regression on one cohort can
+        # be hidden inside an aggregate-positive Alt A average.
+        regressions = top.get("regressions") or []
+        if regressions:
+            worst = regressions[0]  # most negative first
+            delta = worst.get("bias_delta_vs_prod_pp") or 0.0
+            if delta <= -2.0:
+                payload["alerts"].append(
+                    f"cohort `{worst.get('dimension')}="
+                    f"{worst.get('bucket')}` (n={worst.get('n_bets')}) "
+                    f"REGRESSES under Alt A: bias delta {delta:+.2f}pp "
+                    "(Alt A makes bias worse here). A global Alt A "
+                    "promote would hurt this cohort; consider scoped "
+                    "promotion that excludes it."
+                )
+
     return payload
 
 
@@ -3118,6 +3399,1138 @@ def _cache_lineage_freshness_health(
             )
         payload["artifacts"][label] = artifact_info
 
+    return payload
+
+
+def _stage1_alt_a_staging_health(
+    *,
+    staging_path: Path = DEFAULT_STAGE1_ALT_A_STAGING_PATH,
+    production_path: Path = DEFAULT_STAGE1_CACHE_PATH,
+    age_warn_days: float = STAGE1_ALT_A_STAGING_AGE_WARN_DAYS,
+) -> Dict[str, Any]:
+    """Active #8 (2026-05-17): surface the Stage-1 Alt-A staging cache.
+
+    The refresh step `stage1_ou_cache_alt_a` rebuilds the cache with
+    `--smoothing-mode empirical_when_available` to a SEPARATE staging
+    path. The runtime never loads it; promote.py stage1 atomically
+    swaps it into production after the operator clears paper-mode
+    validation. This block answers, in the daily review:
+
+      - Does the staging cache exist?
+      - How old is it (build_age_days)?
+      - Is it built in Alt-A mode (or a stale poisson-mode artifact)?
+      - How many cells were overridden vs the production poisson?
+      - What's the mean signed delta vs production?
+      - Does production agree on the same input files (Stage-1 + Alt-A
+        cache should share the data/games/regular/ input hash; if not,
+        one of them is built on a stale game corpus)?
+
+    Mirrors alerts via Notes prefix `Stage1-alt-a-staging:` covering:
+      - missing staging cache (refresh never ran or always fails)
+      - stale staging (build_age > age_warn_days)
+      - mode mismatch (staging built in poisson mode, not Alt-A)
+      - input divergence (staging vs production on different data
+        corpora -- one of them needs a rebuild)
+
+    Fail-open: any read / parse error logs and continues with a
+    `check_error` status; never blocks the daily review.
+    """
+    payload: Dict[str, Any] = {
+        "alerts": [],
+        "thresholds": {
+            "age_warn_days": age_warn_days,
+        },
+        "staging": {
+            "path": str(staging_path),
+            "exists": staging_path.exists(),
+        },
+        "production": {
+            "path": str(production_path),
+            "exists": production_path.exists(),
+        },
+    }
+
+    if not staging_path.exists():
+        payload["staging"]["status"] = "missing"
+        payload["alerts"].append(
+            "Stage-1 Alt-A staging cache not found at "
+            f"{staging_path.name}. Run the daily refresh step "
+            "`stage1_ou_cache_alt_a` (or rebuild manually with "
+            "`python cache/build_mlb_ou_cache.py --smoothing-mode "
+            "empirical_when_available --out <path>`)."
+        )
+        return payload
+
+    try:
+        with open(staging_path, encoding="utf-8") as f:
+            staging_cache = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        payload["staging"]["status"] = "check_error"
+        payload["staging"]["error"] = repr(exc)
+        payload["alerts"].append(
+            f"Stage-1 Alt-A staging cache unreadable: {exc!r}. "
+            "Delete the corrupt file; the next daily refresh will "
+            "rebuild it."
+        )
+        return payload
+
+    staging_meta = staging_cache.get("meta") or {}
+    alt_a_summary = staging_meta.get("alt_a_smoothing") or {}
+    payload["staging"]["status"] = "ok"
+    payload["staging"]["alt_a_smoothing"] = alt_a_summary
+    payload["staging"]["history_start_date"] = staging_meta.get(
+        "history_start_date"
+    )
+    payload["staging"]["history_end_date"] = staging_meta.get(
+        "history_end_date"
+    )
+    payload["staging"]["total_games"] = staging_meta.get("total_games")
+    payload["staging"]["valid_cells"] = staging_meta.get("valid_cells")
+
+    # Lazy lineage import so module-level imports stay light.
+    try:
+        from scripts.analysis.artifact_lineage import (  # noqa: WPS433
+            _read_lineage_from_path,
+            _age_days,
+        )
+    except ImportError:
+        try:
+            from artifact_lineage import (  # type: ignore[no-redef]
+                _read_lineage_from_path,
+                _age_days,
+            )
+        except ImportError:
+            _read_lineage_from_path = None  # type: ignore[assignment]
+            _age_days = None  # type: ignore[assignment]
+
+    if _read_lineage_from_path is not None:
+        staging_lineage = _read_lineage_from_path(staging_path) or {}
+        payload["staging"]["lineage"] = {
+            "built_at_utc": staging_lineage.get("built_at_utc"),
+            "git_sha": staging_lineage.get("git_sha"),
+            "git_dirty": staging_lineage.get("git_dirty"),
+            "builder_path": staging_lineage.get("builder_path"),
+        }
+        if _age_days is not None and staging_lineage:
+            age = _age_days(staging_lineage.get("built_at_utc"))
+            payload["staging"]["build_age_days"] = (
+                round(age, 2) if age is not None else None
+            )
+            if age is not None and age > age_warn_days:
+                payload["alerts"].append(
+                    f"Stage-1 Alt-A staging cache built {age:.1f}d ago "
+                    f"(> {age_warn_days:.0f}d warn); daily refresh may "
+                    "have skipped this builder. Check refresh status."
+                )
+
+    # Mode-check: the whole point of the staging artifact is to be in
+    # Alt-A mode. If it was built in poisson mode, it's identical to
+    # production -- the operator likely passed the wrong --smoothing-
+    # mode flag in a manual rebuild.
+    mode = str(alt_a_summary.get("mode") or "")
+    if alt_a_summary.get("enabled") is not True:
+        payload["alerts"].append(
+            f"Stage-1 Alt-A staging cache built in mode `{mode or 'unknown'}`, "
+            "not `empirical_when_available`. The staging artifact is "
+            "supposed to differ from production; rerun with "
+            "`--smoothing-mode empirical_when_available`."
+        )
+
+    # Cross-check input hashes against production cache lineage so a
+    # half-failed refresh (Stage-1 rebuilt but Alt-A skipped, or
+    # vice-versa) is surfaced.
+    if (
+        _read_lineage_from_path is not None
+        and production_path.exists()
+        and staging_path.exists()
+    ):
+        prod_lineage = _read_lineage_from_path(production_path) or {}
+        staging_lineage_for_compare = _read_lineage_from_path(staging_path) or {}
+        prod_inputs = prod_lineage.get("input_hashes") or {}
+        staging_inputs = staging_lineage_for_compare.get("input_hashes") or {}
+        shared_paths = set(prod_inputs.keys()) & set(staging_inputs.keys())
+        divergences: List[Dict[str, Any]] = []
+        for ip in sorted(shared_paths):
+            if prod_inputs.get(ip) != staging_inputs.get(ip):
+                divergences.append(
+                    {
+                        "input_path": ip,
+                        "production_hash": prod_inputs.get(ip),
+                        "staging_hash": staging_inputs.get(ip),
+                    }
+                )
+        payload["input_divergences"] = divergences
+        if divergences:
+            payload["alerts"].append(
+                f"Stage-1 Alt-A staging and production caches disagree "
+                f"on {len(divergences)} input hash(es); one of them is "
+                "built on a stale game corpus. Trigger the daily refresh "
+                "to rebuild both against the current data/games/."
+            )
+
+    return payload
+
+
+def _promotion_lag_health(
+    *,
+    project_root: Path = PROJECT_DIR,
+    levers: Sequence[Tuple[str, str]] = PROMOTION_LAG_LEVERS,
+    session_roots: Sequence[str] = PROMOTION_LAG_SESSION_ROOTS,
+    pending_hours_warn: float = PROMOTION_LAG_PENDING_HOURS_WARN,
+) -> Dict[str, Any]:
+    """Active #15 (2026-05-19): promotion-lag tracker.
+
+    Answers the operator question "is my Stage-2 promote in effect
+    yet?" without requiring them to inspect cache mtimes manually.
+
+    For each of the 5 promote.py levers (stage1, stage2, stage3_v2,
+    stake_scaling, gate_threshold) compares the lever's cache /
+    overrides-file mtime against the most recent engine-boot
+    timestamp (proxied by first-bet `placed_at` from the latest
+    session file across paper + live trading dirs).
+
+    Per-lever verdicts:
+      - `effective_in_runtime`: cache mtime <= last engine boot, so
+        the engine already loaded this version. Promote is live.
+      - `pending_next_session_boot`: cache mtime > last engine boot,
+        so the next engine restart will pick it up. Lag clock
+        starts at cache mtime; the alert fires once lag exceeds
+        `pending_hours_warn` (default 24h).
+      - `cache_missing`: the lever's cache file does not exist.
+        First-time promotes for stage1/stage2/stage3_v2 land here
+        until the operator does the initial promote.
+      - `no_session_history`: no session files found under either
+        trading root. Fresh install / first-day operator. Cannot
+        evaluate effect-time -- no Sentinel alert.
+
+    Mirrors alerts to top-level Notes with prefix `Promotion-lag:`.
+    Fail-open throughout: any helper exception treats the lever as
+    `check_error` and continues; the daily review never blocks on a
+    lag-check failure.
+    """
+    payload: Dict[str, Any] = {
+        "alerts": [],
+        "thresholds": {
+            "pending_hours_warn": pending_hours_warn,
+        },
+        "last_engine_boot": None,
+        "levers": {},
+    }
+
+    boot_info = _latest_session_start_utc(
+        project_root=project_root, session_roots=session_roots,
+    )
+    if boot_info is None:
+        payload["last_engine_boot"] = {
+            "session_file": None,
+            "epoch": None,
+            "iso": None,
+            "status": "no_session_history",
+        }
+        for lever_name, cache_rel in levers:
+            cache_path = project_root / cache_rel
+            payload["levers"][lever_name] = {
+                "lever": lever_name,
+                "cache_path": cache_rel,
+                "cache_exists": cache_path.exists(),
+                "status": "no_session_history",
+            }
+        return payload
+
+    session_file, boot_epoch, boot_iso = boot_info
+    payload["last_engine_boot"] = {
+        "session_file": session_file,
+        "epoch": boot_epoch,
+        "iso": boot_iso,
+        "status": "ok",
+    }
+
+    now_epoch = datetime.now(timezone.utc).timestamp()
+    for lever_name, cache_rel in levers:
+        cache_path = project_root / cache_rel
+        info: Dict[str, Any] = {
+            "lever": lever_name,
+            "cache_path": cache_rel,
+            "cache_exists": cache_path.exists(),
+        }
+        if not cache_path.exists():
+            info["status"] = "cache_missing"
+            payload["levers"][lever_name] = info
+            continue
+        try:
+            cache_mtime_epoch = cache_path.stat().st_mtime
+        except OSError as exc:
+            info["status"] = "check_error"
+            info["error"] = repr(exc)
+            payload["levers"][lever_name] = info
+            continue
+        info["cache_mtime_epoch"] = cache_mtime_epoch
+        info["cache_mtime_iso"] = (
+            datetime.fromtimestamp(cache_mtime_epoch, tz=timezone.utc)
+            .isoformat().replace("+00:00", "Z")
+        )
+        # Compare: is cache newer than last engine boot?
+        if cache_mtime_epoch <= boot_epoch:
+            info["status"] = "effective_in_runtime"
+            # How long was the cache live before the engine picked it
+            # up? Negative-direction "lag" (cache existed first, then
+            # engine booted). Convenient: lag_hours is 0 when cache
+            # was promoted DURING the session (cache mtime ~= boot).
+            info["lag_hours"] = round(
+                max(0.0, boot_epoch - cache_mtime_epoch) / 3600.0, 2,
+            )
+        else:
+            info["status"] = "pending_next_session_boot"
+            # Pending lag: hours since the promote landed. The alert
+            # threshold tells us when "operator forgot to restart"
+            # becomes plausible.
+            lag_h = round((now_epoch - cache_mtime_epoch) / 3600.0, 2)
+            info["lag_hours"] = lag_h
+            if lag_h > pending_hours_warn:
+                payload["alerts"].append(
+                    f"{lever_name} promote landed "
+                    f"{info['cache_mtime_iso']} "
+                    f"({lag_h:.1f}h ago) but engine has not booted "
+                    f"since (last boot {boot_iso}). Restart the live "
+                    "engine to pick up the new cache; the promote is "
+                    "not yet in effect."
+                )
+        payload["levers"][lever_name] = info
+
+    return payload
+
+
+def _under_emission_health(
+    *,
+    session_date: str,
+    candidate_dir: Path = DEFAULT_CANDIDATE_DIR,
+) -> Dict[str, Any]:
+    """Phase A5 follow-up (2026-05-19): UNDER emission observability.
+
+    Reads the per-date candidate log and surfaces:
+      - coverage: UNDER emitted vs OVER FV-phase ticks
+      - decision breakdown: `shadow_under` (would-have-traded) vs
+        `gate_min_edge` / `gate_no_under_liquidity` skips
+      - price quality: mean UNDER FV / ask / edge + calibration
+        delta + FV histogram buckets
+      - 3-way status: not_emitting / no_liquidity / ok
+      - sample-size-gated alerts for coverage gap, suspiciously
+        loose UNDER gates, suspiciously tight UNDER gates
+
+    Mirrors alerts to top-level Notes with prefix `Under-coverage:`.
+
+    Fail-open: any helper exception surfaces a `check_error` status
+    and continues. Daily review never blocks on this block.
+    """
+    payload: Dict[str, Any] = {
+        "alerts": [],
+        "thresholds": {
+            "coverage_rate_low_warn": UNDER_COVERAGE_RATE_LOW_WARN,
+            "coverage_min_n_for_alert": UNDER_COVERAGE_MIN_N_FOR_ALERT,
+            "shadow_under_rate_high_warn": UNDER_SHADOW_UNDER_RATE_HIGH_WARN,
+            "shadow_under_min_n_for_alert_high": (
+                UNDER_SHADOW_UNDER_MIN_N_FOR_ALERT_HIGH
+            ),
+            "shadow_under_rate_low_warn": UNDER_SHADOW_UNDER_RATE_LOW_WARN,
+            "shadow_under_min_n_for_alert_low": (
+                UNDER_SHADOW_UNDER_MIN_N_FOR_ALERT_LOW
+            ),
+        },
+        "session_date": session_date,
+    }
+
+    candidate_path = candidate_dir / f"{session_date}_candidates.jsonl"
+    if not candidate_path.exists():
+        payload["status"] = "check_error"
+        payload["error"] = "candidate log not found"
+        payload["candidate_path"] = str(candidate_path)
+        return payload
+    payload["candidate_path"] = str(candidate_path)
+
+    try:
+        rows = _load_jsonl(candidate_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        payload["status"] = "check_error"
+        payload["error"] = repr(exc)
+        return payload
+
+    over_fv_count = 0
+    under_rows: List[Dict[str, Any]] = []
+    for row in rows:
+        side = str(row.get("side") or "").strip().lower()
+        if side == "under":
+            under_rows.append(row)
+            continue
+        # Count OVER rows that reached the FV phase. `fair_value`
+        # populated is the cleanest proxy -- the FV phase always
+        # populates it. Empty / None means OVER skipped before FV.
+        if row.get("fair_value") is not None:
+            over_fv_count += 1
+
+    under_emitted = len(under_rows)
+    payload["over_post_fv_count"] = over_fv_count
+    payload["under_emitted_count"] = under_emitted
+
+    if under_emitted == 0:
+        # No UNDER rows in today's session. Operator did not pass
+        # `--under-emission-mode shadow`. Surface but don't alert.
+        payload["status"] = "not_emitting"
+        payload["coverage_rate"] = None
+        return payload
+
+    coverage_rate = (
+        under_emitted / over_fv_count if over_fv_count > 0 else None
+    )
+    payload["coverage_rate"] = (
+        round(coverage_rate, 4) if coverage_rate is not None else None
+    )
+
+    # Decision breakdown
+    n_shadow_under = 0
+    n_gate_min_edge = 0
+    n_gate_no_liq = 0
+    n_other_skip = 0
+    for r in under_rows:
+        decision = str(r.get("decision") or "").strip().lower()
+        reason = str(r.get("decision_reason") or "").strip().lower()
+        if decision == "shadow_under":
+            n_shadow_under += 1
+        elif reason == "gate_no_under_liquidity":
+            n_gate_no_liq += 1
+        elif reason == "gate_min_edge":
+            n_gate_min_edge += 1
+        else:
+            n_other_skip += 1
+    payload["decision_breakdown"] = {
+        "shadow_under": n_shadow_under,
+        "gate_min_edge": n_gate_min_edge,
+        "gate_no_under_liquidity": n_gate_no_liq,
+        "other_skip": n_other_skip,
+    }
+    payload["shadow_under_rate"] = (
+        round(n_shadow_under / under_emitted, 4)
+        if under_emitted else None
+    )
+    payload["liquidity_skip_rate"] = (
+        round(n_gate_no_liq / under_emitted, 4)
+        if under_emitted else None
+    )
+
+    # Pair-availability rate from emitted rows that carry the flag
+    under_pair_available_count = sum(
+        1 for r in under_rows if bool(r.get("under_pair_available"))
+    )
+    payload["under_pair_available_rate"] = (
+        round(under_pair_available_count / under_emitted, 4)
+        if under_emitted else None
+    )
+
+    # 3-way status decision
+    if (
+        n_gate_no_liq == under_emitted
+        and under_emitted > 0
+    ):
+        payload["status"] = "no_liquidity"
+    else:
+        payload["status"] = "ok"
+
+    # Price quality (only over rows with valid numeric FV / ask)
+    fvs: List[float] = []
+    fvs_raw: List[float] = []
+    asks: List[float] = []
+    edges: List[float] = []
+    bucket_counts = {label: 0 for label, _, _ in UNDER_FV_BUCKETS}
+    for r in under_rows:
+        fv = r.get("fair_value")
+        ask = r.get("entry_ask")
+        edge = r.get("edge")
+        fv_raw = r.get("fair_value_raw")
+        if isinstance(fv, (int, float)):
+            fvs.append(float(fv))
+            for label, low, high in UNDER_FV_BUCKETS:
+                if low <= float(fv) < high or (
+                    high == 1.00 and float(fv) <= 1.00 and float(fv) >= low
+                ):
+                    bucket_counts[label] += 1
+                    break
+        if isinstance(fv_raw, (int, float)):
+            fvs_raw.append(float(fv_raw))
+        if isinstance(ask, (int, float)):
+            asks.append(float(ask))
+        if isinstance(edge, (int, float)):
+            edges.append(float(edge))
+
+    def _mean(xs: List[float]) -> Optional[float]:
+        return round(sum(xs) / len(xs), 4) if xs else None
+
+    payload["price_quality"] = {
+        "mean_under_fv": _mean(fvs),
+        "mean_under_fv_raw": _mean(fvs_raw),
+        "mean_under_ask": _mean(asks),
+        "mean_under_edge": _mean(edges),
+        "mean_under_calibration_delta": (
+            round(
+                (sum(fvs) / len(fvs)) - (sum(fvs_raw) / len(fvs_raw)),
+                4,
+            )
+            if fvs and fvs_raw and len(fvs) == len(fvs_raw)
+            else None
+        ),
+        "n_under_with_fv": len(fvs),
+        "n_under_with_ask": len(asks),
+        "fv_buckets": bucket_counts,
+    }
+
+    # Sample-size-gated alerts (only when status == ok)
+    if payload["status"] == "ok":
+        if (
+            coverage_rate is not None
+            and coverage_rate < UNDER_COVERAGE_RATE_LOW_WARN
+            and under_emitted >= UNDER_COVERAGE_MIN_N_FOR_ALERT
+        ):
+            payload["alerts"].append(
+                f"UNDER coverage rate {coverage_rate:.0%} is below "
+                f"{UNDER_COVERAGE_RATE_LOW_WARN:.0%} ({under_emitted} "
+                f"UNDER rows vs {over_fv_count} OVER FV-phase ticks). "
+                "Either UNDER side has thin book liquidity OR the "
+                "_maybe_emit_under_candidate helper is skipping more "
+                "than expected. Inspect candidate rows for missing "
+                "under_best_ask."
+            )
+        shadow_rate = payload["shadow_under_rate"] or 0.0
+        if (
+            shadow_rate > UNDER_SHADOW_UNDER_RATE_HIGH_WARN
+            and under_emitted >= UNDER_SHADOW_UNDER_MIN_N_FOR_ALERT_HIGH
+        ):
+            payload["alerts"].append(
+                f"`shadow_under` rate {shadow_rate:.0%} is above "
+                f"{UNDER_SHADOW_UNDER_RATE_HIGH_WARN:.0%} (n="
+                f"{under_emitted}). Either UNDER has genuine edge "
+                "OR the OVER-borrowed min_edge threshold is too "
+                "loose for UNDER price dynamics. Read the per-bet "
+                "detail before tuning UNDER-specific min_edge."
+            )
+        if (
+            shadow_rate < UNDER_SHADOW_UNDER_RATE_LOW_WARN
+            and under_emitted >= UNDER_SHADOW_UNDER_MIN_N_FOR_ALERT_LOW
+        ):
+            payload["alerts"].append(
+                f"`shadow_under` rate {shadow_rate:.1%} is "
+                f"suspiciously low (n={under_emitted}). The OVER "
+                "edge_threshold (default 0.15) is likely wrong for "
+                "UNDER's price dynamics; consider tuning UNDER-"
+                "specific min_edge from accumulated shadow data."
+            )
+
+    return payload
+
+
+def _collect_under_settled_rows(
+    *,
+    session_date: str,
+    candidate_dir: Path,
+    stake_usdc: float,
+) -> Dict[str, Any]:
+    """Per-date helper: load shadow_under candidates + match outcomes
+    + compute won/profit per row.
+
+    Returns a dict shared by both the per-day surface and the
+    trailing-7d aggregate. None of the alert/cohort logic lives here
+    -- this is just data collection.
+
+    Status branches:
+      - `check_error`: file read failure
+      - `no_shadow_under_candidates`: 0 shadow_under rows
+      - `no_settled`: shadow_under rows exist but 0 settled (no
+        matching outcomes)
+      - `ok`: at least 1 settled row
+    """
+    out: Dict[str, Any] = {
+        "session_date": session_date,
+        "settled_rows": [],
+        "n_shadow_under_candidates": 0,
+        "n_missing_outcome": 0,
+        "n_missing_ask": 0,
+    }
+    candidate_path = candidate_dir / f"{session_date}_candidates.jsonl"
+    outcomes_path = candidate_dir / f"{session_date}_outcomes.jsonl"
+    out["candidate_path"] = str(candidate_path)
+    out["outcomes_path"] = str(outcomes_path)
+
+    if not candidate_path.exists():
+        out["status"] = "check_error"
+        out["error"] = "candidate log not found"
+        return out
+    try:
+        candidates = _load_jsonl(candidate_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        out["status"] = "check_error"
+        out["error"] = f"candidates load: {exc!r}"
+        return out
+
+    shadow_under = [
+        r for r in candidates
+        if str(r.get("decision") or "") == "shadow_under"
+        and str(r.get("side") or "") == "under"
+    ]
+    out["n_shadow_under_candidates"] = len(shadow_under)
+    if not shadow_under:
+        out["status"] = "no_shadow_under_candidates"
+        return out
+
+    outcomes: List[Dict[str, Any]] = []
+    if outcomes_path.exists():
+        try:
+            outcomes = _load_jsonl(outcomes_path)
+        except (OSError, json.JSONDecodeError):
+            outcomes = []
+    final_total_by_key: Dict[Tuple[int, str], int] = {}
+    for o in outcomes:
+        gpk = o.get("game_pk")
+        ln = o.get("line")
+        tot = o.get("final_total")
+        if isinstance(gpk, int) and ln is not None and isinstance(tot, int):
+            final_total_by_key[(int(gpk), str(ln))] = int(tot)
+
+    settled_rows: List[Dict[str, Any]] = []
+    n_missing_outcome = 0
+    n_missing_ask = 0
+    for r in shadow_under:
+        gpk = r.get("game_pk")
+        ln = r.get("line")
+        if not isinstance(gpk, int) or ln is None:
+            n_missing_outcome += 1
+            continue
+        ft = final_total_by_key.get((int(gpk), str(ln)))
+        if ft is None:
+            n_missing_outcome += 1
+            continue
+        try:
+            line_val = float(ln)
+        except (TypeError, ValueError):
+            n_missing_outcome += 1
+            continue
+        ask_raw = r.get("entry_ask")
+        try:
+            ask = float(ask_raw)
+        except (TypeError, ValueError):
+            n_missing_ask += 1
+            continue
+        if not (0.0 < ask < 1.0):
+            n_missing_ask += 1
+            continue
+        # UNDER wins iff final_total < line (strict; .5 lines avoid pushes)
+        won = int(ft < line_val)
+        if won:
+            profit = stake_usdc * (1.0 / ask - 1.0)
+        else:
+            profit = -stake_usdc
+        settled_rows.append({
+            "session_date": session_date,
+            "candidate": r,
+            "final_total": ft,
+            "line": line_val,
+            "ask": ask,
+            "won": won,
+            "profit": profit,
+        })
+
+    out["settled_rows"] = settled_rows
+    out["n_missing_outcome"] = n_missing_outcome
+    out["n_missing_ask"] = n_missing_ask
+    out["status"] = "ok" if settled_rows else "no_settled"
+    return out
+
+
+def _aggregate_under_settled(
+    settled_rows: List[Dict[str, Any]],
+    *,
+    stake_usdc: float,
+) -> Dict[str, Any]:
+    """Aggregate metrics over a list of settled UNDER rows (per-day
+    or trailing). Returns the same shape regardless of input window
+    so per-day and trailing surfaces can be compared directly.
+    """
+    n = len(settled_rows)
+    if n == 0:
+        return {
+            "n": 0, "n_won": 0, "n_lost": 0, "win_rate": None,
+            "total_counterfactual_pnl": 0.0,
+            "total_counterfactual_stake": 0.0,
+            "counterfactual_roi": None,
+            "mean_under_ask": None, "mean_under_fv": None,
+        }
+    n_won = sum(1 for s in settled_rows if s["won"])
+    n_lost = n - n_won
+    total_pnl = sum(s["profit"] for s in settled_rows)
+    total_stake = n * stake_usdc
+    roi = total_pnl / total_stake if total_stake else None
+    mean_ask = sum(s["ask"] for s in settled_rows) / n
+    mean_fv = sum(
+        float(s["candidate"].get("fair_value") or 0.0)
+        for s in settled_rows
+    ) / n
+    return {
+        "n": n,
+        "n_won": n_won,
+        "n_lost": n_lost,
+        "win_rate": round(n_won / n, 4),
+        "total_counterfactual_pnl": round(total_pnl, 2),
+        "total_counterfactual_stake": round(total_stake, 2),
+        "counterfactual_roi": (
+            round(roi, 4) if roi is not None else None
+        ),
+        "mean_under_ask": round(mean_ask, 4),
+        "mean_under_fv": round(mean_fv, 4),
+    }
+
+
+def _under_settled_by_cohort(
+    settled_rows: List[Dict[str, Any]],
+    *,
+    stake_usdc: float,
+) -> Dict[str, Any]:
+    """5-dimensional cohort breakdown over settled UNDER rows.
+    Same dimensions as the shadow-override cohort breakdown so
+    cross-block comparison stays consistent."""
+    cohort_dims = [
+        ("edge_bucket",
+         lambda r: _cohort_edge_bucket(r["candidate"].get("edge"))),
+        ("inning_bucket",
+         lambda r: _cohort_inning_bucket(r["candidate"].get("inning"))),
+        ("line_bucket",
+         lambda r: _cohort_line_bucket(r["candidate"].get("line"))),
+        ("ask_bucket",
+         lambda r: _drift_ask_bucket(r["candidate"].get("entry_ask"))),
+        ("current_state_edge_bucket",
+         lambda r: _drift_current_state_edge_bucket(
+             r["candidate"].get("current_state_value_edge"),
+         )),
+    ]
+    by_cohort: Dict[str, Any] = {}
+    for dim_name, keyer in cohort_dims:
+        buckets: Dict[str, List[Dict[str, Any]]] = {}
+        for s in settled_rows:
+            try:
+                key = keyer(s)
+            except Exception:  # noqa: BLE001
+                key = "missing"
+            buckets.setdefault(key, []).append(s)
+        per_bucket: Dict[str, Any] = {}
+        for k in sorted(buckets.keys()):
+            grp = buckets[k]
+            n_b = len(grp)
+            n_won_b = sum(1 for s in grp if s["won"])
+            pnl_b = sum(s["profit"] for s in grp)
+            stake_b = n_b * stake_usdc
+            per_bucket[k] = {
+                "n": n_b,
+                "n_won": n_won_b,
+                "win_rate": round(n_won_b / n_b, 4) if n_b else None,
+                "counterfactual_pnl": round(pnl_b, 2),
+                "counterfactual_roi": (
+                    round(pnl_b / stake_b, 4) if stake_b else None
+                ),
+            }
+        by_cohort[dim_name] = per_bucket
+    return by_cohort
+
+
+def _under_outcomes_counterfactual_health(
+    *,
+    session_date: str,
+    candidate_dir: Path = DEFAULT_CANDIDATE_DIR,
+    stake_usdc: float = UNDER_OUTCOMES_DEFAULT_STAKE,
+    trailing_days: int = UNDER_OUTCOMES_TRAILING_DAYS,
+) -> Dict[str, Any]:
+    """Phase A5 follow-up #2 (2026-05-19): UNDER outcomes counterfactual.
+
+    For each `shadow_under` candidate (decision tag emitted by
+    `_maybe_emit_under_candidate` when UNDER gates pass), settles
+    against the game's final_total from the per-date outcomes log
+    and computes the counterfactual P&L the bot would have realized
+    if the UNDER bet had been placed at the UNDER ask.
+
+    UNDER win semantics: `final_total < line` (strictly less; MLB
+    OU lines end in .5 so no pushes are possible). Mirrors the
+    `expected_won_for_bet` helper in `verify_settlement_truth.py`.
+
+    Counterfactual P&L per settled candidate (mirrors paper-mode
+    OVER taker math):
+      - stake: configurable (default $10)
+      - payout if won: stake / entry_ask
+      - profit if won: payout - stake = stake * (1/entry_ask - 1)
+      - profit if lost: -stake
+
+    Per-cohort aggregates use the 5 dimensions (edge / inning /
+    line / ask / current_state_edge) consistent with the rest of
+    the daily review.
+
+    Two windows surfaced:
+      - **Per-day** (today's session): same alert thresholds as
+        before (n>=30, +/- 5% ROI). Mirrors via `Under-outcomes:`
+        Notes prefix.
+      - **Trailing-7d** (2026-05-19 follow-up): walks the prior 7
+        dates (today + previous 6), unions the settled rows, and
+        computes the same aggregate + per-cohort breakdown. Higher
+        min-n threshold (>= 50) because the trailing aggregate has
+        ~7x reach; we want stronger evidence before alerting.
+        Trailing alerts surface as `Under-outcomes: (7d) ...` so
+        the operator can distinguish window in the Notes block.
+
+    Mirrors via Notes prefix `Under-outcomes:`. Fail-open throughout.
+    """
+    payload: Dict[str, Any] = {
+        "session_date": session_date,
+        "stake_usdc": stake_usdc,
+        "alerts": [],
+        "thresholds": {
+            "profitable_roi_warn": UNDER_OUTCOMES_PROFITABLE_ROI_WARN,
+            "unprofitable_roi_warn": UNDER_OUTCOMES_UNPROFITABLE_ROI_WARN,
+            "min_n_for_alert": UNDER_OUTCOMES_MIN_N_FOR_ALERT,
+            "trailing_days": trailing_days,
+            "trailing_min_n_for_alert": UNDER_OUTCOMES_TRAILING_MIN_N_FOR_ALERT,
+        },
+    }
+
+    # --- Per-day window (existing surface) -----------------------------
+    today = _collect_under_settled_rows(
+        session_date=session_date,
+        candidate_dir=candidate_dir,
+        stake_usdc=stake_usdc,
+    )
+    payload["candidate_path"] = today.get("candidate_path")
+    payload["outcomes_path"] = today.get("outcomes_path")
+    payload["status"] = today["status"]
+    payload["n_shadow_under_candidates"] = today["n_shadow_under_candidates"]
+    payload["n_settled"] = len(today["settled_rows"])
+    payload["n_missing_outcome"] = today["n_missing_outcome"]
+    payload["n_missing_ask"] = today["n_missing_ask"]
+    if "error" in today:
+        payload["error"] = today["error"]
+
+    if today["status"] == "ok":
+        today_settled = today["settled_rows"]
+        payload["aggregate"] = _aggregate_under_settled(
+            today_settled, stake_usdc=stake_usdc,
+        )
+        payload["by_cohort"] = _under_settled_by_cohort(
+            today_settled, stake_usdc=stake_usdc,
+        )
+        agg = payload["aggregate"]
+        roi = agg.get("counterfactual_roi")
+        n = agg["n"]
+        if (
+            roi is not None
+            and n >= UNDER_OUTCOMES_MIN_N_FOR_ALERT
+        ):
+            pnl = agg["total_counterfactual_pnl"]
+            stake_tot = agg["total_counterfactual_stake"]
+            if roi >= UNDER_OUTCOMES_PROFITABLE_ROI_WARN:
+                payload["alerts"].append(
+                    f"UNDER candidates would have netted "
+                    f"{roi:+.1%} ROI on {n} settled "
+                    f"(${pnl:+,.2f} on ${stake_tot:,.2f} stake). "
+                    "If durable across the 7-day paper runway, consider "
+                    "the Phase B4 UNDER paper-bet validation milestone."
+                )
+            elif roi <= UNDER_OUTCOMES_UNPROFITABLE_ROI_WARN:
+                payload["alerts"].append(
+                    f"UNDER signal is loss-making at "
+                    f"{roi:+.1%} ROI on {n} settled "
+                    f"(${pnl:+,.2f}). Tune UNDER-specific gates "
+                    "(currently borrowed from OVER's min_edge) BEFORE "
+                    "any Phase B4 flip; the runtime would lose money in "
+                    "the current regime."
+                )
+
+    # --- Trailing-7d aggregate (2026-05-19 follow-up) -----------------
+    # Walk today + prior (trailing_days - 1) dates. Each per-date
+    # collection is independent; we union the settled_rows across
+    # them, then aggregate. Dates missing the candidate file are
+    # skipped silently -- common during the paper-mode runway
+    # before A5 emission was on.
+    try:
+        anchor_dt = datetime.strptime(session_date, "%Y-%m-%d")
+    except ValueError:
+        anchor_dt = None
+
+    trailing: Dict[str, Any] = {
+        "trailing_days": trailing_days,
+        "anchor_date": session_date,
+        "dates_with_data": [],
+        "dates_missing": [],
+        "n_dates_with_data": 0,
+        "n_dates_missing": 0,
+        "n_shadow_under_candidates_total": 0,
+        "n_settled_total": 0,
+        "n_missing_outcome_total": 0,
+        "n_missing_ask_total": 0,
+        "by_date": [],
+        "status": "no_session_history",
+    }
+
+    trailing_settled: List[Dict[str, Any]] = []
+    if anchor_dt is not None:
+        for offset in range(trailing_days):
+            dt = anchor_dt - timedelta(days=offset)
+            d_str = dt.strftime("%Y-%m-%d")
+            if d_str == session_date:
+                # Reuse today's collection to avoid double-loading.
+                day = today
+            else:
+                day = _collect_under_settled_rows(
+                    session_date=d_str,
+                    candidate_dir=candidate_dir,
+                    stake_usdc=stake_usdc,
+                )
+            if day["status"] == "check_error":
+                trailing["dates_missing"].append(d_str)
+                trailing["n_dates_missing"] += 1
+                continue
+            trailing["dates_with_data"].append(d_str)
+            trailing["n_dates_with_data"] += 1
+            trailing["n_shadow_under_candidates_total"] += (
+                day["n_shadow_under_candidates"]
+            )
+            trailing["n_missing_outcome_total"] += day["n_missing_outcome"]
+            trailing["n_missing_ask_total"] += day["n_missing_ask"]
+            day_settled = day["settled_rows"]
+            trailing_settled.extend(day_settled)
+            day_agg = _aggregate_under_settled(
+                day_settled, stake_usdc=stake_usdc,
+            )
+            trailing["by_date"].append({
+                "date": d_str,
+                "n_shadow_under": day["n_shadow_under_candidates"],
+                "n_settled": day_agg["n"],
+                "win_rate": day_agg["win_rate"],
+                "counterfactual_pnl": day_agg["total_counterfactual_pnl"],
+                "counterfactual_roi": day_agg["counterfactual_roi"],
+            })
+        trailing["by_date"].sort(key=lambda r: r["date"])
+        # Date range: earliest -> latest with data; empty when none.
+        if trailing["dates_with_data"]:
+            sorted_dates = sorted(trailing["dates_with_data"])
+            trailing["date_range"] = [sorted_dates[0], sorted_dates[-1]]
+
+    trailing["n_settled_total"] = len(trailing_settled)
+    if trailing_settled:
+        trailing["aggregate"] = _aggregate_under_settled(
+            trailing_settled, stake_usdc=stake_usdc,
+        )
+        trailing["by_cohort"] = _under_settled_by_cohort(
+            trailing_settled, stake_usdc=stake_usdc,
+        )
+        trailing["status"] = "ok"
+        # Trailing-7d alerts. Stricter min-n (>=50) than per-day
+        # because the trailing aggregate has ~7x reach -- we want
+        # stronger evidence before alerting.
+        agg = trailing["aggregate"]
+        roi = agg["counterfactual_roi"]
+        n = agg["n"]
+        if (
+            roi is not None
+            and n >= UNDER_OUTCOMES_TRAILING_MIN_N_FOR_ALERT
+        ):
+            pnl = agg["total_counterfactual_pnl"]
+            stake_tot = agg["total_counterfactual_stake"]
+            window_str = (
+                f"{trailing['date_range'][0]} -> {trailing['date_range'][1]}"
+                if trailing.get("date_range")
+                else f"trailing {trailing_days}d"
+            )
+            if roi >= UNDER_OUTCOMES_PROFITABLE_ROI_WARN:
+                payload["alerts"].append(
+                    f"(7d) trailing-{trailing_days}d UNDER counterfactual "
+                    f"{roi:+.1%} ROI on {n} settled across "
+                    f"{trailing['n_dates_with_data']} dates ({window_str}); "
+                    f"${pnl:+,.2f} on ${stake_tot:,.2f} stake. "
+                    f"Phase B4 paper-bet milestone progress: "
+                    f"{trailing['n_dates_with_data']}/60 sessions of "
+                    "UNDER signal data accumulated."
+                )
+            elif roi <= UNDER_OUTCOMES_UNPROFITABLE_ROI_WARN:
+                payload["alerts"].append(
+                    f"(7d) trailing-{trailing_days}d UNDER signal is "
+                    f"loss-making at {roi:+.1%} ROI on {n} settled "
+                    f"({window_str}); ${pnl:+,.2f}. The aggregate is "
+                    "more stable than the per-day view; tune UNDER-"
+                    "specific gates before any B4 flip."
+                )
+    elif anchor_dt is not None and trailing["n_dates_with_data"]:
+        # Have at least one date's data but no settled rows. Distinguish:
+        #   - shadow_under emitted but no outcomes -> `no_settled`
+        #   - 0 shadow_under candidates across the window -> mirrors
+        #     the per-day `no_shadow_under_candidates` status (A5 flag
+        #     wasn't on for any date in the window)
+        if trailing["n_shadow_under_candidates_total"] == 0:
+            trailing["status"] = "no_shadow_under_candidates"
+        else:
+            trailing["status"] = "no_settled"
+
+    payload["trailing_7d"] = trailing
+    return payload
+
+
+def _cross_artifact_consistency_health(
+    *,
+    project_root: Path = PROJECT_DIR,
+    artifact_specs: Sequence[Tuple[str, str]] = CROSS_ARTIFACT_CONSISTENCY_PATHS,
+) -> Dict[str, Any]:
+    """Active #16 v4 (2026-05-17): cross-artifact consistency check.
+
+    For each artifact in `artifact_specs`, reads its `lineage` block
+    and computes a per-input verdict against the current file on disk.
+    Surfaces two alert classes:
+
+      (1) Per-artifact stale: an artifact's recorded `input_hashes[X]`
+          differs from the current hash of file X. The artifact was
+          built against an older version of an upstream input that
+          has since been updated.
+
+      (2) Cross-artifact divergence: two artifacts share an input
+          path but recorded DIFFERENT hashes for it. One was built
+          before a refresh updated the input; the other after.
+          Surfaces which artifact carries the stale evidence.
+
+    Both classes mirror to Notes with prefix `Cross-artifact:`.
+    Artifacts without lineage (pre-V2) are tagged `no_lineage_pre_v2`
+    and skipped from consistency checks -- they're already surfaced
+    by `cache_lineage_freshness_health`. Missing artifacts (deleted
+    / never built) are tagged `missing` and skipped.
+
+    Fail-open: any helper exception treats the artifact as
+    'check_error' and skips it; the daily review never blocks on a
+    consistency-check failure.
+    """
+    payload: Dict[str, Any] = {
+        "alerts": [],
+        "artifacts": {},
+        "cross_artifact_divergences": [],
+    }
+
+    # Lazy import so callers that only want the lighter blocks don't
+    # pay the cost.
+    try:
+        from scripts.analysis.artifact_lineage import (  # noqa: WPS433
+            _read_lineage_from_path,
+            compare_input_hash,
+            CONSISTENCY_MATCH,
+            CONSISTENCY_STALE,
+        )
+    except ImportError:
+        try:
+            from artifact_lineage import (  # type: ignore[no-redef]
+                _read_lineage_from_path,
+                compare_input_hash,
+                CONSISTENCY_MATCH,
+                CONSISTENCY_STALE,
+            )
+        except ImportError:
+            payload["alerts"].append(
+                "artifact_lineage module unavailable; "
+                "cross-artifact consistency check skipped."
+            )
+            return payload
+
+    # First pass: read each artifact's lineage + compute per-input
+    # verdicts.
+    # `inputs_seen` maps input_path -> list of (artifact_label,
+    # recorded_hash, current_hash) so the second pass can find
+    # divergences.
+    inputs_seen: Dict[str, List[Tuple[str, str, Optional[str]]]] = {}
+
+    for label, rel_path in artifact_specs:
+        artifact_path = project_root / rel_path
+        info: Dict[str, Any] = {
+            "label": label,
+            "path": str(artifact_path),
+            "exists": artifact_path.exists(),
+            "status": "ok",
+            "inputs": [],
+        }
+        if not artifact_path.exists():
+            info["status"] = "missing"
+            payload["artifacts"][label] = info
+            continue
+        try:
+            lineage = _read_lineage_from_path(artifact_path)
+        except Exception as exc:  # noqa: BLE001
+            info["status"] = "check_error"
+            info["error"] = repr(exc)
+            payload["artifacts"][label] = info
+            continue
+        if lineage is None:
+            info["status"] = "no_lineage_pre_v2"
+            payload["artifacts"][label] = info
+            continue
+        input_hashes = lineage.get("input_hashes") or {}
+        for ip in input_hashes.keys():
+            try:
+                verdict = compare_input_hash(
+                    lineage, project_root / ip,
+                    project_root=project_root,
+                )
+            except Exception as exc:  # noqa: BLE001
+                verdict = {
+                    "input_path": ip,
+                    "status": "check_error",
+                    "recorded_hash": input_hashes.get(ip),
+                    "current_hash": None,
+                    "error": repr(exc),
+                }
+            info["inputs"].append(verdict)
+            recorded = verdict.get("recorded_hash")
+            current = verdict.get("current_hash")
+            if recorded is not None:
+                inputs_seen.setdefault(ip, []).append(
+                    (label, recorded, current),
+                )
+            # Per-artifact stale alert
+            if verdict.get("status") == CONSISTENCY_STALE:
+                payload["alerts"].append(
+                    f"{label} recorded hash for `{ip}` "
+                    f"({(recorded or '')[:30]}) does not match current "
+                    f"file hash ({(current or '')[:30]}). The artifact "
+                    "was built against an older version of this input; "
+                    "rerun the artifact's refresh step to bring it "
+                    "current."
+                )
+        payload["artifacts"][label] = info
+
+    # Second pass: cross-artifact divergence -- same input path,
+    # different recorded hashes.
+    for ip, entries in inputs_seen.items():
+        if len(entries) < 2:
+            continue
+        unique_recorded = {rec for (_, rec, _) in entries}
+        if len(unique_recorded) <= 1:
+            continue
+        # Divergence found. List the artifacts and which version each
+        # carries, ordered by artifact label.
+        per_hash: Dict[str, List[str]] = {}
+        for lbl, rec, _ in entries:
+            per_hash.setdefault(rec, []).append(lbl)
+        divergence = {
+            "input_path": ip,
+            "groups": [
+                {"recorded_hash": h, "artifacts": sorted(arts)}
+                for h, arts in per_hash.items()
+            ],
+        }
+        payload["cross_artifact_divergences"].append(divergence)
+        group_descs = []
+        for h, arts in per_hash.items():
+            group_descs.append(
+                f"[{', '.join(sorted(arts))}]={(h or '')[:20]}"
+            )
+        payload["alerts"].append(
+            f"cross-artifact divergence on `{ip}`: artifacts disagree "
+            f"on recorded hash -- {' vs '.join(group_descs)}. One "
+            "group was built before a refresh updated this input; "
+            "rebuild the older group's artifacts to align."
+        )
     return payload
 
 
@@ -3591,6 +5004,11 @@ def _build_notes(
     cache_lineage_freshness_health: Optional[Dict[str, Any]] = None,
     stage1_cell_loss_health: Optional[Dict[str, Any]] = None,
     stage1_shadow_override_health: Optional[Dict[str, Any]] = None,
+    cross_artifact_consistency_health: Optional[Dict[str, Any]] = None,
+    stage1_alt_a_staging_health: Optional[Dict[str, Any]] = None,
+    promotion_lag_health: Optional[Dict[str, Any]] = None,
+    under_emission_health: Optional[Dict[str, Any]] = None,
+    under_outcomes_counterfactual_health: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     notes: List[str] = []
     roi = bet_totals.get("roi")
@@ -3670,6 +5088,16 @@ def _build_notes(
         notes.append(f"Stage1-cell-loss: {alert}")
     for alert in (stage1_shadow_override_health or {}).get("alerts") or []:
         notes.append(f"Stage1-shadow: {alert}")
+    for alert in (cross_artifact_consistency_health or {}).get("alerts") or []:
+        notes.append(f"Cross-artifact: {alert}")
+    for alert in (stage1_alt_a_staging_health or {}).get("alerts") or []:
+        notes.append(f"Stage1-alt-a-staging: {alert}")
+    for alert in (promotion_lag_health or {}).get("alerts") or []:
+        notes.append(f"Promotion-lag: {alert}")
+    for alert in (under_emission_health or {}).get("alerts") or []:
+        notes.append(f"Under-coverage: {alert}")
+    for alert in (under_outcomes_counterfactual_health or {}).get("alerts") or []:
+        notes.append(f"Under-outcomes: {alert}")
     for alert in (reconciler_summary or {}).get("alerts") or []:
         notes.append(f"Reconciler watch: {alert}")
 
@@ -3819,6 +5247,35 @@ def build_report(
         report_path=DEFAULT_STAGE1_SHADOW_OVERRIDE_REPORT,
         session_date=session_date,
     )
+    # Active #16 v4 (2026-05-17): cross-artifact consistency check.
+    # Catches "calibrator built against Stage-1 sha X but production
+    # Stage-1 is sha Y" silent inconsistencies.
+    cross_artifact_consistency_health = _cross_artifact_consistency_health()
+    # Active #8 (2026-05-17): Stage-1 Alt-A staging cache existence
+    # + freshness + override-stats surface. Operator runs `promote.py
+    # stage1` to flip it into production after paper-mode validation.
+    stage1_alt_a_staging_health = _stage1_alt_a_staging_health()
+    # Active #15 (2026-05-19): per-lever "is my promote in effect?"
+    # status comparing each cache mtime against latest engine-boot
+    # proxy (first-bet placed_at of most-recent session file).
+    promotion_lag_health = _promotion_lag_health()
+    # Phase A5 follow-up (2026-05-19): UNDER emission observability.
+    # Surfaces coverage rate + decision breakdown + price quality of
+    # the new UNDER candidate emission so the operator can validate
+    # `--under-emission-mode shadow` is working before any UNDER
+    # paper-bet validation milestone.
+    under_emission_health = _under_emission_health(
+        session_date=session_date,
+        candidate_dir=candidate_dir,
+    )
+    # Phase A5 follow-up #2 (2026-05-19): UNDER outcomes counterfactual.
+    # Settles every shadow_under candidate against final_total +
+    # computes the counterfactual P&L the bot WOULD have realized.
+    # Drives the eventual Phase B4 paper-bet milestone decision.
+    under_outcomes_counterfactual_health = _under_outcomes_counterfactual_health(
+        session_date=session_date,
+        candidate_dir=candidate_dir,
+    )
     reconciler_summary = _reconciler_summary(session.get("bets") or [])
     notes = _build_notes(
         session_summary,
@@ -3843,6 +5300,11 @@ def build_report(
         cache_lineage_freshness_health,
         stage1_cell_loss_health,
         stage1_shadow_override_health,
+        cross_artifact_consistency_health,
+        stage1_alt_a_staging_health,
+        promotion_lag_health,
+        under_emission_health,
+        under_outcomes_counterfactual_health,
     )
     stake_usdc = _safe_float((session.get("params") or {}).get("stake"), 10.0)
     stage2_audit = _stage2_suppression_dollar_audit(
@@ -3889,6 +5351,13 @@ def build_report(
         "cache_lineage_freshness_health": cache_lineage_freshness_health,
         "stage1_cell_loss_health": stage1_cell_loss_health,
         "stage1_shadow_override_health": stage1_shadow_override_health,
+        "cross_artifact_consistency_health": cross_artifact_consistency_health,
+        "stage1_alt_a_staging_health": stage1_alt_a_staging_health,
+        "promotion_lag_health": promotion_lag_health,
+        "under_emission_health": under_emission_health,
+        "under_outcomes_counterfactual_health": (
+            under_outcomes_counterfactual_health
+        ),
         "concept_drift_health": concept_drift_health,
         "drift_in_drift_health": drift_in_drift_health,
         "daemon_readiness_health": daemon_readiness_health,

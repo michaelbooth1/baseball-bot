@@ -216,6 +216,183 @@ class BuildUnifiedSignalTableTests(unittest.TestCase):
         self.assertIn("edge", row, "edge alias missing from unified row")
         self.assertEqual(row["edge"], row["edge_at_ask"])
 
+    def test_build_master_rows_propagates_stage1_alt_a_shadow_fields(self) -> None:
+        """Active #8 (2026-05-19): the 6 Stage-1 Alt-A shadow fields the
+        runtime writes onto every score-event-family candidate MUST be
+        carried through into the unified signal master.
+
+        Caught during 2026-05-18 paper-trading audit: the training table
+        declared the columns but populated 0 rows because the
+        intermediate unified-signal builder dropped them. Without this
+        propagation the loss-attribution + shadow-override reports keep
+        recomputing Alt-A offline instead of reading the runtime
+        decision.
+        """
+        master_columns = bust._build_master_columns([1], 30)
+        session_rows = {
+            "bet-alt-a": {
+                "mode": "paper",
+                "session_date": "2026-05-18",
+                "session_path": "session.json",
+                "session_params": {},
+                "bet": {
+                    "bet_id": "bet-alt-a",
+                    "placed_at": "2026-05-18T17:00:00Z",
+                    "game_pk": 823549,
+                    "away_abbrev": "TOR",
+                    "home_abbrev": "NYY",
+                    "line": "7.5",
+                    "side": "over",
+                    "inning": 4,
+                    "inning_state": "Top",
+                    "outs": 2,
+                    "runners_on": 0,
+                    "away_score_before": 3,
+                    "home_score_before": 1,
+                    "inferred_runs": 1,
+                    "entry_ask": 0.75,
+                    "decision_ask": 0.75,
+                    "fair_value": 0.922,
+                    "base_fair_value": 0.912,
+                    "edge": 0.17,
+                    "limit_price": 0.74,
+                    "stake": 10.0,
+                    "order_status": "filled",
+                    "settled": True,
+                    "won": True,
+                    "profit": 3.33,
+                    "payout": 13.33,
+                    "final_away": 6,
+                    "final_home": 7,
+                    "final_total": 13,
+                    "state_value_strategy": "score_event_transition",
+                    # Note: session_bet does NOT carry Alt-A fields by
+                    # design; only the candidate row does. The schema
+                    # extractor must pull them from candidate_row.
+                },
+            }
+        }
+        candidate_rows = {
+            "bet-alt-a": {
+                "bet_id": "bet-alt-a",
+                "decision": "trade",
+                "inferred_state_base_empirical": 0.786,
+                "inferred_state_base_poisson": 0.912,
+                # The 6 Alt-A fields that must propagate:
+                "stage1_shadow_empirical_mode": "shadow",
+                "fair_value_alt_empirical": 0.821,
+                "fair_value_alt_empirical_raw": 0.821,
+                "fair_value_alt_empirical_delta_vs_prod": -0.101,
+                "fair_value_alt_empirical_used_empirical": True,
+                "fair_value_alt_empirical_p0": 0.786,
+            }
+        }
+        rows = bust.build_master_rows_for_mode(
+            mode="paper",
+            session_rows=session_rows,
+            ledger_events={},
+            captures={},
+            candidate_rows=candidate_rows,
+            min_date=None,
+            max_date=None,
+            horizons=[1],
+            fill_window_secs=30,
+            master_columns=master_columns,
+            warnings=[],
+            hard_errors=[],
+        )
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["stage1_shadow_empirical_mode"], "shadow")
+        self.assertAlmostEqual(row["fair_value_alt_empirical"], 0.821)
+        self.assertAlmostEqual(row["fair_value_alt_empirical_raw"], 0.821)
+        self.assertAlmostEqual(
+            row["fair_value_alt_empirical_delta_vs_prod"], -0.101,
+        )
+        self.assertTrue(row["fair_value_alt_empirical_used_empirical"])
+        self.assertAlmostEqual(row["fair_value_alt_empirical_p0"], 0.786)
+        # Schema sanity: the 6 fields are declared in master_columns
+        # too, so the CSV writer's DictWriter(extrasaction="ignore")
+        # passes them through to disk.
+        for field in (
+            "stage1_shadow_empirical_mode",
+            "fair_value_alt_empirical",
+            "fair_value_alt_empirical_raw",
+            "fair_value_alt_empirical_delta_vs_prod",
+            "fair_value_alt_empirical_used_empirical",
+            "fair_value_alt_empirical_p0",
+        ):
+            self.assertIn(field, master_columns)
+
+    def test_build_master_rows_alt_a_fields_default_to_none_when_off(self) -> None:
+        """When stage1_shadow_empirical_mode is 'off' (or absent from
+        the candidate row), the alt fields propagate as None / False
+        without raising. Mirrors the runtime's behavior on rows
+        emitted before Alt-A shadow was active (pre-2026-05-17) or
+        when the operator didn't pass --stage1-shadow-empirical-mode
+        shadow.
+        """
+        master_columns = bust._build_master_columns([1], 30)
+        session_rows = {
+            "bet-no-alt-a": {
+                "mode": "paper",
+                "session_date": "2026-05-10",
+                "session_path": "session.json",
+                "session_params": {},
+                "bet": {
+                    "bet_id": "bet-no-alt-a",
+                    "placed_at": "2026-05-10T17:00:00Z",
+                    "game_pk": 1,
+                    "away_abbrev": "AAA",
+                    "home_abbrev": "BBB",
+                    "line": "8.5",
+                    "side": "over",
+                    "inning": 6,
+                    "inning_state": "Top",
+                    "outs": 1,
+                    "runners_on": 0,
+                    "away_score_before": 4,
+                    "home_score_before": 3,
+                    "inferred_runs": 1,
+                    "entry_ask": 0.65,
+                    "decision_ask": 0.65,
+                    "fair_value": 0.80,
+                    "base_fair_value": 0.78,
+                    "edge": 0.15,
+                    "stake": 10.0,
+                },
+            }
+        }
+        # Pre-Alt-A candidate row: no shadow fields at all.
+        candidate_rows = {
+            "bet-no-alt-a": {
+                "bet_id": "bet-no-alt-a",
+                "decision": "trade",
+            }
+        }
+        rows = bust.build_master_rows_for_mode(
+            mode="paper",
+            session_rows=session_rows,
+            ledger_events={},
+            captures={},
+            candidate_rows=candidate_rows,
+            min_date=None,
+            max_date=None,
+            horizons=[1],
+            fill_window_secs=30,
+            master_columns=master_columns,
+            warnings=[],
+            hard_errors=[],
+        )
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertIsNone(row["stage1_shadow_empirical_mode"])
+        self.assertIsNone(row["fair_value_alt_empirical"])
+        self.assertIsNone(row["fair_value_alt_empirical_p0"])
+        # _safe_bool(None) returns None, not False. Downstream
+        # consumers must treat None as "no shadow data" not "False".
+        self.assertIsNone(row["fair_value_alt_empirical_used_empirical"])
+
     def test_compute_phase2_capture_features(self) -> None:
         cap = self._capture()
         feats = bust._compute_phase2_capture_features(

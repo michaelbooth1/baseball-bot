@@ -180,6 +180,19 @@ BASE_MASTER_COLUMNS = [
     "inferred_state_used_fallback",
     "inferred_state_base_source",
     *INFERENCE_PANEL_COLUMNS,
+    # Active #8 (2026-05-17): Stage-1 Alt-A shadow fields populated at
+    # signal time by `signal_pipeline_gates_post_fv._attach_stage1_
+    # shadow_empirical_fields`. Logged on every score-event-family
+    # candidate so the shadow-override + loss-attribution reports can
+    # read runtime Alt-A (instead of recomputing offline). Wired into
+    # the schema 2026-05-19 to close the candidate->table propagation
+    # gap discovered during the 2026-05-18 paper-trading audit.
+    "stage1_shadow_empirical_mode",
+    "fair_value_alt_empirical",
+    "fair_value_alt_empirical_raw",
+    "fair_value_alt_empirical_delta_vs_prod",
+    "fair_value_alt_empirical_used_empirical",
+    "fair_value_alt_empirical_p0",
     "stage2_run_env_delta",
     "team_offense_delta",
     "edge_at_ask",

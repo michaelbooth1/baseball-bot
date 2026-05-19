@@ -1,6 +1,6 @@
 {
   "meta": {
-    "built": "2026-05-17T17:52:35.057128Z",
+    "built": "2026-05-19T12:59:52.049676Z",
     "sport": "mlb",
     "season_type": "regular",
     "game_types": [
@@ -42,6 +42,8 @@
       "season_weights_path": "",
       "season_weight_column": "weight",
       "season_weight_mode": "allocation",
+      "smoothing_mode": "poisson",
+      "min_empirical_n_for_override": 0,
       "out": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\cache\\mlb_ou_cache.staging.json"
     },
     "season_weighting": {
@@ -68,6 +70,27 @@
       "o95": "over 9.5",
       "o105": "over 10.5",
       "o115": "over 11.5"
+    },
+    "alt_a_smoothing": {
+      "enabled": false,
+      "mode": "poisson",
+      "min_empirical_n_for_override": 0,
+      "cells_total": 4298,
+      "cells_overridden": 0,
+      "cells_kept_poisson_low_n": 0,
+      "cells_kept_poisson_no_empirical": 0,
+      "cells_kept_poisson_invalid_empirical": 0,
+      "line_overrides": {
+        "po65": 0,
+        "po75": 0,
+        "po85": 0,
+        "po95": 0,
+        "po105": 0,
+        "po115": 0
+      },
+      "mean_abs_delta_logit": 0.0,
+      "mean_signed_delta": 0.0,
+      "n_line_deltas": 0
     }
   },
   "poisson_calibration": {
@@ -100428,6 +100451,38 @@
       "po105": 1.0,
       "o115": 1.0,
       "po115": 1.0
+    }
+  },
+  "lineage": {
+    "schema_version": 1,
+    "built_at_utc": "2026-05-19T12:59:54.045336Z",
+    "builder_path": "cache/build_mlb_ou_cache.py",
+    "git_sha": "112b2f82455a",
+    "git_branch": "main",
+    "git_dirty": true,
+    "input_hashes": {},
+    "input_dir_summaries": {
+      "data/games/regular": {
+        "n_files": 23979,
+        "min_mtime_utc": "2026-04-04T18:16:10.668634Z",
+        "max_mtime_utc": "2026-05-19T12:52:15.457883Z"
+      }
+    },
+    "python_version": "3.11.0",
+    "cli_args_summary": {
+      "season_type": "regular",
+      "game_types": "R",
+      "lines": "6.5,7.5,8.5,9.5,10.5,11.5",
+      "min_games": 40,
+      "max_combined": 20,
+      "extras_bucket": 10,
+      "history_start_date": "",
+      "history_end_date": "",
+      "season_weighting_path": "",
+      "smoothing_mode": "poisson",
+      "min_empirical_n_for_override": 0,
+      "max_files": 0,
+      "out": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\cache\\mlb_ou_cache.staging.json"
     }
   }
 }

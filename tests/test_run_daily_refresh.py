@@ -245,6 +245,120 @@ def test_stage1_cache_can_be_skipped(tmp_path):
     assert "stage1_ou_cache" not in [s.name for s in rdr.build_refresh_steps(config, [], None)]
 
 
+def test_stage1_ou_cache_alt_a_is_present_with_correct_flags(tmp_path):
+    """Active #8 (2026-05-17): stage1_ou_cache_alt_a refresh step
+    rebuilds Stage-1 in Alt-A mode to the staging path. Same history
+    window as the production step. NEVER auto-promoted (no companion
+    inline promote step)."""
+    sessions = tmp_path / "sessions"
+    _touch(sessions / "2026-05-05_session.json")
+    config = rdr.RefreshConfig(
+        active_date="2026-05-06",
+        sessions_dir=sessions,
+        candidate_dir=tmp_path / "candidates",
+        log_dir=tmp_path / "logs",
+        output_root=tmp_path / "out",
+        refresh_daily_reviews=False,
+        run_walk_forward=False,
+    )
+    steps = rdr.build_refresh_steps(config, ["2026-05-05"], "2026-05-05")
+    alt_a_steps = [s for s in steps if s.name == "stage1_ou_cache_alt_a"]
+    assert len(alt_a_steps) == 1
+    step = alt_a_steps[0]
+    # Same history window as the production builder.
+    assert step.command[step.command.index("--min-season") + 1] == "2021"
+    assert step.command[step.command.index("--max-season") + 1] == "2025"
+    # Alt-A specific flag.
+    assert (
+        step.command[step.command.index("--smoothing-mode") + 1]
+        == "empirical_when_available"
+    )
+    # Separate output path so production cache is never overwritten.
+    out_idx = step.command.index("--out")
+    assert "mlb_ou_cache_alt_a.staging.json" in step.command[out_idx + 1]
+    assert step.staleness_check is not None
+    # Same input root as production -- both should rebuild together
+    # when game data changes.
+    roots = step.staleness_check.input_dir_mtime_roots
+    assert any("games" in str(r) and "regular" in str(r) for r in roots)
+    # No "stage1_alt_a_cache_promote" inline step -- never auto-promotes.
+    names = [s.name for s in steps]
+    assert "stage1_alt_a_cache_promote" not in names
+
+
+def test_unified_signals_and_training_table_use_mode_both(tmp_path):
+    """2026-05-19 paper-mode propagation fix.
+
+    Prior to this fix the refresh hardcoded `--mode live` on both
+    `unified_signals` and `signal_training_table` steps, which meant
+    paper sessions never reached loss-attribution or shadow-override
+    reports. The user IS in paper-mode this week to validate Alt-A
+    -- starving the analysis pipeline of paper data defeated the
+    runway's purpose.
+
+    Other fill-aware steps (clv_report, execution_diagnostics,
+    ev_policy_backtest, queue_aware_execution_replay) stay
+    `--mode live` intentionally because they read realized_executed
+    / actual_fill_price, which paper mode's 100% taker assumption
+    distorts.
+    """
+    sessions = tmp_path / "sessions"
+    _touch(sessions / "2026-05-05_session.json")
+    config = rdr.RefreshConfig(
+        active_date="2026-05-06",
+        sessions_dir=sessions,
+        candidate_dir=tmp_path / "candidates",
+        log_dir=tmp_path / "logs",
+        output_root=tmp_path / "out",
+        refresh_daily_reviews=False,
+        run_walk_forward=False,
+    )
+    steps = {s.name: s for s in rdr.build_refresh_steps(
+        config, ["2026-05-05"], "2026-05-05",
+    )}
+    # The two steps that feed loss-attribution + shadow-override must
+    # be both-mode.
+    for step_name in ("unified_signals", "signal_training_table"):
+        assert step_name in steps, f"missing step {step_name}"
+        cmd = steps[step_name].command
+        mode_idx = cmd.index("--mode")
+        assert cmd[mode_idx + 1] == "both", (
+            f"{step_name} must run --mode both for paper bets to "
+            f"reach downstream analysis; got {cmd[mode_idx + 1]}"
+        )
+    # Fill-aware steps stay live-only. Sanity-check the two that
+    # accept `--mode` to guard against an over-eager future refactor
+    # that batch-converts everything to both. (ev_policy_backtest
+    # accepts no --mode and is mode-agnostic; queue_aware_execution_
+    # replay is gated by other config flags.)
+    for step_name in ("clv_report", "execution_diagnostics"):
+        if step_name not in steps:
+            continue
+        cmd = steps[step_name].command
+        if "--mode" not in cmd:
+            continue
+        mode_idx = cmd.index("--mode")
+        assert cmd[mode_idx + 1] == "live", (
+            f"{step_name} reads fill behavior; must stay --mode live "
+            f"to avoid paper's 100% taker assumption polluting the "
+            f"metric. Got {cmd[mode_idx + 1]}"
+        )
+
+
+def test_stage1_ou_cache_alt_a_skipped_when_stage1_cache_disabled(tmp_path):
+    """Alt-A step is gated by the same `refresh_stage1_cache` config
+    flag as the production stage1 step -- they're paired."""
+    config = _minimal_config(
+        tmp_path,
+        refresh_stage1_cache=False,
+        refresh_weather_cache=False,
+        refresh_daily_reviews=False,
+        run_walk_forward=False,
+    )
+    names = [s.name for s in rdr.build_refresh_steps(config, [], None)]
+    assert "stage1_ou_cache_alt_a" not in names
+
+
 def test_preflight_artifacts_warns_when_park_hr_factors_missing(tmp_path):
     """Missing park_hr_factors.json should be a warning (Stage-2 hr_factor
     family degrades to UNKNOWN_BUCKET), not a hard failure."""

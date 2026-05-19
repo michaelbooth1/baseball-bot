@@ -158,6 +158,14 @@ class ShadowBet:
     alt_b_kept: bool                # False = would have been blocked
     inning: Optional[int]
     line: Optional[float]
+    # Cohort breakdown fields (2026-05-19 follow-up). Carried through
+    # so the cohort-level aggregate can answer "WHERE does Alt A
+    # help most?" rather than just the aggregate "by how much?"
+    # number. All Optional -- rows that lack a field land in the
+    # `missing` bucket of the corresponding cohort dimension.
+    edge_at_ask: Optional[float]
+    decision_ask: Optional[float]
+    current_state_value_edge: Optional[float]
 
 
 def project_bet(row: Dict[str, Any]) -> Optional[ShadowBet]:
@@ -235,6 +243,20 @@ def project_bet(row: Dict[str, Any]) -> Optional[ShadowBet]:
         alt_b_kept=alt_b_kept,
         inning=_safe_int(row.get("inning")),
         line=_safe_float(row.get("line")),
+        # Prefer edge_at_ask (the canonical training-table column);
+        # fall back to plain `edge` for forward-compat with older rows
+        # that only carry the unsuffixed alias.
+        edge_at_ask=_safe_float(
+            row.get("edge_at_ask") if row.get("edge_at_ask") is not None
+            else row.get("edge")
+        ),
+        decision_ask=_safe_float(
+            row.get("decision_ask") if row.get("decision_ask") is not None
+            else row.get("entry_ask")
+        ),
+        current_state_value_edge=_safe_float(
+            row.get("current_state_value_edge")
+        ),
     )
 
 
@@ -430,6 +452,253 @@ def aggregate_window(
     return payload
 
 
+# ---------------------------------------------------------------------------
+# Cohort breakdown (2026-05-19 follow-up)
+#
+# Aggregate Alt A's bias-reduction by cohort so the operator can see
+# WHERE Alt A helps most. Lets the eventual Active #8 ENFORCE flip be
+# scoped to specific cohorts (e.g. "enforce Alt A only on edge>=0.22
+# bets") instead of all-or-nothing global.
+# ---------------------------------------------------------------------------
+
+# Match the cohort buckets used by `cohort_roi_health` /
+# `cohort_calibration_health` in build_daily_human_review_report.py
+# so cross-block comparison stays consistent.
+
+def _edge_bucket(value: Optional[float]) -> str:
+    if value is None:
+        return "missing"
+    if value < 0.15:
+        return "<0.15"
+    if value < 0.18:
+        return "0.15-0.18"
+    if value < 0.22:
+        return "0.18-0.22"
+    return ">=0.22"
+
+
+def _inning_bucket(value: Optional[int]) -> str:
+    if value is None:
+        return "missing"
+    if value <= 5:
+        return "<=5"
+    if value == 6:
+        return "6"
+    if value == 7:
+        return "7"
+    return ">=8"
+
+
+def _line_bucket(value: Optional[float]) -> str:
+    if value is None:
+        return "missing"
+    if value <= 7.5:
+        return "<=7.5"
+    if value <= 8.5:
+        return "8.5"
+    if value <= 9.5:
+        return "9.5"
+    return ">=10.5"
+
+
+def _ask_bucket(value: Optional[float]) -> str:
+    if value is None:
+        return "missing"
+    if value < 0.55:
+        return "<0.55"
+    if value < 0.70:
+        return "0.55-0.70"
+    if value < 0.85:
+        return "0.70-0.85"
+    return ">=0.85"
+
+
+def _current_state_edge_bucket(value: Optional[float]) -> str:
+    if value is None:
+        return "missing"
+    if value < 0.00:
+        return "<0.00"
+    if value < 0.03:
+        return "0.00-0.03"
+    if value < 0.06:
+        return "0.03-0.06"
+    return ">=0.06"
+
+
+# Each (label, getter, bucketer). `getter` extracts the cohort value
+# from a ShadowBet; `bucketer` maps it to a string bucket key.
+COHORT_DIMENSIONS: List[Tuple[str, Any, Any]] = [
+    ("edge_bucket",
+     lambda b: b.edge_at_ask, _edge_bucket),
+    ("inning_bucket",
+     lambda b: b.inning, _inning_bucket),
+    ("line_bucket",
+     lambda b: b.line, _line_bucket),
+    ("ask_bucket",
+     lambda b: b.decision_ask, _ask_bucket),
+    ("current_state_edge_bucket",
+     lambda b: b.current_state_value_edge, _current_state_edge_bucket),
+]
+
+# Below this sample size the per-cohort bias-delta is dominated by
+# noise. 5 chosen as the minimum where mean(won) starts to be
+# meaningful at all; the daily-review surface raises this to 10 for
+# "promote on cohort" recommendations.
+COHORT_MIN_N_FOR_AGGREGATE = 5
+
+
+def _aggregate_cohort(bets: Sequence[ShadowBet]) -> Dict[str, Any]:
+    """Per-cohort aggregate: production vs Alt A bias, plus Alt B
+    kept/blocked split. Smaller surface than `aggregate_window`
+    because cohorts are sliced thinly -- skip the source breakdown
+    and the recommendations subtree to keep the JSON readable.
+    """
+    n = len(bets)
+    if n == 0:
+        return {
+            "n_bets": 0,
+            "production": {"mean_p3": None, "mean_won": None, "bias": None},
+            "alt_a": {
+                "mean_p3": None, "bias": None,
+                "n_changed": 0, "coverage_rate": None,
+                "bias_delta_vs_prod_pp": None,
+            },
+            "alt_b": {
+                "n_blocked": 0, "n_kept": 0,
+                "kept_bias": None,
+                "counterfactual_profit_delta_usd": 0.0,
+            },
+        }
+    mean_won = _mean([float(b.won) for b in bets])
+    mean_p3_prod = _mean([b.p3_prod for b in bets])
+    mean_p3_alt_a = _mean([b.p3_alt_a for b in bets])
+    bias_prod = mean_p3_prod - mean_won
+    bias_alt_a = mean_p3_alt_a - mean_won
+    n_changed = sum(1 for b in bets if b.alt_a_changed)
+    # Signed delta: positive = bias moves toward 0 (Alt A helps).
+    # Mirrors the aggregate formula in `aggregate_window`.
+    if bias_prod > 0:
+        bias_delta_pp = (bias_prod - bias_alt_a) * 100
+    else:
+        bias_delta_pp = (bias_alt_a - bias_prod) * 100
+
+    blocked = [b for b in bets if not b.alt_b_kept]
+    kept = [b for b in bets if b.alt_b_kept]
+    n_blocked = len(blocked)
+    n_kept = len(kept)
+    if kept:
+        kept_mean_p3 = _mean([b.p3_prod for b in kept])
+        kept_mean_won = _mean([float(b.won) for b in kept])
+        kept_bias = kept_mean_p3 - kept_mean_won
+    else:
+        kept_bias = None
+    blocked_total_profit = sum(b.target_profit for b in blocked)
+    cf_delta = -blocked_total_profit if blocked else 0.0
+    total_profit = sum(b.target_profit for b in bets)
+
+    return {
+        "n_bets": n,
+        "production": {
+            "mean_p3": _round_or_none(mean_p3_prod, 4),
+            "mean_won": _round_or_none(mean_won, 4),
+            "bias": _round_or_none(bias_prod, 4),
+            "total_profit": round(total_profit, 2),
+        },
+        "alt_a": {
+            "mean_p3": _round_or_none(mean_p3_alt_a, 4),
+            "bias": _round_or_none(bias_alt_a, 4),
+            "n_changed": n_changed,
+            "coverage_rate": _round_or_none(
+                n_changed / n if n else None, 4,
+            ),
+            "bias_delta_vs_prod_pp": _round_or_none(bias_delta_pp, 2),
+        },
+        "alt_b": {
+            "n_blocked": n_blocked,
+            "n_kept": n_kept,
+            "kept_bias": _round_or_none(kept_bias, 4),
+            "counterfactual_profit_delta_usd": round(cf_delta, 2),
+        },
+    }
+
+
+def build_cohort_breakdown(
+    bets: Sequence[ShadowBet],
+    *,
+    min_n_per_cohort: int = COHORT_MIN_N_FOR_AGGREGATE,
+) -> Dict[str, Any]:
+    """Slice `bets` by each cohort dimension and aggregate per bucket.
+
+    Returns a dict keyed by dimension name; each dimension maps to a
+    dict of buckets -> per-cohort aggregate. Plus a `top_cohorts`
+    summary surfacing the cohorts where Alt A helps most, where it
+    REGRESSES (Alt A makes bias worse), and where its coverage is
+    highest (= where the empirical fix has the most reach).
+    """
+    by_dim: Dict[str, Dict[str, Any]] = {}
+    flat_entries: List[Dict[str, Any]] = []
+    for dim_name, getter, bucketer in COHORT_DIMENSIONS:
+        buckets: Dict[str, List[ShadowBet]] = {}
+        for b in bets:
+            key = bucketer(getter(b))
+            buckets.setdefault(key, []).append(b)
+        per_bucket: Dict[str, Any] = {}
+        # Ordered iteration: lexicographic by bucket key. Stable + reproducible.
+        for bucket_key in sorted(buckets.keys()):
+            cohort = _aggregate_cohort(buckets[bucket_key])
+            per_bucket[bucket_key] = cohort
+            n_b = cohort["n_bets"]
+            if n_b >= min_n_per_cohort:
+                delta_pp = cohort["alt_a"].get("bias_delta_vs_prod_pp")
+                coverage = cohort["alt_a"].get("coverage_rate")
+                flat_entries.append({
+                    "dimension": dim_name,
+                    "bucket": bucket_key,
+                    "n_bets": n_b,
+                    "bias_delta_vs_prod_pp": delta_pp,
+                    "coverage_rate": coverage,
+                    "production_bias": cohort["production"].get("bias"),
+                    "alt_a_bias": cohort["alt_a"].get("bias"),
+                    "alt_b_n_blocked": cohort["alt_b"].get("n_blocked"),
+                    "alt_b_counterfactual_usd": cohort["alt_b"].get(
+                        "counterfactual_profit_delta_usd"
+                    ),
+                })
+        by_dim[dim_name] = per_bucket
+
+    # Top cohorts summary: sorted views of the same flat entries.
+    def _by_key(key: str, *, reverse: bool, limit: int = 5):
+        valid = [e for e in flat_entries if e.get(key) is not None]
+        return sorted(valid, key=lambda e: e[key], reverse=reverse)[:limit]
+
+    top_cohorts = {
+        "most_improved": _by_key(
+            "bias_delta_vs_prod_pp", reverse=True,
+        ),
+        "regressions": [
+            # Negative bias_delta = Alt A makes bias WORSE
+            e for e in sorted(
+                flat_entries,
+                key=lambda e: e.get("bias_delta_vs_prod_pp") or 0.0,
+            )
+            if (e.get("bias_delta_vs_prod_pp") or 0.0) < 0.0
+        ][:5],
+        "highest_coverage": _by_key(
+            "coverage_rate", reverse=True,
+        ),
+        "largest_alt_b_savings": _by_key(
+            "alt_b_counterfactual_usd", reverse=True,
+        ),
+    }
+
+    return {
+        "min_n_per_cohort": min_n_per_cohort,
+        "n_bets_total": len(bets),
+        "by_dimension": by_dim,
+        "top_cohorts": top_cohorts,
+    }
+
+
 def _build_recommendations(
     agg: Dict[str, Any], n_total: int,
 ) -> List[Dict[str, Any]]:
@@ -541,6 +810,14 @@ def build_payload(
             "n_bets": len(window_bets),
             **aggregate_window(window_bets),
         }
+    # 2026-05-19 follow-up: cohort breakdown on trailing_30d so the
+    # operator sees WHERE Alt A helps most -- not just the aggregate
+    # delta. Enables a scoped ENFORCE-only-on-specific-cohorts
+    # promotion path instead of all-or-nothing.
+    trailing_30d_bets = list(windows.get("trailing_30d") or [])
+    payload["cohort_breakdown_trailing_30d"] = build_cohort_breakdown(
+        trailing_30d_bets,
+    )
     return payload
 
 
@@ -652,7 +929,122 @@ def render_markdown(payload: Dict[str, Any]) -> str:
     )
     for window_name, window in (payload.get("windows") or {}).items():
         parts.append(_window_md(window_name, window))
+    cohort = payload.get("cohort_breakdown_trailing_30d") or {}
+    if cohort.get("n_bets_total"):
+        parts.append(_cohort_md(cohort))
     return "\n".join(parts) + "\n"
+
+
+def _cohort_md(cohort: Dict[str, Any]) -> str:
+    """Render the trailing-30d cohort breakdown as readable markdown.
+
+    Surfaces:
+      - top_cohorts summary (most_improved / regressions /
+        highest_coverage / largest_alt_b_savings)
+      - per-dimension tables for the operator who wants to dig
+    """
+    n_total = cohort.get("n_bets_total", 0)
+    min_n = cohort.get("min_n_per_cohort", 0)
+    parts: List[str] = []
+    parts.append("")
+    parts.append("## Cohort breakdown (trailing 30d)")
+    parts.append("")
+    parts.append(
+        f"_Slices the trailing-30d window ({n_total} bets) by 5 "
+        "cohort dimensions (edge / inning / line / ask / current-"
+        "state-edge) and shows per-cohort production vs Alt A bias. "
+        f"Cohorts with n < {min_n} are shown in the per-dimension "
+        "tables but excluded from the top_cohorts summary._"
+    )
+    parts.append("")
+
+    top = cohort.get("top_cohorts") or {}
+
+    def _fmt_top_entry(e: Dict[str, Any]) -> str:
+        delta = e.get("bias_delta_vs_prod_pp") or 0.0
+        cov = e.get("coverage_rate")
+        return (
+            f"`{e.get('dimension')}={e.get('bucket')}`  n={e.get('n_bets')}, "
+            f"delta={delta:+.2f}pp, "
+            f"coverage={_fmt_pct(cov)}"
+        )
+
+    most_improved = top.get("most_improved") or []
+    if most_improved:
+        parts.append("### Most-improved cohorts (Alt A reduces bias most)")
+        for e in most_improved:
+            parts.append(f"- {_fmt_top_entry(e)}")
+        parts.append("")
+
+    regressions = top.get("regressions") or []
+    if regressions:
+        parts.append(
+            "### Regressions (cohorts where Alt A makes bias WORSE)"
+        )
+        for e in regressions:
+            parts.append(f"- {_fmt_top_entry(e)}")
+        parts.append("")
+
+    highest_cov = top.get("highest_coverage") or []
+    if highest_cov:
+        parts.append(
+            "### Highest-coverage cohorts (where empirical fix has most reach)"
+        )
+        for e in highest_cov:
+            parts.append(f"- {_fmt_top_entry(e)}")
+        parts.append("")
+
+    alt_b_savings = top.get("largest_alt_b_savings") or []
+    if alt_b_savings and any(
+        (e.get("alt_b_counterfactual_usd") or 0.0) > 0
+        for e in alt_b_savings
+    ):
+        parts.append("### Largest Alt B counterfactual savings")
+        for e in alt_b_savings:
+            cf = e.get("alt_b_counterfactual_usd") or 0.0
+            if cf <= 0:
+                continue
+            parts.append(
+                f"- `{e.get('dimension')}={e.get('bucket')}`  "
+                f"n={e.get('n_bets')}, blocked={e.get('alt_b_n_blocked')}, "
+                f"savings={_fmt_money(cf)}"
+            )
+        parts.append("")
+
+    by_dim = cohort.get("by_dimension") or {}
+    if by_dim:
+        parts.append("### Per-dimension detail")
+        for dim_name in (
+            "edge_bucket", "inning_bucket", "line_bucket",
+            "ask_bucket", "current_state_edge_bucket",
+        ):
+            buckets = by_dim.get(dim_name) or {}
+            if not buckets:
+                continue
+            parts.append("")
+            parts.append(f"#### {dim_name}")
+            parts.append("")
+            parts.append("| bucket | n | prod_bias | alt_a_bias | delta_pp | coverage | alt_b_blocked | alt_b_$ |")
+            parts.append("|---|---:|---:|---:|---:|---:|---:|---:|")
+            for bucket_key in sorted(buckets.keys()):
+                c = buckets[bucket_key]
+                if c.get("n_bets", 0) == 0:
+                    continue
+                prod_bias = c.get("production", {}).get("bias")
+                alt_bias = c.get("alt_a", {}).get("bias")
+                delta = c.get("alt_a", {}).get("bias_delta_vs_prod_pp")
+                cov = c.get("alt_a", {}).get("coverage_rate")
+                ab = c.get("alt_b", {}) or {}
+                parts.append(
+                    f"| {bucket_key} | {c['n_bets']} | "
+                    f"{_fmt_signed_pct(prod_bias)} | "
+                    f"{_fmt_signed_pct(alt_bias)} | "
+                    f"{(delta or 0.0):+.2f}pp | "
+                    f"{_fmt_pct(cov)} | "
+                    f"{ab.get('n_blocked', 0)} | "
+                    f"{_fmt_money(ab.get('counterfactual_profit_delta_usd'))} |"
+                )
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------

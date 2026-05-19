@@ -300,6 +300,10 @@ class LiveTradingEngine(SignalEngine):
         trade_args.stage1_shadow_empirical_mode = getattr(
             live_args, "stage1_shadow_empirical_override", "off",
         )
+        # Phase A5 (2026-05-19): bridge UNDER emission mode.
+        trade_args.under_emission_mode = getattr(
+            live_args, "under_emission_mode", "off",
+        )
 
         super().__init__(args=args, trade_args=trade_args)
 

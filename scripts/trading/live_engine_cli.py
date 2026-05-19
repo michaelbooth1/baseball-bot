@@ -309,6 +309,24 @@ def parse_live_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace, 
                        "consumes the logged alt FVs to surface the "
                        "cumulative shadow improvement. (default: off)"
                    ))
+    # Phase A5 (2026-05-19): UNDER candidate emission.
+    p.add_argument("--under-emission-mode",
+                   choices=["off", "shadow"],
+                   default="off",
+                   help=(
+                       "UNDER candidate emission. off = no UNDER rows "
+                       "emitted (default; existing OVER-only behavior). "
+                       "shadow = alongside every OVER candidate that "
+                       "reaches the FV phase, emit a sibling UNDER "
+                       "candidate row with `side=under`, FV = "
+                       "under_calibrator(1 - over_fv_raw), UNDER-side "
+                       "ask, and decision=`shadow_under` when UNDER "
+                       "gates pass. NO UNDER bets are placed (paper or "
+                       "live) in either mode. Phase A5 prereq for the "
+                       "bidirectional pivot; eventual UNDER paper-bet "
+                       "flip is a separate ship gated by B4 60-session "
+                       "validation. (default: off)"
+                   ))
     p.add_argument("--calibrated-stake-min-multiplier",
                    type=float,
                    default=DEFAULT_CALIBRATED_STAKE_MIN_MULTIPLIER,

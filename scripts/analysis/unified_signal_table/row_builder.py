@@ -315,6 +315,73 @@ def _build_inferred_state_fields(
     return fields
 
 
+def _build_alt_a_shadow_fields(
+    *,
+    candidate_row: Optional[Dict[str, Any]],
+    session_bet: Optional[Dict[str, Any]],
+    ledger_events: List[Dict[str, Any]],
+    capture_header: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Active #8 (2026-05-19): propagate Stage-1 Alt-A shadow fields.
+
+    Runtime writes these on every score-event-family candidate row via
+    `_attach_stage1_shadow_empirical_fields` in
+    `signal_pipeline_gates_post_fv.py`. They were missing from the
+    unified signal table schema until the 2026-05-18 paper-trading
+    audit caught the gap. Without this extractor, the training table
+    declared the columns but populated 0 rows -- loss attribution and
+    shadow override report kept computing Alt-A offline instead of
+    reading the runtime decision.
+
+    These fields are emitted by the runtime onto the candidate row
+    only; session_bet / capture_header / ledger_events do not carry
+    them. Using `_state_value_value` for consistency with the rest of
+    the row builder still works because the helper walks all four
+    sources and the others simply return None.
+
+    Type coercions match the runtime emission:
+      - stage1_shadow_empirical_mode: str ("off" | "shadow")
+      - fair_value_alt_empirical: float (or None when mode=off or no
+        empirical available)
+      - fair_value_alt_empirical_raw: float (pre-calibrator p2)
+      - fair_value_alt_empirical_delta_vs_prod: float (signed)
+      - fair_value_alt_empirical_used_empirical: bool
+      - fair_value_alt_empirical_p0: float (the empirical input used)
+    """
+    return {
+        "stage1_shadow_empirical_mode": _state_value_value(
+            "stage1_shadow_empirical_mode",
+            candidate_row, session_bet, ledger_events, capture_header,
+        ),
+        "fair_value_alt_empirical": _safe_float(_state_value_value(
+            "fair_value_alt_empirical",
+            candidate_row, session_bet, ledger_events, capture_header,
+        )),
+        "fair_value_alt_empirical_raw": _safe_float(_state_value_value(
+            "fair_value_alt_empirical_raw",
+            candidate_row, session_bet, ledger_events, capture_header,
+        )),
+        "fair_value_alt_empirical_delta_vs_prod": _safe_float(
+            _state_value_value(
+                "fair_value_alt_empirical_delta_vs_prod",
+                candidate_row, session_bet, ledger_events,
+                capture_header,
+            )
+        ),
+        "fair_value_alt_empirical_used_empirical": _safe_bool(
+            _state_value_value(
+                "fair_value_alt_empirical_used_empirical",
+                candidate_row, session_bet, ledger_events,
+                capture_header,
+            )
+        ),
+        "fair_value_alt_empirical_p0": _safe_float(_state_value_value(
+            "fair_value_alt_empirical_p0",
+            candidate_row, session_bet, ledger_events, capture_header,
+        )),
+    }
+
+
 def _build_market_complement_fields(
     *,
     candidate_row: Optional[Dict[str, Any]],
@@ -471,6 +538,12 @@ def build_master_rows_for_mode(
             capture_header=cap_header,
             base_fair_value=base_fair_value,
             decision_ask=decision_ask,
+        )
+        alt_a_shadow_fields = _build_alt_a_shadow_fields(
+            candidate_row=candidate_row,
+            session_bet=session_bet,
+            ledger_events=events,
+            capture_header=cap_header,
         )
         market_complement_fields = _build_market_complement_fields(
             candidate_row=candidate_row,
@@ -648,6 +721,7 @@ def build_master_rows_for_mode(
                 "fair_value": fair_value,
                 "base_fair_value": base_fair_value,
                 **inferred_state_fields,
+                **alt_a_shadow_fields,
                 "stage2_run_env_delta": _safe_float(_canonical_value("stage2_run_env_delta", session_bet, events, cap_header)),
                 "team_offense_delta": _safe_float(_canonical_value("team_offense_delta", session_bet, events, cap_header)),
                 "edge_at_ask": _safe_float(_canonical_value("edge", session_bet, events, cap_header)),

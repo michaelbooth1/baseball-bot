@@ -204,6 +204,152 @@ def _get_inventory_snapshot(engine) -> InventorySnapshot:
     return snapshot
 
 
+def _maybe_emit_under_candidate(
+    engine,
+    ctx,
+    over_fv_phase: "FvPhaseResult",
+    over_candidate_payload: Dict[str, object],
+) -> None:
+    """Phase A5 (2026-05-19): emit an UNDER candidate row alongside OVER.
+
+    No-op when `--under-emission-mode off` (default). When `shadow`,
+    builds a sibling UNDER candidate row whose `fair_value` is
+    `(1 - over_fv_raw)` passed through the UNDER calibrator, gets
+    the UNDER ask from the market book, evaluates a minimal set of
+    UNDER-side gates (min_edge using OVER's threshold for the MVP),
+    and appends to the candidate log via the engine's standard
+    `_record_candidate_decision` path. NO UNDER bets are placed.
+
+    Fail-open: any exception is logged at DEBUG and swallowed; OVER's
+    downstream flow is unaffected.
+    """
+    mode = getattr(engine, "_under_emission_mode", "off")
+    if mode != "shadow":
+        return
+    try:
+        from model_families import SCORE_EVENT_TRANSITION  # noqa: WPS433
+
+        game = ctx.game
+        market = ctx.market
+        book = ctx.book if isinstance(ctx.book, dict) else {}
+        over_fv_raw = over_fv_phase.fair_value_raw
+        if over_fv_raw is None:
+            return
+        try:
+            over_fv_raw_f = float(over_fv_raw)
+        except (TypeError, ValueError):
+            return
+        # UNDER raw = 1 - OVER raw (pre-calibration). Run through the
+        # UNDER calibrator if loaded; otherwise pass through
+        # untouched (logged as identity).
+        under_fv_raw = 1.0 - over_fv_raw_f
+        under_cal = getattr(engine, "_under_prob_calibrator", None)
+        if under_cal is not None:
+            try:
+                under_fv = float(under_cal.calibrate(
+                    under_fv_raw,
+                    model_family=SCORE_EVENT_TRANSITION,
+                ))
+            except Exception:  # noqa: BLE001
+                under_fv = under_fv_raw
+        else:
+            under_fv = under_fv_raw
+
+        under_best_ask = book.get("under_best_ask")
+        under_best_bid = book.get("under_best_bid")
+        under_pair_available = bool(book.get("under_pair_available"))
+
+        # Build the UNDER candidate payload by COPYING the OVER row's
+        # market context (game, line, inning, state, etc.) and
+        # overwriting the side-specific fields. This keeps every
+        # diagnostic the OVER row carries (state_value, weather,
+        # stage1 support metadata, etc.) visible on the UNDER row
+        # too, so downstream consumers don't need to special-case
+        # UNDER.
+        under_payload = dict(over_candidate_payload)
+        under_payload["side"] = "under"
+        # bet_id mirrors OVER's with a `_under_shadow` suffix so any
+        # cross-side joins (downstream training table merge logic)
+        # can pair them.
+        over_bet_id = str(over_candidate_payload.get("bet_id") or "")
+        under_payload["bet_id"] = (
+            f"{over_bet_id}_under_shadow" if over_bet_id
+            else f"{game.game_pk}_{market.line}_under_shadow"
+        )
+        under_payload["over_bet_id"] = over_bet_id or None
+        under_payload["entry_ask"] = under_best_ask
+        under_payload["best_bid"] = under_best_bid
+        under_payload["decision_best_bid"] = under_best_bid
+        under_payload["decision_best_ask"] = under_best_ask
+        # decision_ask defaults to OVER's value in the dict copy
+        # above; overwrite with UNDER's ask so cohort-bucketing-by-ask
+        # downstream looks at the right side. (Caught during the
+        # 2026-05-19 under-outcomes counterfactual block design.)
+        under_payload["decision_ask"] = under_best_ask
+        under_payload["under_pair_available"] = under_pair_available
+
+        # UNDER FV chain (mirrors OVER but on the complement side).
+        under_payload["fair_value_raw"] = under_fv_raw
+        under_payload["fair_value"] = under_fv
+        under_payload["base_fair_value"] = 1.0 - float(
+            over_fv_phase.base_fair_value
+        )
+        # Stage-2/3 deltas are SYMMETRIC by construction (logit
+        # additive on the over probability; equivalent magnitude
+        # opposite sign on the under probability). Carry the signed
+        # value so cohort analysis can compare side-by-side.
+        under_payload["stage2_run_env_delta"] = -1.0 * float(
+            over_fv_phase.stage2_run_env_delta
+        )
+        under_payload["team_offense_delta"] = -1.0 * float(
+            over_fv_phase.team_offense_delta
+        )
+
+        if under_best_ask is None:
+            # No UNDER liquidity at this tick. Record the candidate
+            # row as a skip with reason; the operator can see UNDER
+            # coverage rate from these skips.
+            under_payload["edge"] = None
+            under_payload["decision"] = "skip"
+            under_payload["decision_reason"] = "gate_no_under_liquidity"
+        else:
+            try:
+                under_ask_f = float(under_best_ask)
+            except (TypeError, ValueError):
+                return
+            under_edge = under_fv - under_ask_f
+            under_payload["edge"] = under_edge
+            # MVP: ride OVER's edge_threshold for UNDER gating. UNDER-
+            # specific thresholds get tuned from the shadow data
+            # once enough UNDER candidates accumulate (B1 dimension
+            # in the roadmap).
+            try:
+                min_edge = float(
+                    getattr(engine.trade_args, "edge_threshold", 0.10)
+                )
+            except (TypeError, ValueError):
+                min_edge = 0.10
+            if under_edge < min_edge:
+                under_payload["decision"] = "skip"
+                under_payload["decision_reason"] = "gate_min_edge"
+            else:
+                # UNDER gates pass. Tag the candidate so the daily
+                # review's by_side block (Phase B3) can count
+                # "would-have-traded" UNDER candidates.
+                under_payload["decision"] = "shadow_under"
+                under_payload["decision_reason"] = "shadow_under_gates_pass"
+
+        engine._record_candidate_decision(under_payload)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.debug(
+            "UNDER candidate emit failed for game_pk=%s line=%s: %r "
+            "(shadow only -- OVER pipeline unaffected)",
+            getattr(getattr(ctx, "game", None), "game_pk", "?"),
+            getattr(getattr(ctx, "market", None), "line", "?"),
+            exc,
+        )
+
+
 def _maybe_emit_shadow_quote(engine, ctx, *, over_fair_value: float) -> None:
     """Compute a two-sided shadow quote for one tick and append it
     to the per-date shadow ledger. No-op when the quote engine is off.
@@ -393,6 +539,15 @@ def process_tick(
     # `off` (the default).
     _maybe_emit_shadow_quote(
         self, ctx, over_fair_value=float(fv_phase.fair_value),
+    )
+    # Phase A5 (2026-05-19): emit the sibling UNDER candidate AT
+    # THIS POINT, before OVER's late-stage gates. UNDER's gate
+    # evaluation is independent of OVER's, so we want UNDER
+    # candidate coverage that is NOT correlated with OVER's
+    # downstream gate filtering. No-op when
+    # --under-emission-mode off (the default).
+    _maybe_emit_under_candidate(
+        self, ctx, fv_phase, candidate_payload,
     )
     if _evaluate_post_fv_gates(self, ctx, candidate_payload, fv_phase, _record_skip):
         return

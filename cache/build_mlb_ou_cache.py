@@ -45,6 +45,25 @@ DEFAULT_CALIB_PRIOR_N = 80.0
 DEFAULT_CALIB_MIN_N = 20
 EPS = 1e-6
 
+# Active #8 (2026-05-17): Alt-A smoothing modes.
+# `poisson` preserves the historical builder behavior: each cell's
+# `poXX` value is the Poisson-CDF prediction conditioned on phase
+# lambda + current state, and the sibling `oXX` value is the raw
+# empirical rate observed in that cell.
+# `empirical_when_available` is the Alt-A materialization: after the
+# normal build pass, each cell's `poXX` is OVERWRITTEN with its
+# `oXX` value when `n_samples >= MIN_EMPIRICAL_N_FOR_OVERRIDE`. The
+# runtime reads only `poXX`, so this produces a cache whose FV path
+# matches the on-the-fly Alt-A shadow logged on every candidate.
+SMOOTHING_MODE_POISSON = "poisson"
+SMOOTHING_MODE_EMPIRICAL_WHEN_AVAILABLE = "empirical_when_available"
+SMOOTHING_MODES = (
+    SMOOTHING_MODE_POISSON,
+    SMOOTHING_MODE_EMPIRICAL_WHEN_AVAILABLE,
+)
+DEFAULT_SMOOTHING_MODE = SMOOTHING_MODE_POISSON
+DEFAULT_MIN_EMPIRICAL_N_FOR_OVERRIDE = 0
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Build MLB O/U empirical cache.")
@@ -155,6 +174,32 @@ def parse_args() -> argparse.Namespace:
         help=(
             "allocation treats weights as total season allocation shares; multiplier treats "
             "weights as raw per-game multipliers. Both are normalized to preserve total game mass."
+        ),
+    )
+    p.add_argument(
+        "--smoothing-mode",
+        type=str,
+        choices=SMOOTHING_MODES,
+        default=DEFAULT_SMOOTHING_MODE,
+        help=(
+            "Per-line probability source. 'poisson' keeps the historical "
+            "behavior (poXX = Poisson-CDF). 'empirical_when_available' "
+            "(Active #8 Alt-A) overwrites each cell's poXX with its oXX "
+            "value when n_samples >= --min-empirical-n-for-override AND "
+            "the empirical is a valid (0,1) probability. The runtime reads "
+            "only poXX, so this materializes the on-the-fly Alt-A shadow "
+            "as a real cache file ready for promote.py stage1."
+        ),
+    )
+    p.add_argument(
+        "--min-empirical-n-for-override",
+        type=int,
+        default=DEFAULT_MIN_EMPIRICAL_N_FOR_OVERRIDE,
+        help=(
+            "Minimum cell n_samples required before --smoothing-mode "
+            "empirical_when_available will overwrite poXX with oXX "
+            "(default: 0 = always override when empirical present, "
+            "matching the runtime shadow path)."
         ),
     )
     p.add_argument(
@@ -564,6 +609,113 @@ def poisson_over_prob(threshold: int, current_total: int, lam_remaining: float) 
     return float(1.0 - poisson.cdf(needed - 1, lam_remaining))
 
 
+def _apply_alt_a_smoothing(
+    cells: Dict[str, dict],
+    *,
+    lines: Dict[str, int],
+    smoothing_mode: str,
+    min_empirical_n_for_override: int,
+) -> Dict[str, object]:
+    """Active #8 Alt-A (2026-05-17): overwrite per-cell poXX with oXX.
+
+    Each cell already carries both the empirical rate (`oXX` = raw
+    observed over rate) and the Poisson smoothed rate (`poXX`). The
+    runtime reads only `poXX`. When `smoothing_mode` is
+    `empirical_when_available`, this pass replaces each cell's `poXX`
+    with its sibling `oXX` value where the cell has enough sample
+    support and the empirical is a valid (0,1) probability.
+
+    Cells where the override is declined (insufficient n, empirical
+    missing, boundary value) keep the Poisson value. The diagnostic
+    summary returned is logged into `cache.meta["alt_a_smoothing"]`
+    so the daily-review staging-health block can answer "how many
+    cells flipped, by how much."
+    """
+    summary: Dict[str, object] = {
+        "enabled": smoothing_mode == SMOOTHING_MODE_EMPIRICAL_WHEN_AVAILABLE,
+        "mode": smoothing_mode,
+        "min_empirical_n_for_override": int(min_empirical_n_for_override),
+        "cells_total": len(cells),
+        "cells_overridden": 0,
+        "cells_kept_poisson_low_n": 0,
+        "cells_kept_poisson_no_empirical": 0,
+        "cells_kept_poisson_invalid_empirical": 0,
+        "line_overrides": {line_to_poisson_key(line): 0 for line in lines},
+        "mean_abs_delta_logit": 0.0,
+        "mean_signed_delta": 0.0,
+        "n_line_deltas": 0,
+    }
+    if smoothing_mode == SMOOTHING_MODE_POISSON:
+        return summary
+
+    threshold = int(min_empirical_n_for_override)
+    total_abs_delta_logit = 0.0
+    total_signed_delta = 0.0
+    n_deltas = 0
+
+    for cell in cells.values():
+        n_samples = int(cell.get("n_samples", 0))
+        if n_samples < threshold:
+            summary["cells_kept_poisson_low_n"] += 1
+            continue
+
+        any_override = False
+        for line in lines.keys():
+            emp_key = line_to_emp_key(line)
+            poi_key = line_to_poisson_key(line)
+            raw_emp = cell.get(emp_key)
+            raw_poi = cell.get(poi_key)
+            if raw_emp is None:
+                continue
+            try:
+                emp = float(raw_emp)
+            except (TypeError, ValueError):
+                continue
+            # Empirical rates at the (0,1) boundary blow up the logit-
+            # additive FV math the runtime does (logit(0) = -inf). Keep
+            # Poisson in that case; the over-prediction story Alt-A is
+            # solving is about the *interior* of the probability space.
+            if not (0.0 < emp < 1.0):
+                if not any_override:
+                    summary["cells_kept_poisson_invalid_empirical"] += 1
+                continue
+
+            cell[poi_key] = round(emp, 4)
+            summary["line_overrides"][poi_key] += 1
+            any_override = True
+
+            try:
+                old = float(raw_poi) if raw_poi is not None else None
+            except (TypeError, ValueError):
+                old = None
+            if old is not None and 0.0 < old < 1.0:
+                delta = emp - old
+                total_signed_delta += delta
+                # logit-space distance is what the FV chain actually
+                # consumes; report it so operators reading the daily
+                # review can reason in the same units the engine uses.
+                total_abs_delta_logit += abs(
+                    math.log(emp / (1.0 - emp))
+                    - math.log(old / (1.0 - old))
+                )
+                n_deltas += 1
+
+        if any_override:
+            summary["cells_overridden"] += 1
+        else:
+            # n_samples passed the threshold but no line had a usable
+            # empirical (all None / all boundary). Track separately so
+            # the daily-review block can distinguish "low-N cells" from
+            # "high-N cells with no usable empirical."
+            summary["cells_kept_poisson_no_empirical"] += 1
+
+    if n_deltas > 0:
+        summary["mean_abs_delta_logit"] = round(total_abs_delta_logit / n_deltas, 6)
+        summary["mean_signed_delta"] = round(total_signed_delta / n_deltas, 6)
+    summary["n_line_deltas"] = n_deltas
+    return summary
+
+
 def base_label(mask: int) -> str:
     chars = ["-", "-", "-"]
     if mask & 1:
@@ -891,6 +1043,17 @@ def build_cache(args: argparse.Namespace) -> dict:
         skey = f"{away}_{home}_{ib}_{half}_{outs}_{bases}"
         cells[skey] = cell
 
+    smoothing_mode = str(getattr(args, "smoothing_mode", DEFAULT_SMOOTHING_MODE))
+    min_emp_override = int(
+        getattr(args, "min_empirical_n_for_override", DEFAULT_MIN_EMPIRICAL_N_FOR_OVERRIDE)
+    )
+    alt_a_summary = _apply_alt_a_smoothing(
+        cells,
+        lines=lines,
+        smoothing_mode=smoothing_mode,
+        min_empirical_n_for_override=min_emp_override,
+    )
+
     line_meta = {line_to_emp_key(line): f"over {line}" for line in lines}
     history_start = min(loaded_game_dates) if loaded_game_dates else ""
     history_end = max(loaded_game_dates) if loaded_game_dates else ""
@@ -913,6 +1076,8 @@ def build_cache(args: argparse.Namespace) -> dict:
         "season_weights_path": str(getattr(args, "season_weights_path", "") or ""),
         "season_weight_column": str(getattr(args, "season_weight_column", "weight")),
         "season_weight_mode": str(getattr(args, "season_weight_mode", "allocation")),
+        "smoothing_mode": smoothing_mode,
+        "min_empirical_n_for_override": min_emp_override,
         "out": str(args.out),
     }
     cache = {
@@ -948,6 +1113,7 @@ def build_cache(args: argparse.Namespace) -> dict:
                 "(sum weights)^2 / sum(weights^2); present only when season weighting is enabled"
             ),
             "lines": line_meta,
+            "alt_a_smoothing": alt_a_summary,
         },
         "poisson_calibration": {
             "method": "logit_delta_by_line_inningHalfOut_needed",
@@ -977,6 +1143,14 @@ def build_cache(args: argparse.Namespace) -> dict:
         f"  Calibration keys: {cal_entries} "
         f"(prior_n={args.calib_prior_n:.0f}, min_n={args.calib_min_n}, samples={cal_samples_used})"
     )
+    if alt_a_summary.get("enabled"):
+        print(
+            f"  Alt-A smoothing: mode={alt_a_summary['mode']}, "
+            f"min_empirical_n_for_override={alt_a_summary['min_empirical_n_for_override']}, "
+            f"cells_overridden={alt_a_summary['cells_overridden']}/{alt_a_summary['cells_total']}, "
+            f"mean_signed_delta={alt_a_summary['mean_signed_delta']:+.4f}, "
+            f"mean_abs_delta_logit={alt_a_summary['mean_abs_delta_logit']:.4f}"
+        )
 
     sample_keys = [
         "0_0_1_T_0_0",
@@ -1035,6 +1209,16 @@ def main() -> None:
                         ),
                         "season_weighting_path": str(
                             getattr(args, "season_weighting_path", "") or ""
+                        ),
+                        "smoothing_mode": str(
+                            getattr(args, "smoothing_mode", DEFAULT_SMOOTHING_MODE)
+                        ),
+                        "min_empirical_n_for_override": int(
+                            getattr(
+                                args,
+                                "min_empirical_n_for_override",
+                                DEFAULT_MIN_EMPIRICAL_N_FOR_OVERRIDE,
+                            )
                         ),
                         "max_files": getattr(args, "max_files", None),
                         "out": str(args.out),

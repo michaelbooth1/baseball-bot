@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Optional
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -3926,6 +3927,1504 @@ class CacheLineageFreshnessHealthTests(unittest.TestCase):
         self.assertEqual(len(prefixed), 1)
 
 
+class UnderEmissionHealthTests(unittest.TestCase):
+    """Phase A5 follow-up (2026-05-19): tests for
+    `_under_emission_health`. Covers the 3-way status, decision
+    breakdown, price-quality aggregates, each alert class with its
+    sample-size gate, and the Notes prefix.
+    """
+
+    @staticmethod
+    def _write_candidates(
+        candidate_dir: Path, session_date: str,
+        rows: list,
+    ) -> Path:
+        candidate_dir.mkdir(parents=True, exist_ok=True)
+        path = candidate_dir / f"{session_date}_candidates.jsonl"
+        with path.open("w", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row) + "\n")
+        return path
+
+    @staticmethod
+    def _over_fv(bet_id: str, fair_value: float = 0.78) -> dict:
+        return {
+            "bet_id": bet_id,
+            "side": "over",
+            "fair_value": fair_value,
+            "decision": "trade",
+        }
+
+    @staticmethod
+    def _under(
+        over_id: str, *, decision: str = "shadow_under",
+        decision_reason: str = "shadow_under_gates_pass",
+        fair_value: float = 0.22, fair_value_raw: float = 0.22,
+        entry_ask: Optional[float] = 0.30,
+        edge: Optional[float] = -0.08,
+        under_pair_available: bool = True,
+    ) -> dict:
+        return {
+            "bet_id": f"{over_id}_under_shadow",
+            "over_bet_id": over_id,
+            "side": "under",
+            "decision": decision,
+            "decision_reason": decision_reason,
+            "fair_value": fair_value,
+            "fair_value_raw": fair_value_raw,
+            "entry_ask": entry_ask,
+            "edge": edge,
+            "under_pair_available": under_pair_available,
+        }
+
+    def test_no_candidate_file_returns_check_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = bdhr._under_emission_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            self.assertEqual(out["status"], "check_error")
+            self.assertIn("candidate log not found", out["error"])
+
+    def test_not_emitting_status_when_no_under_rows(self):
+        with tempfile.TemporaryDirectory() as td:
+            self._write_candidates(
+                Path(td), "2026-05-18",
+                [self._over_fv("over_001"), self._over_fv("over_002")],
+            )
+            out = bdhr._under_emission_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            self.assertEqual(out["status"], "not_emitting")
+            self.assertEqual(out["under_emitted_count"], 0)
+            self.assertEqual(out["over_post_fv_count"], 2)
+            self.assertEqual(out["alerts"], [])
+
+    def test_no_liquidity_status_when_all_under_rows_are_no_liquidity_skips(self):
+        with tempfile.TemporaryDirectory() as td:
+            rows = [self._over_fv(f"o_{i}") for i in range(5)]
+            for i in range(5):
+                rows.append(self._under(
+                    f"o_{i}", decision="skip",
+                    decision_reason="gate_no_under_liquidity",
+                    entry_ask=None, edge=None,
+                ))
+            self._write_candidates(Path(td), "2026-05-18", rows)
+            out = bdhr._under_emission_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            self.assertEqual(out["status"], "no_liquidity")
+            self.assertEqual(out["under_emitted_count"], 5)
+            self.assertEqual(
+                out["decision_breakdown"]["gate_no_under_liquidity"], 5,
+            )
+            self.assertEqual(out["alerts"], [])
+
+    def test_ok_status_with_decision_breakdown_and_coverage(self):
+        with tempfile.TemporaryDirectory() as td:
+            rows = [self._over_fv(f"o_{i}") for i in range(10)]
+            # 6 shadow_under, 3 gate_min_edge, 1 gate_no_under_liquidity
+            for i in range(6):
+                rows.append(self._under(f"o_{i}"))
+            for i in range(6, 9):
+                rows.append(self._under(
+                    f"o_{i}", decision="skip",
+                    decision_reason="gate_min_edge",
+                ))
+            rows.append(self._under(
+                "o_9", decision="skip",
+                decision_reason="gate_no_under_liquidity",
+                entry_ask=None, edge=None,
+            ))
+            self._write_candidates(Path(td), "2026-05-18", rows)
+            out = bdhr._under_emission_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            self.assertEqual(out["status"], "ok")
+            self.assertEqual(out["over_post_fv_count"], 10)
+            self.assertEqual(out["under_emitted_count"], 10)
+            self.assertAlmostEqual(out["coverage_rate"], 1.0)
+            self.assertEqual(out["decision_breakdown"]["shadow_under"], 6)
+            self.assertEqual(out["decision_breakdown"]["gate_min_edge"], 3)
+            self.assertEqual(
+                out["decision_breakdown"]["gate_no_under_liquidity"], 1,
+            )
+            self.assertAlmostEqual(out["shadow_under_rate"], 0.6)
+
+    def test_alert_fires_when_coverage_below_threshold_with_enough_samples(self):
+        """Coverage 30% with >= 50 UNDER rows -> alert."""
+        with tempfile.TemporaryDirectory() as td:
+            # 200 OVER FV-phase ticks, 60 UNDER rows = 30% coverage.
+            # Enough UNDER rows (60 >= 50 threshold) to alert.
+            rows = [self._over_fv(f"o_{i}") for i in range(200)]
+            for i in range(60):
+                rows.append(self._under(f"o_{i}"))
+            self._write_candidates(Path(td), "2026-05-18", rows)
+            out = bdhr._under_emission_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            self.assertEqual(out["status"], "ok")
+            self.assertAlmostEqual(out["coverage_rate"], 0.30)
+            coverage_alerts = [
+                a for a in out["alerts"]
+                if "coverage rate" in a.lower()
+            ]
+            self.assertEqual(len(coverage_alerts), 1)
+
+    def test_no_coverage_alert_when_sample_too_small(self):
+        """Coverage 20% but only 10 UNDER rows -> no alert (n<50)."""
+        with tempfile.TemporaryDirectory() as td:
+            rows = [self._over_fv(f"o_{i}") for i in range(50)]
+            for i in range(10):
+                rows.append(self._under(f"o_{i}"))
+            self._write_candidates(Path(td), "2026-05-18", rows)
+            out = bdhr._under_emission_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            coverage_alerts = [
+                a for a in out["alerts"]
+                if "coverage rate" in a.lower()
+            ]
+            self.assertEqual(coverage_alerts, [])
+
+    def test_alert_fires_when_shadow_under_rate_high(self):
+        """shadow_under rate >50% with n>=20 -> human-read alert."""
+        with tempfile.TemporaryDirectory() as td:
+            rows = [self._over_fv(f"o_{i}") for i in range(30)]
+            # 25 shadow_under / 30 total = 83%
+            for i in range(25):
+                rows.append(self._under(f"o_{i}"))
+            for i in range(25, 30):
+                rows.append(self._under(
+                    f"o_{i}", decision="skip",
+                    decision_reason="gate_min_edge",
+                ))
+            self._write_candidates(Path(td), "2026-05-18", rows)
+            out = bdhr._under_emission_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            high_alerts = [
+                a for a in out["alerts"]
+                if "shadow_under` rate" in a and "is above" in a
+            ]
+            self.assertEqual(len(high_alerts), 1)
+
+    def test_alert_fires_when_shadow_under_rate_low_with_enough_samples(self):
+        """shadow_under rate <2% with n>=100 -> tune-tighter alert."""
+        with tempfile.TemporaryDirectory() as td:
+            rows = [self._over_fv(f"o_{i}") for i in range(200)]
+            # 1 shadow_under / 200 = 0.5%
+            rows.append(self._under("o_0"))
+            for i in range(1, 200):
+                rows.append(self._under(
+                    f"o_{i}", decision="skip",
+                    decision_reason="gate_min_edge",
+                ))
+            self._write_candidates(Path(td), "2026-05-18", rows)
+            out = bdhr._under_emission_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            low_alerts = [
+                a for a in out["alerts"]
+                if "suspiciously low" in a
+            ]
+            self.assertEqual(len(low_alerts), 1)
+
+    def test_no_low_alert_when_sample_too_small(self):
+        """shadow_under rate 0% but only 50 UNDER rows -> no alert (n<100)."""
+        with tempfile.TemporaryDirectory() as td:
+            rows = [self._over_fv(f"o_{i}") for i in range(50)]
+            for i in range(50):
+                rows.append(self._under(
+                    f"o_{i}", decision="skip",
+                    decision_reason="gate_min_edge",
+                ))
+            self._write_candidates(Path(td), "2026-05-18", rows)
+            out = bdhr._under_emission_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            low_alerts = [
+                a for a in out["alerts"]
+                if "suspiciously low" in a
+            ]
+            self.assertEqual(low_alerts, [])
+
+    def test_price_quality_aggregates_compute_correctly(self):
+        with tempfile.TemporaryDirectory() as td:
+            rows = [self._over_fv("o_1")]
+            rows.append(self._under(
+                "o_1", fair_value=0.30, fair_value_raw=0.25,
+                entry_ask=0.20, edge=0.10,
+            ))
+            self._write_candidates(Path(td), "2026-05-18", rows)
+            out = bdhr._under_emission_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            pq = out["price_quality"]
+            self.assertAlmostEqual(pq["mean_under_fv"], 0.30)
+            self.assertAlmostEqual(pq["mean_under_fv_raw"], 0.25)
+            self.assertAlmostEqual(pq["mean_under_ask"], 0.20)
+            self.assertAlmostEqual(pq["mean_under_edge"], 0.10)
+            # Calibration delta = mean_fv - mean_fv_raw = 0.05
+            self.assertAlmostEqual(pq["mean_under_calibration_delta"], 0.05)
+
+    def test_fv_bucket_distribution(self):
+        with tempfile.TemporaryDirectory() as td:
+            rows = [self._over_fv("o_1")]
+            # 3 UNDER rows in different FV buckets
+            rows.append(self._under("o_a", fair_value=0.10))  # 0.00-0.20
+            rows.append(self._under("o_b", fair_value=0.50))  # 0.40-0.60
+            rows.append(self._under("o_c", fair_value=0.85))  # 0.80-1.00
+            self._write_candidates(Path(td), "2026-05-18", rows)
+            out = bdhr._under_emission_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            buckets = out["price_quality"]["fv_buckets"]
+            self.assertEqual(buckets["0.00-0.20"], 1)
+            self.assertEqual(buckets["0.40-0.60"], 1)
+            self.assertEqual(buckets["0.80-1.00"], 1)
+            self.assertEqual(buckets["0.20-0.40"], 0)
+            self.assertEqual(buckets["0.60-0.80"], 0)
+
+    def test_pair_available_rate_propagates(self):
+        with tempfile.TemporaryDirectory() as td:
+            rows = [self._over_fv("o_1"), self._over_fv("o_2")]
+            rows.append(self._under("o_1", under_pair_available=True))
+            rows.append(self._under("o_2", under_pair_available=False))
+            self._write_candidates(Path(td), "2026-05-18", rows)
+            out = bdhr._under_emission_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            self.assertAlmostEqual(out["under_pair_available_rate"], 0.50)
+
+    def test_notes_block_carries_under_coverage_prefix(self):
+        notes = bdhr._build_notes(
+            session_summary={}, bet_totals={}, candidate_rollup={},
+            log_health={},
+            under_emission_health={
+                "alerts": ["coverage rate 0.30 below threshold ..."],
+            },
+        )
+        prefixed = [
+            n for n in notes if n.startswith("Under-coverage:")
+        ]
+        self.assertEqual(len(prefixed), 1)
+
+
+class UnderOutcomesCounterfactualHealthTests(unittest.TestCase):
+    """Phase A5 follow-up #2 (2026-05-19): tests for
+    `_under_outcomes_counterfactual_health`. Covers all status
+    branches, counterfactual P&L math, per-cohort breakdown, and
+    sample-size-gated alert thresholds.
+    """
+
+    @staticmethod
+    def _write_jsonl(path: Path, rows: list) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+
+    @staticmethod
+    def _under(
+        game_pk: int, *, line: str = "8.5",
+        decision: str = "shadow_under",
+        entry_ask: float = 0.30,
+        fair_value: float = 0.50,
+        edge: float = 0.20,
+        inning: int = 5,
+        current_state_value_edge: float = 0.02,
+    ) -> dict:
+        return {
+            "bet_id": f"o_{game_pk}_under_shadow",
+            "side": "under",
+            "decision": decision,
+            "game_pk": game_pk,
+            "line": line,
+            "entry_ask": entry_ask,
+            "fair_value": fair_value,
+            "edge": edge,
+            "inning": inning,
+            "current_state_value_edge": current_state_value_edge,
+        }
+
+    @staticmethod
+    def _outcome_row(game_pk: int, line: str, final_total: int) -> dict:
+        return {
+            "schema_version": 1,
+            "session_date": "2026-05-18",
+            "mode": "paper",
+            "game_pk": game_pk,
+            "line": line,
+            "final_total": final_total,
+        }
+
+    def test_missing_candidate_file_returns_check_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            self.assertEqual(out["status"], "check_error")
+
+    def test_no_shadow_under_candidates_status(self):
+        with tempfile.TemporaryDirectory() as td:
+            self._write_jsonl(
+                Path(td) / "2026-05-18_candidates.jsonl",
+                [{"bet_id": "over_1", "side": "over",
+                  "decision": "trade", "game_pk": 1}],
+            )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            self.assertEqual(out["status"], "no_shadow_under_candidates")
+            self.assertEqual(out["n_shadow_under_candidates"], 0)
+            self.assertEqual(out["alerts"], [])
+
+    def test_no_settled_status_when_outcomes_file_missing(self):
+        with tempfile.TemporaryDirectory() as td:
+            self._write_jsonl(
+                Path(td) / "2026-05-18_candidates.jsonl",
+                [self._under(game_pk=1)],
+            )
+            # No outcomes file written
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            self.assertEqual(out["status"], "no_settled")
+            self.assertEqual(out["n_shadow_under_candidates"], 1)
+            self.assertEqual(out["n_missing_outcome"], 1)
+
+    def test_under_wins_when_final_total_below_line(self):
+        """UNDER wins iff final_total < line. final_total=7, line=8.5 -> won."""
+        with tempfile.TemporaryDirectory() as td:
+            self._write_jsonl(
+                Path(td) / "2026-05-18_candidates.jsonl",
+                [self._under(game_pk=1, line="8.5", entry_ask=0.40)],
+            )
+            self._write_jsonl(
+                Path(td) / "2026-05-18_outcomes.jsonl",
+                [self._outcome_row(game_pk=1, line="8.5", final_total=7)],
+            )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+                stake_usdc=10.0,
+            )
+            self.assertEqual(out["status"], "ok")
+            agg = out["aggregate"]
+            self.assertEqual(agg["n"], 1)
+            self.assertEqual(agg["n_won"], 1)
+            # Counterfactual profit = 10 * (1/0.40 - 1) = 15.0
+            self.assertAlmostEqual(
+                agg["total_counterfactual_pnl"], 15.0, places=2,
+            )
+            self.assertAlmostEqual(
+                agg["counterfactual_roi"], 1.5, places=2,
+            )
+
+    def test_under_loses_when_final_total_above_or_equal_line(self):
+        """UNDER loses when final_total >= line. final_total=10, line=8.5 -> lost."""
+        with tempfile.TemporaryDirectory() as td:
+            self._write_jsonl(
+                Path(td) / "2026-05-18_candidates.jsonl",
+                [self._under(game_pk=1, line="8.5", entry_ask=0.30)],
+            )
+            self._write_jsonl(
+                Path(td) / "2026-05-18_outcomes.jsonl",
+                [self._outcome_row(game_pk=1, line="8.5", final_total=10)],
+            )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+                stake_usdc=10.0,
+            )
+            agg = out["aggregate"]
+            self.assertEqual(agg["n_won"], 0)
+            self.assertEqual(agg["n_lost"], 1)
+            self.assertAlmostEqual(
+                agg["total_counterfactual_pnl"], -10.0, places=2,
+            )
+            self.assertAlmostEqual(
+                agg["counterfactual_roi"], -1.0, places=2,
+            )
+
+    def test_alert_fires_when_profitable_roi_with_enough_samples(self):
+        """30 UNDER candidates: 20 win @ ask=0.30 (profit=23.33 each) +
+        10 lose (profit=-10 each). Net pnl = 366.67. ROI = +122%.
+        n>=30 + roi>=5% -> profitable alert."""
+        with tempfile.TemporaryDirectory() as td:
+            candidates = []
+            outcomes = []
+            for i in range(30):
+                candidates.append(self._under(
+                    game_pk=i, line="8.5", entry_ask=0.30,
+                ))
+                # First 20 win (total < 8.5), rest lose
+                final_total = 5 if i < 20 else 12
+                outcomes.append(self._outcome_row(
+                    game_pk=i, line="8.5", final_total=final_total,
+                ))
+            self._write_jsonl(
+                Path(td) / "2026-05-18_candidates.jsonl", candidates,
+            )
+            self._write_jsonl(
+                Path(td) / "2026-05-18_outcomes.jsonl", outcomes,
+            )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+                stake_usdc=10.0,
+            )
+            self.assertEqual(out["status"], "ok")
+            profitable_alerts = [
+                a for a in out["alerts"]
+                if "would have netted" in a and "Phase B4" in a
+            ]
+            self.assertEqual(len(profitable_alerts), 1)
+
+    def test_alert_fires_when_unprofitable_roi_with_enough_samples(self):
+        """30 UNDER candidates: 5 win (profit=15 each) + 25 lose
+        (profit=-10 each). Net = 75 - 250 = -175. ROI = -58%."""
+        with tempfile.TemporaryDirectory() as td:
+            candidates = []
+            outcomes = []
+            for i in range(30):
+                candidates.append(self._under(
+                    game_pk=i, line="8.5", entry_ask=0.40,
+                ))
+                final_total = 5 if i < 5 else 12
+                outcomes.append(self._outcome_row(
+                    game_pk=i, line="8.5", final_total=final_total,
+                ))
+            self._write_jsonl(
+                Path(td) / "2026-05-18_candidates.jsonl", candidates,
+            )
+            self._write_jsonl(
+                Path(td) / "2026-05-18_outcomes.jsonl", outcomes,
+            )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+                stake_usdc=10.0,
+            )
+            loss_alerts = [
+                a for a in out["alerts"]
+                if "loss-making" in a
+            ]
+            self.assertEqual(len(loss_alerts), 1)
+
+    def test_no_alert_when_sample_too_small(self):
+        """20 UNDER candidates all win -- ROI = +233% but n=20 < 30 floor."""
+        with tempfile.TemporaryDirectory() as td:
+            candidates = []
+            outcomes = []
+            for i in range(20):
+                candidates.append(self._under(
+                    game_pk=i, line="8.5", entry_ask=0.30,
+                ))
+                outcomes.append(self._outcome_row(
+                    game_pk=i, line="8.5", final_total=5,
+                ))
+            self._write_jsonl(
+                Path(td) / "2026-05-18_candidates.jsonl", candidates,
+            )
+            self._write_jsonl(
+                Path(td) / "2026-05-18_outcomes.jsonl", outcomes,
+            )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+                stake_usdc=10.0,
+            )
+            self.assertEqual(out["status"], "ok")
+            self.assertEqual(out["aggregate"]["n_won"], 20)
+            self.assertEqual(out["alerts"], [])
+
+    def test_no_alert_when_roi_near_breakeven(self):
+        """30 UNDER candidates with ROI = +0% (between -5% and +5%) -> no alert."""
+        # Use a mix where pnl ~= 0.
+        # ask=0.50: win profit = +10, loss profit = -10.
+        # 15 wins + 15 losses -> pnl = 0
+        with tempfile.TemporaryDirectory() as td:
+            candidates = []
+            outcomes = []
+            for i in range(30):
+                candidates.append(self._under(
+                    game_pk=i, line="8.5", entry_ask=0.50,
+                ))
+                final_total = 5 if i < 15 else 12
+                outcomes.append(self._outcome_row(
+                    game_pk=i, line="8.5", final_total=final_total,
+                ))
+            self._write_jsonl(
+                Path(td) / "2026-05-18_candidates.jsonl", candidates,
+            )
+            self._write_jsonl(
+                Path(td) / "2026-05-18_outcomes.jsonl", outcomes,
+            )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+                stake_usdc=10.0,
+            )
+            self.assertAlmostEqual(out["aggregate"]["counterfactual_roi"], 0.0)
+            self.assertEqual(out["alerts"], [])
+
+    def test_per_cohort_breakdown_partitions_correctly(self):
+        """Two UNDER candidates in different inning buckets. by_cohort should
+        partition them and compute per-bucket P&L."""
+        with tempfile.TemporaryDirectory() as td:
+            candidates = [
+                self._under(game_pk=1, line="8.5", entry_ask=0.30,
+                            inning=3),
+                self._under(game_pk=2, line="8.5", entry_ask=0.30,
+                            inning=8),
+            ]
+            outcomes = [
+                self._outcome_row(1, "8.5", 5),   # UNDER wins
+                self._outcome_row(2, "8.5", 12),  # UNDER loses
+            ]
+            self._write_jsonl(
+                Path(td) / "2026-05-18_candidates.jsonl", candidates,
+            )
+            self._write_jsonl(
+                Path(td) / "2026-05-18_outcomes.jsonl", outcomes,
+            )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+                stake_usdc=10.0,
+            )
+            inning = out["by_cohort"]["inning_bucket"]
+            self.assertIn("<=5", inning)
+            self.assertIn(">=8", inning)
+            self.assertEqual(inning["<=5"]["n_won"], 1)
+            self.assertEqual(inning[">=8"]["n_won"], 0)
+
+    def test_skips_candidates_with_invalid_ask(self):
+        """Ask=None or out of (0,1) skipped without counting as
+        settled. Tracked separately in n_missing_ask."""
+        with tempfile.TemporaryDirectory() as td:
+            candidates = [
+                self._under(game_pk=1, entry_ask=0.30),
+                # Invalid: None
+                {"bet_id": "x", "side": "under",
+                 "decision": "shadow_under", "game_pk": 2,
+                 "line": "8.5", "entry_ask": None, "fair_value": 0.5,
+                 "edge": 0.2, "inning": 5},
+                # Invalid: boundary
+                {"bet_id": "y", "side": "under",
+                 "decision": "shadow_under", "game_pk": 3,
+                 "line": "8.5", "entry_ask": 1.0, "fair_value": 0.5,
+                 "edge": 0.2, "inning": 5},
+            ]
+            outcomes = [
+                self._outcome_row(1, "8.5", 5),
+                self._outcome_row(2, "8.5", 5),
+                self._outcome_row(3, "8.5", 5),
+            ]
+            self._write_jsonl(
+                Path(td) / "2026-05-18_candidates.jsonl", candidates,
+            )
+            self._write_jsonl(
+                Path(td) / "2026-05-18_outcomes.jsonl", outcomes,
+            )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            self.assertEqual(out["aggregate"]["n"], 1)
+            self.assertEqual(out["n_missing_ask"], 2)
+
+    def test_skips_candidates_without_matching_outcome(self):
+        """Candidate has game_pk but outcome file doesn't have
+        matching (game_pk, line) entry. Tracked in n_missing_outcome."""
+        with tempfile.TemporaryDirectory() as td:
+            candidates = [
+                self._under(game_pk=1, line="8.5"),
+                self._under(game_pk=2, line="9.5"),
+            ]
+            outcomes = [
+                # Only game 1 has outcome
+                self._outcome_row(1, "8.5", 5),
+            ]
+            self._write_jsonl(
+                Path(td) / "2026-05-18_candidates.jsonl", candidates,
+            )
+            self._write_jsonl(
+                Path(td) / "2026-05-18_outcomes.jsonl", outcomes,
+            )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            self.assertEqual(out["aggregate"]["n"], 1)
+            self.assertEqual(out["n_missing_outcome"], 1)
+
+    def test_excludes_skip_decisions_from_shadow_under_set(self):
+        """Only decision='shadow_under' rows count; gate_min_edge
+        skips do NOT contribute to counterfactual P&L."""
+        with tempfile.TemporaryDirectory() as td:
+            candidates = [
+                self._under(game_pk=1, decision="shadow_under"),
+                self._under(game_pk=2, decision="skip"),
+            ]
+            outcomes = [self._outcome_row(1, "8.5", 5),
+                        self._outcome_row(2, "8.5", 5)]
+            self._write_jsonl(
+                Path(td) / "2026-05-18_candidates.jsonl", candidates,
+            )
+            self._write_jsonl(
+                Path(td) / "2026-05-18_outcomes.jsonl", outcomes,
+            )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            self.assertEqual(out["n_shadow_under_candidates"], 1)
+
+    def test_notes_block_carries_under_outcomes_prefix(self):
+        notes = bdhr._build_notes(
+            session_summary={}, bet_totals={}, candidate_rollup={},
+            log_health={},
+            under_outcomes_counterfactual_health={
+                "alerts": ["UNDER candidates would have netted ..."],
+            },
+        )
+        prefixed = [
+            n for n in notes if n.startswith("Under-outcomes:")
+        ]
+        self.assertEqual(len(prefixed), 1)
+
+    # ---- Trailing-7d aggregate tests (2026-05-19 follow-up) ----
+
+    def test_trailing_7d_sub_block_present_in_output(self):
+        """Every call returns a `trailing_7d` sub-block regardless of
+        per-day status. Shape includes anchor_date + trailing_days
+        config + dates_with_data / dates_missing splits."""
+        with tempfile.TemporaryDirectory() as td:
+            # Empty session_date (no candidate file) -> per-day
+            # check_error but trailing_7d sub-block still emitted.
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            self.assertIn("trailing_7d", out)
+            t = out["trailing_7d"]
+            self.assertEqual(t["anchor_date"], "2026-05-18")
+            self.assertEqual(t["trailing_days"], 7)
+            # All 7 dates missing -> no data
+            self.assertEqual(t["n_dates_with_data"], 0)
+            self.assertEqual(t["n_dates_missing"], 7)
+
+    def test_trailing_7d_unions_settled_rows_across_dates(self):
+        """Three consecutive dates each contribute settled UNDER
+        candidates. Trailing aggregate's n equals the sum of per-day
+        n's, with no double counting."""
+        with tempfile.TemporaryDirectory() as td:
+            # Dates: anchor=2026-05-18 + prior 6 days. Populate
+            # 2026-05-16/17/18 each with 5 candidates (3 wins, 2 losses).
+            for d in ("2026-05-16", "2026-05-17", "2026-05-18"):
+                cands = []
+                outs = []
+                for i in range(5):
+                    gpk = int(d.replace("-", "")) * 100 + i
+                    cands.append(self._under(
+                        game_pk=gpk, line="8.5",
+                        entry_ask=0.40,
+                    ))
+                    # First 3 win, last 2 lose
+                    final = 5 if i < 3 else 12
+                    outs.append(self._outcome_row(
+                        game_pk=gpk, line="8.5", final_total=final,
+                    ))
+                self._write_jsonl(
+                    Path(td) / f"{d}_candidates.jsonl", cands,
+                )
+                self._write_jsonl(
+                    Path(td) / f"{d}_outcomes.jsonl", outs,
+                )
+
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+                stake_usdc=10.0,
+            )
+            t = out["trailing_7d"]
+            self.assertEqual(t["status"], "ok")
+            self.assertEqual(t["n_dates_with_data"], 3)
+            self.assertEqual(t["n_dates_missing"], 4)
+            # 3 dates * 5 settled = 15
+            self.assertEqual(t["n_settled_total"], 15)
+            agg = t["aggregate"]
+            self.assertEqual(agg["n"], 15)
+            self.assertEqual(agg["n_won"], 9)  # 3 wins/day * 3 days
+            self.assertEqual(agg["n_lost"], 6)
+            # Per-day P&L: 3 wins * (10/0.4 - 10=15) + 2 losses * (-10) = 25
+            # Across 3 days: 75
+            self.assertAlmostEqual(
+                agg["total_counterfactual_pnl"], 75.0, places=2,
+            )
+
+    def test_trailing_7d_by_date_breakdown_sorted_by_date(self):
+        with tempfile.TemporaryDirectory() as td:
+            for d in ("2026-05-16", "2026-05-18"):
+                self._write_jsonl(
+                    Path(td) / f"{d}_candidates.jsonl",
+                    [self._under(game_pk=1, line="8.5", entry_ask=0.40)],
+                )
+                self._write_jsonl(
+                    Path(td) / f"{d}_outcomes.jsonl",
+                    [self._outcome_row(1, "8.5", 5)],  # UNDER wins
+                )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            t = out["trailing_7d"]
+            self.assertEqual(len(t["by_date"]), 2)
+            self.assertEqual(t["by_date"][0]["date"], "2026-05-16")
+            self.assertEqual(t["by_date"][1]["date"], "2026-05-18")
+            for entry in t["by_date"]:
+                self.assertEqual(entry["n_settled"], 1)
+                self.assertEqual(entry["win_rate"], 1.0)
+
+    def test_trailing_7d_date_range_uses_actual_dates_with_data(self):
+        with tempfile.TemporaryDirectory() as td:
+            # Data only on 2026-05-13 and 2026-05-18 (5 days apart)
+            for d in ("2026-05-13", "2026-05-18"):
+                self._write_jsonl(
+                    Path(td) / f"{d}_candidates.jsonl",
+                    [self._under(game_pk=1, line="8.5")],
+                )
+                self._write_jsonl(
+                    Path(td) / f"{d}_outcomes.jsonl",
+                    [self._outcome_row(1, "8.5", 5)],
+                )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            t = out["trailing_7d"]
+            self.assertEqual(
+                t["date_range"], ["2026-05-13", "2026-05-18"],
+            )
+
+    def test_trailing_7d_alert_fires_when_profitable_with_50_samples(self):
+        """50 settled UNDER candidates across multiple days, all
+        winning at ask=0.40 -> ROI = +150%. n=50 clears the trailing
+        alert floor; per-day n=10 does NOT clear the per-day floor."""
+        with tempfile.TemporaryDirectory() as td:
+            # 5 dates x 10 candidates each = 50 trailing.
+            # Per-day n=10 < 30 (no per-day alert).
+            for offset, d in enumerate([
+                "2026-05-14", "2026-05-15", "2026-05-16",
+                "2026-05-17", "2026-05-18",
+            ]):
+                cands = []
+                outs = []
+                for i in range(10):
+                    gpk = 1000 * offset + i
+                    cands.append(self._under(
+                        game_pk=gpk, line="8.5", entry_ask=0.40,
+                    ))
+                    outs.append(self._outcome_row(gpk, "8.5", 5))
+                self._write_jsonl(
+                    Path(td) / f"{d}_candidates.jsonl", cands,
+                )
+                self._write_jsonl(
+                    Path(td) / f"{d}_outcomes.jsonl", outs,
+                )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            trailing_alerts = [
+                a for a in out["alerts"]
+                if a.startswith("(7d)") and "Phase B4" in a
+            ]
+            self.assertEqual(len(trailing_alerts), 1)
+            # The trailing alert text mentions sessions accumulated
+            self.assertIn(
+                "5/60 sessions", trailing_alerts[0],
+            )
+
+    def test_trailing_7d_alert_fires_when_unprofitable_with_50_samples(self):
+        with tempfile.TemporaryDirectory() as td:
+            # 50 candidates across 5 dates, all losing -> ROI = -100%
+            for offset, d in enumerate([
+                "2026-05-14", "2026-05-15", "2026-05-16",
+                "2026-05-17", "2026-05-18",
+            ]):
+                cands = []
+                outs = []
+                for i in range(10):
+                    gpk = 2000 * (offset + 1) + i
+                    cands.append(self._under(
+                        game_pk=gpk, line="8.5", entry_ask=0.40,
+                    ))
+                    # All lose (final_total >> line)
+                    outs.append(self._outcome_row(gpk, "8.5", 15))
+                self._write_jsonl(
+                    Path(td) / f"{d}_candidates.jsonl", cands,
+                )
+                self._write_jsonl(
+                    Path(td) / f"{d}_outcomes.jsonl", outs,
+                )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            unprofitable_trailing = [
+                a for a in out["alerts"]
+                if a.startswith("(7d)") and "loss-making" in a
+            ]
+            self.assertEqual(len(unprofitable_trailing), 1)
+
+    def test_trailing_7d_no_alert_when_under_50_samples(self):
+        """30 trailing-window candidates clears the per-day floor (>=30
+        if all on today) but NOT the trailing floor (>=50)."""
+        with tempfile.TemporaryDirectory() as td:
+            # 3 dates x 10 candidates = 30; all winning at ask=0.40
+            for offset, d in enumerate([
+                "2026-05-16", "2026-05-17", "2026-05-18",
+            ]):
+                cands = []
+                outs = []
+                for i in range(10):
+                    gpk = 3000 * (offset + 1) + i
+                    cands.append(self._under(
+                        game_pk=gpk, line="8.5", entry_ask=0.40,
+                    ))
+                    outs.append(self._outcome_row(gpk, "8.5", 5))
+                self._write_jsonl(
+                    Path(td) / f"{d}_candidates.jsonl", cands,
+                )
+                self._write_jsonl(
+                    Path(td) / f"{d}_outcomes.jsonl", outs,
+                )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            trailing_alerts = [
+                a for a in out["alerts"] if a.startswith("(7d)")
+            ]
+            self.assertEqual(trailing_alerts, [])
+
+    def test_trailing_7d_status_no_settled_when_candidates_lack_outcomes(self):
+        """Dates have candidate files with shadow_under rows but NO
+        matching outcomes. trailing status = no_settled (had
+        candidates, just no settlements)."""
+        with tempfile.TemporaryDirectory() as td:
+            for d in ("2026-05-17", "2026-05-18"):
+                self._write_jsonl(
+                    Path(td) / f"{d}_candidates.jsonl",
+                    [self._under(game_pk=1, line="8.5")],
+                )
+                # No outcomes file written
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            t = out["trailing_7d"]
+            self.assertEqual(t["status"], "no_settled")
+            self.assertEqual(t["n_settled_total"], 0)
+            self.assertGreater(t["n_shadow_under_candidates_total"], 0)
+
+    def test_trailing_7d_status_no_shadow_under_candidates_when_a5_off(self):
+        """Candidate files exist but contain ZERO shadow_under rows
+        (only OVER trades). Trailing status = no_shadow_under_candidates,
+        not no_settled."""
+        with tempfile.TemporaryDirectory() as td:
+            for d in ("2026-05-17", "2026-05-18"):
+                self._write_jsonl(
+                    Path(td) / f"{d}_candidates.jsonl",
+                    [{"bet_id": "over_1", "side": "over",
+                      "decision": "trade", "game_pk": 1,
+                      "fair_value": 0.85}],
+                )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            t = out["trailing_7d"]
+            self.assertEqual(t["status"], "no_shadow_under_candidates")
+            self.assertEqual(t["n_shadow_under_candidates_total"], 0)
+
+    def test_trailing_7d_tolerates_missing_dates_gracefully(self):
+        """Anchor 2026-05-18, only one prior date has data
+        (2026-05-13). Trailing window still emits a valid aggregate."""
+        with tempfile.TemporaryDirectory() as td:
+            self._write_jsonl(
+                Path(td) / "2026-05-13_candidates.jsonl",
+                [self._under(game_pk=1, line="8.5", entry_ask=0.40)],
+            )
+            self._write_jsonl(
+                Path(td) / "2026-05-13_outcomes.jsonl",
+                [self._outcome_row(1, "8.5", 5)],
+            )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+            )
+            t = out["trailing_7d"]
+            self.assertEqual(t["status"], "ok")
+            self.assertEqual(t["n_dates_with_data"], 1)
+            self.assertEqual(t["n_dates_missing"], 6)
+            self.assertEqual(t["aggregate"]["n"], 1)
+
+
+class PromotionLagHealthTests(unittest.TestCase):
+    """Active #15 (2026-05-19): promotion-lag tracker.
+
+    Covers `_parse_iso_to_epoch_safe`, `_latest_session_start_utc`,
+    and `_promotion_lag_health`. The block answers "is my promote in
+    effect yet?" per lever by comparing cache mtime against the most
+    recent engine-boot proxy (first-bet placed_at of latest session
+    file, across paper + live trading roots).
+    """
+
+    @staticmethod
+    def _write_session(
+        root: Path, date_str: str, first_bet_placed_at: Optional[str],
+        *, generated_at: Optional[str] = None, n_bets: int = 1,
+    ) -> None:
+        root.mkdir(parents=True, exist_ok=True)
+        bets = []
+        if first_bet_placed_at is not None:
+            bets.append({
+                "bet_id": f"{date_str}_test_0001",
+                "placed_at": first_bet_placed_at,
+            })
+            for i in range(1, n_bets):
+                bets.append({
+                    "bet_id": f"{date_str}_test_{i+1:04d}",
+                    "placed_at": first_bet_placed_at,
+                })
+        (root / f"{date_str}_session.json").write_text(
+            json.dumps({
+                "date": date_str,
+                "generated_at": generated_at,
+                "bets": bets,
+                "summary": {},
+                "params": {},
+            }),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _touch_cache(path: Path, *, mtime_epoch: float) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+        import os
+        os.utime(path, (mtime_epoch, mtime_epoch))
+
+    def test_parse_iso_to_epoch_safe_handles_z_suffix(self):
+        e = bdhr._parse_iso_to_epoch_safe("2026-05-19T00:07:38Z")
+        self.assertIsNotNone(e)
+        from datetime import datetime, timezone
+        expected = datetime(
+            2026, 5, 19, 0, 7, 38, tzinfo=timezone.utc,
+        ).timestamp()
+        self.assertAlmostEqual(e, expected, places=3)
+
+    def test_parse_iso_to_epoch_safe_returns_none_on_garbage(self):
+        for bad in (None, "", "not a date", 12345, {}):
+            self.assertIsNone(
+                bdhr._parse_iso_to_epoch_safe(bad), f"bad input: {bad!r}",
+            )
+
+    def test_latest_session_start_utc_picks_max_across_paper_and_live(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_session(
+                root / "data/live_trading/sessions", "2026-05-15",
+                "2026-05-15T23:00:00Z",
+            )
+            self._write_session(
+                root / "data/paper_trading/sessions", "2026-05-18",
+                "2026-05-19T00:07:38Z",
+            )
+            got = bdhr._latest_session_start_utc(
+                project_root=root,
+                session_roots=(
+                    "data/live_trading/sessions",
+                    "data/paper_trading/sessions",
+                ),
+            )
+            self.assertIsNotNone(got)
+            name, epoch, iso = got
+            # Paper session on 2026-05-18 has the latest first-bet.
+            self.assertEqual(name, "2026-05-18_session.json")
+            self.assertEqual(iso, "2026-05-19T00:07:38Z")
+
+    def test_latest_session_start_falls_back_to_generated_at_for_empty_session(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_session(
+                root / "data/paper_trading/sessions", "2026-05-18",
+                first_bet_placed_at=None,
+                generated_at="2026-05-19T03:00:00Z",
+            )
+            got = bdhr._latest_session_start_utc(
+                project_root=root,
+                session_roots=("data/paper_trading/sessions",),
+            )
+            self.assertIsNotNone(got)
+            _, _, iso = got
+            self.assertEqual(iso, "2026-05-19T03:00:00Z")
+
+    def test_latest_session_start_returns_none_when_no_sessions(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            got = bdhr._latest_session_start_utc(
+                project_root=root,
+                session_roots=(
+                    "data/live_trading/sessions",
+                    "data/paper_trading/sessions",
+                ),
+            )
+            self.assertIsNone(got)
+
+    def test_no_session_history_status_for_all_levers(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            # Even with caches present, no session files = no boot
+            # data, so we can't evaluate effect-time.
+            self._touch_cache(
+                root / "cache" / "mlb_ou_cache.json",
+                mtime_epoch=1747567200.0,
+            )
+            out = bdhr._promotion_lag_health(
+                project_root=root,
+                levers=(("stage1", "cache/mlb_ou_cache.json"),),
+                session_roots=("data/live_trading/sessions",),
+            )
+            self.assertEqual(
+                out["last_engine_boot"]["status"], "no_session_history",
+            )
+            self.assertEqual(
+                out["levers"]["stage1"]["status"], "no_session_history",
+            )
+            self.assertEqual(out["alerts"], [])
+
+    def test_cache_missing_status_when_lever_never_promoted(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._write_session(
+                root / "data/paper_trading/sessions", "2026-05-18",
+                "2026-05-19T00:07:38Z",
+            )
+            out = bdhr._promotion_lag_health(
+                project_root=root,
+                levers=(("stage1", "cache/mlb_ou_cache.json"),),
+                session_roots=("data/paper_trading/sessions",),
+            )
+            self.assertEqual(
+                out["levers"]["stage1"]["status"], "cache_missing",
+            )
+            self.assertEqual(out["alerts"], [])
+
+    def test_effective_in_runtime_when_cache_older_than_boot(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            # Boot: 2026-05-19T00:07:38Z
+            self._write_session(
+                root / "data/paper_trading/sessions", "2026-05-18",
+                "2026-05-19T00:07:38Z",
+            )
+            # Cache mtime is 2026-05-17T13:52 (~33h before boot).
+            from datetime import datetime, timezone
+            cache_epoch = datetime(
+                2026, 5, 17, 13, 52, 0, tzinfo=timezone.utc,
+            ).timestamp()
+            self._touch_cache(
+                root / "cache" / "mlb_ou_cache.json",
+                mtime_epoch=cache_epoch,
+            )
+            out = bdhr._promotion_lag_health(
+                project_root=root,
+                levers=(("stage1", "cache/mlb_ou_cache.json"),),
+                session_roots=("data/paper_trading/sessions",),
+            )
+            info = out["levers"]["stage1"]
+            self.assertEqual(info["status"], "effective_in_runtime")
+            # lag_hours = boot - cache_mtime (positive: how long the
+            # cache existed before being picked up).
+            self.assertGreater(info["lag_hours"], 30.0)
+            self.assertLess(info["lag_hours"], 40.0)
+            self.assertEqual(out["alerts"], [])
+
+    def test_pending_status_no_alert_under_threshold(self):
+        """Cache promoted AFTER boot but within the warn threshold."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            from datetime import datetime, timezone, timedelta
+            # Boot was 5h ago, cache promoted 2h ago (3h between
+            # boot and promote). Now is "now". Pending lag = 2h,
+            # well under the 24h threshold.
+            now = datetime.now(timezone.utc)
+            self._write_session(
+                root / "data/paper_trading/sessions", "2026-05-18",
+                (now - timedelta(hours=5)).isoformat().replace(
+                    "+00:00", "Z",
+                ),
+            )
+            self._touch_cache(
+                root / "cache" / "mlb_ou_cache.json",
+                mtime_epoch=(now - timedelta(hours=2)).timestamp(),
+            )
+            out = bdhr._promotion_lag_health(
+                project_root=root,
+                levers=(("stage1", "cache/mlb_ou_cache.json"),),
+                session_roots=("data/paper_trading/sessions",),
+                pending_hours_warn=24.0,
+            )
+            info = out["levers"]["stage1"]
+            self.assertEqual(info["status"], "pending_next_session_boot")
+            self.assertLess(info["lag_hours"], 24.0)
+            self.assertGreater(info["lag_hours"], 1.0)
+            self.assertEqual(out["alerts"], [])
+
+    def test_pending_status_fires_alert_above_threshold(self):
+        """Operator promoted but hasn't restarted in > pending_hours_warn."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            from datetime import datetime, timezone, timedelta
+            now = datetime.now(timezone.utc)
+            # Boot was 50h ago, cache promoted 30h ago. Pending lag
+            # 30h > 24h threshold -> alert.
+            self._write_session(
+                root / "data/paper_trading/sessions", "2026-05-17",
+                (now - timedelta(hours=50)).isoformat().replace(
+                    "+00:00", "Z",
+                ),
+            )
+            self._touch_cache(
+                root / "cache" / "mlb_stage2_run_env.json",
+                mtime_epoch=(now - timedelta(hours=30)).timestamp(),
+            )
+            out = bdhr._promotion_lag_health(
+                project_root=root,
+                levers=(("stage2", "cache/mlb_stage2_run_env.json"),),
+                session_roots=("data/paper_trading/sessions",),
+                pending_hours_warn=24.0,
+            )
+            info = out["levers"]["stage2"]
+            self.assertEqual(info["status"], "pending_next_session_boot")
+            self.assertGreater(info["lag_hours"], 24.0)
+            self.assertEqual(len(out["alerts"]), 1)
+            self.assertIn("stage2", out["alerts"][0])
+            self.assertIn("Restart the live engine", out["alerts"][0])
+
+    def test_shared_overrides_file_reports_same_status_for_both_levers(self):
+        """stake_scaling + gate_threshold mutate the same overrides
+        file. Any promote of either bumps the same mtime, so both
+        levers report the same status. We surface them separately so
+        the operator who promoted one sees the line under that
+        lever's name.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            from datetime import datetime, timezone, timedelta
+            now = datetime.now(timezone.utc)
+            self._write_session(
+                root / "data/live_trading/sessions", "2026-05-17",
+                (now - timedelta(hours=72)).isoformat().replace(
+                    "+00:00", "Z",
+                ),
+            )
+            self._touch_cache(
+                root / "cache" / "live_engine_overrides.json",
+                mtime_epoch=(now - timedelta(hours=48)).timestamp(),
+            )
+            out = bdhr._promotion_lag_health(
+                project_root=root,
+                levers=(
+                    ("stake_scaling", "cache/live_engine_overrides.json"),
+                    ("gate_threshold", "cache/live_engine_overrides.json"),
+                ),
+                session_roots=("data/live_trading/sessions",),
+                pending_hours_warn=24.0,
+            )
+            self.assertEqual(
+                out["levers"]["stake_scaling"]["status"],
+                "pending_next_session_boot",
+            )
+            self.assertEqual(
+                out["levers"]["gate_threshold"]["status"],
+                "pending_next_session_boot",
+            )
+            # Two levers sharing the same file => two alerts, one per
+            # lever (so the operator sees the alert filed under their
+            # promote's lever name).
+            self.assertEqual(len(out["alerts"]), 2)
+
+    def test_notes_block_carries_promotion_lag_prefix(self):
+        notes = bdhr._build_notes(
+            session_summary={}, bet_totals={}, candidate_rollup={},
+            log_health={},
+            promotion_lag_health={"alerts": ["stage1 promote landed ..."]},
+        )
+        prefixed = [
+            n for n in notes if n.startswith("Promotion-lag:")
+        ]
+        self.assertEqual(len(prefixed), 1)
+
+
+class Stage1AltAStagingHealthTests(unittest.TestCase):
+    """Active #8 (2026-05-17): tests for _stage1_alt_a_staging_health.
+
+    Validates the daily-review surface for the Stage-1 Alt-A staging
+    cache that the operator promotes via `promote.py stage1` after
+    paper-mode validation.
+    """
+
+    @staticmethod
+    def _cache_payload(*, mode="empirical_when_available",
+                       cells_overridden=137,
+                       lineage=None,
+                       history_start="2021-04-01",
+                       history_end="2025-09-30"):
+        payload = {
+            "meta": {
+                "history_start_date": history_start,
+                "history_end_date": history_end,
+                "total_games": 12_300,
+                "valid_cells": 5_120,
+                "alt_a_smoothing": {
+                    "enabled": mode == "empirical_when_available",
+                    "mode": mode,
+                    "min_empirical_n_for_override": 0,
+                    "cells_total": 5_120,
+                    "cells_overridden": cells_overridden,
+                    "cells_kept_poisson_low_n": 0,
+                    "cells_kept_poisson_no_empirical": 0,
+                    "cells_kept_poisson_invalid_empirical": 12,
+                    "line_overrides": {"po65": 50, "po75": 87},
+                    "mean_abs_delta_logit": 0.42,
+                    "mean_signed_delta": -0.05,
+                    "n_line_deltas": 137,
+                },
+            },
+            "cells": {},
+        }
+        if lineage is not None:
+            payload["lineage"] = lineage
+        return payload
+
+    @staticmethod
+    def _lineage(*, built_at_utc=None, git_sha="abc123",
+                 input_hashes=None):
+        from datetime import datetime, timezone
+        if built_at_utc is None:
+            built_at_utc = datetime.now(timezone.utc).isoformat().replace(
+                "+00:00", "Z",
+            )
+        return {
+            "schema_version": 1,
+            "built_at_utc": built_at_utc,
+            "builder_path": "cache/build_mlb_ou_cache.py",
+            "git_sha": git_sha,
+            "git_branch": "main",
+            "git_dirty": False,
+            "input_hashes": input_hashes or {},
+            "input_dir_summaries": {},
+            "python_version": "3.11.0",
+        }
+
+    def test_missing_staging_cache_fires_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            staging = tmp / "staging.json"  # does not exist
+            out = bdhr._stage1_alt_a_staging_health(
+                staging_path=staging,
+                production_path=tmp / "production.json",
+            )
+            self.assertEqual(out["staging"]["status"], "missing")
+            self.assertEqual(len(out["alerts"]), 1)
+            self.assertIn("staging cache not found", out["alerts"][0])
+            self.assertIn("stage1_ou_cache_alt_a", out["alerts"][0])
+
+    def test_ok_staging_cache_no_alerts(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            staging = tmp / "staging.json"
+            staging.write_text(
+                json.dumps(self._cache_payload(lineage=self._lineage())),
+                encoding="utf-8",
+            )
+            out = bdhr._stage1_alt_a_staging_health(
+                staging_path=staging,
+                production_path=tmp / "production_missing.json",
+            )
+            self.assertEqual(out["staging"]["status"], "ok")
+            self.assertEqual(out["alerts"], [])
+            self.assertEqual(
+                out["staging"]["alt_a_smoothing"]["cells_overridden"],
+                137,
+            )
+
+    def test_poisson_mode_staging_fires_mode_mismatch_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            staging = tmp / "staging.json"
+            # Operator accidentally rebuilt staging in `poisson` mode:
+            # it's now identical to production -- defeats the purpose.
+            staging.write_text(
+                json.dumps(self._cache_payload(
+                    mode="poisson", cells_overridden=0,
+                    lineage=self._lineage(),
+                )),
+                encoding="utf-8",
+            )
+            out = bdhr._stage1_alt_a_staging_health(
+                staging_path=staging,
+                production_path=tmp / "production_missing.json",
+            )
+            mode_alerts = [
+                a for a in out["alerts"] if "mode `poisson`" in a
+            ]
+            self.assertEqual(len(mode_alerts), 1)
+            self.assertIn(
+                "empirical_when_available", mode_alerts[0],
+            )
+
+    def test_stale_staging_cache_fires_age_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            staging = tmp / "staging.json"
+            staging.write_text(
+                json.dumps(self._cache_payload(
+                    lineage=self._lineage(
+                        built_at_utc="2026-01-01T00:00:00Z",  # >14d stale
+                    ),
+                )),
+                encoding="utf-8",
+            )
+            out = bdhr._stage1_alt_a_staging_health(
+                staging_path=staging,
+                production_path=tmp / "production_missing.json",
+            )
+            stale_alerts = [
+                a for a in out["alerts"] if "warn" in a and "built" in a
+            ]
+            self.assertEqual(len(stale_alerts), 1, out["alerts"])
+
+    def test_input_divergence_against_production_fires_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            staging = tmp / "staging.json"
+            production = tmp / "production.json"
+            # Production and staging built against DIFFERENT versions of
+            # the same game corpus -- one of them needs a rebuild.
+            staging.write_text(
+                json.dumps(self._cache_payload(
+                    lineage=self._lineage(
+                        input_hashes={
+                            "data/games/regular": "sha256:NEW_HASH_AFTER_REFRESH",
+                        },
+                    ),
+                )),
+                encoding="utf-8",
+            )
+            # Production carries the OLD hash + is mode=poisson (the
+            # actual prod cache shape).
+            production.write_text(
+                json.dumps(self._cache_payload(
+                    mode="poisson",
+                    cells_overridden=0,
+                    lineage=self._lineage(
+                        input_hashes={
+                            "data/games/regular": "sha256:OLD_HASH_BEFORE_REFRESH",
+                        },
+                    ),
+                )),
+                encoding="utf-8",
+            )
+            out = bdhr._stage1_alt_a_staging_health(
+                staging_path=staging,
+                production_path=production,
+            )
+            self.assertEqual(len(out["input_divergences"]), 1)
+            self.assertEqual(
+                out["input_divergences"][0]["input_path"],
+                "data/games/regular",
+            )
+            divergence_alerts = [
+                a for a in out["alerts"]
+                if "disagree on" in a and "input hash" in a
+            ]
+            self.assertEqual(len(divergence_alerts), 1)
+
+    def test_matching_input_hashes_no_divergence(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            staging = tmp / "staging.json"
+            production = tmp / "production.json"
+            same_hash = {"data/games/regular": "sha256:SAME_HASH"}
+            staging.write_text(
+                json.dumps(self._cache_payload(
+                    lineage=self._lineage(input_hashes=same_hash),
+                )),
+                encoding="utf-8",
+            )
+            production.write_text(
+                json.dumps(self._cache_payload(
+                    mode="poisson", cells_overridden=0,
+                    lineage=self._lineage(input_hashes=same_hash),
+                )),
+                encoding="utf-8",
+            )
+            out = bdhr._stage1_alt_a_staging_health(
+                staging_path=staging,
+                production_path=production,
+            )
+            self.assertEqual(out["input_divergences"], [])
+
+    def test_corrupt_staging_file_fires_check_error_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            staging = tmp / "staging.json"
+            staging.write_text("{not valid json", encoding="utf-8")
+            out = bdhr._stage1_alt_a_staging_health(
+                staging_path=staging,
+                production_path=tmp / "production_missing.json",
+            )
+            self.assertEqual(out["staging"]["status"], "check_error")
+            self.assertIn("error", out["staging"])
+            self.assertTrue(out["alerts"])
+            self.assertIn("unreadable", out["alerts"][0])
+
+    def test_notes_block_carries_stage1_alt_a_staging_prefix(self):
+        notes = bdhr._build_notes(
+            session_summary={}, bet_totals={}, candidate_rollup={},
+            log_health={},
+            stage1_alt_a_staging_health={
+                "alerts": ["staging cache built 30d ago ..."],
+            },
+        )
+        prefixed = [
+            n for n in notes if n.startswith("Stage1-alt-a-staging:")
+        ]
+        self.assertEqual(len(prefixed), 1)
+
+
 class Stage1CellLossHealthTests(unittest.TestCase):
     """Active #10 follow-up: daily-review block reads the Stage-1
     cell-conditional artifact and surfaces the trailing-30d Stage-1
@@ -4233,6 +5732,156 @@ class Stage1ShadowOverrideHealthTests(unittest.TestCase):
         )
         prefixed = [n for n in notes if n.startswith("Stage1-shadow:")]
         self.assertEqual(len(prefixed), 1)
+
+    # 2026-05-19 follow-up: cohort breakdown surface tests.
+    def _write_report_with_cohort(
+        self, path: Path, *,
+        most_improved=None, regressions=None,
+        highest_coverage=None, largest_alt_b_savings=None,
+        n_bets_total: int = 87,
+    ):
+        cohort = {
+            "n_bets_total": n_bets_total,
+            "min_n_per_cohort": 5,
+            "by_dimension": {},  # not consumed by the daily-review block
+            "top_cohorts": {
+                "most_improved": most_improved or [],
+                "regressions": regressions or [],
+                "highest_coverage": highest_coverage or [],
+                "largest_alt_b_savings": largest_alt_b_savings or [],
+            },
+        }
+        payload = {
+            "schema_version": 1,
+            "generated_at_utc": "2026-05-19T10:00:00Z",
+            "n_bets": 87,
+            "windows": {
+                "trailing_30d": {
+                    "date_range": ["2026-04-19", "2026-05-18"],
+                    "n_bets": 87,
+                    "production": {"bias": 0.27, "mean_p3": 0.92,
+                                   "mean_won": 0.65},
+                    "alt_a_empirical_when_available": {
+                        "mean_p3": 0.86, "mean_won": 0.65, "bias": 0.21,
+                        "n_changed": 32, "n_coverage_rate": 0.37,
+                        "bias_delta_vs_prod_pp": 6.0,
+                    },
+                    "alt_b_block_fallback_level_2plus": {
+                        "n_blocked": 6, "n_kept": 81,
+                        "kept_bias": 0.27, "blocked_total_profit": -15.0,
+                        "blocked_n_wins": 3, "blocked_n_losses": 3,
+                        "counterfactual_profit_delta_usd": 15.0,
+                    },
+                    "recommendations": [],
+                },
+            },
+            "cohort_breakdown_trailing_30d": cohort,
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_cohort_breakdown_surfaced_in_payload(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "shadow.json"
+            self._write_report_with_cohort(
+                path,
+                most_improved=[{
+                    "dimension": "edge_bucket", "bucket": ">=0.22",
+                    "n_bets": 12, "bias_delta_vs_prod_pp": 14.5,
+                    "coverage_rate": 0.50,
+                }],
+            )
+            out = bdhr._stage1_shadow_override_health(
+                report_path=path, session_date="2026-05-19",
+            )
+            self.assertIn("cohort_breakdown_30d", out)
+            cb = out["cohort_breakdown_30d"]
+            self.assertEqual(cb["n_bets_total"], 87)
+            self.assertEqual(len(cb["most_improved"]), 1)
+            self.assertEqual(cb["most_improved"][0]["bucket"], ">=0.22")
+
+    def test_cohort_most_improved_fires_scoped_promotion_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "shadow.json"
+            self._write_report_with_cohort(
+                path,
+                most_improved=[{
+                    "dimension": "edge_bucket", "bucket": ">=0.22",
+                    "n_bets": 12, "bias_delta_vs_prod_pp": 14.5,
+                    "coverage_rate": 0.50,
+                }],
+            )
+            out = bdhr._stage1_shadow_override_health(
+                report_path=path, session_date="2026-05-19",
+            )
+            scoped_alerts = [
+                a for a in out["alerts"]
+                if "scoped promotion" in a
+            ]
+            self.assertEqual(len(scoped_alerts), 1)
+            self.assertIn("edge_bucket=>=0.22", scoped_alerts[0])
+            self.assertIn("+14.50pp", scoped_alerts[0])
+
+    def test_cohort_below_1pp_does_not_fire_scoped_alert(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "shadow.json"
+            self._write_report_with_cohort(
+                path,
+                most_improved=[{
+                    "dimension": "edge_bucket", "bucket": ">=0.22",
+                    "n_bets": 12, "bias_delta_vs_prod_pp": 0.5,
+                    "coverage_rate": 0.50,
+                }],
+            )
+            out = bdhr._stage1_shadow_override_health(
+                report_path=path, session_date="2026-05-19",
+            )
+            self.assertEqual(
+                [a for a in out["alerts"] if "scoped promotion" in a],
+                [],
+            )
+
+    def test_cohort_regression_fires_alert_at_minus_2pp(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "shadow.json"
+            self._write_report_with_cohort(
+                path,
+                regressions=[{
+                    "dimension": "line_bucket", "bucket": "10.5",
+                    "n_bets": 8, "bias_delta_vs_prod_pp": -4.0,
+                    "coverage_rate": 0.25,
+                }],
+            )
+            out = bdhr._stage1_shadow_override_health(
+                report_path=path, session_date="2026-05-19",
+            )
+            regression_alerts = [
+                a for a in out["alerts"]
+                if "REGRESSES" in a
+            ]
+            self.assertEqual(len(regression_alerts), 1)
+            self.assertIn("line_bucket=10.5", regression_alerts[0])
+
+    def test_cohort_small_regression_does_not_fire_alert(self):
+        """Regression below -2pp threshold doesn't alert -- avoids
+        noise on small cohort fluctuations.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "shadow.json"
+            self._write_report_with_cohort(
+                path,
+                regressions=[{
+                    "dimension": "line_bucket", "bucket": "10.5",
+                    "n_bets": 8, "bias_delta_vs_prod_pp": -1.0,
+                    "coverage_rate": 0.25,
+                }],
+            )
+            out = bdhr._stage1_shadow_override_health(
+                report_path=path, session_date="2026-05-19",
+            )
+            self.assertEqual(
+                [a for a in out["alerts"] if "REGRESSES" in a],
+                [],
+            )
 
 
 if __name__ == "__main__":

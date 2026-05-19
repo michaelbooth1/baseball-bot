@@ -411,6 +411,252 @@ class PayloadAndMarkdownTests(unittest.TestCase):
         self.assertIn("Stage-1 shadow-override report", md)
 
 
+class CohortBreakdownTests(unittest.TestCase):
+    """2026-05-19 follow-up: cohort breakdown of Alt A across 5
+    dimensions (edge / inning / line / ask / current_state_edge).
+
+    Validates:
+      - cohort bucketers map ranges correctly
+      - aggregate_cohort computes per-cohort bias delta + Alt B P&L
+      - build_cohort_breakdown groups bets per dimension + per bucket
+      - top_cohorts surfaces most_improved / regressions /
+        highest_coverage / largest_alt_b_savings sorted correctly
+      - cohorts below min_n_per_cohort are aggregated but excluded
+        from the top_cohorts summary
+    """
+
+    def test_edge_bucketer_ranges(self):
+        self.assertEqual(so._edge_bucket(None), "missing")
+        self.assertEqual(so._edge_bucket(0.10), "<0.15")
+        self.assertEqual(so._edge_bucket(0.16), "0.15-0.18")
+        self.assertEqual(so._edge_bucket(0.20), "0.18-0.22")
+        self.assertEqual(so._edge_bucket(0.25), ">=0.22")
+
+    def test_inning_bucketer_ranges(self):
+        self.assertEqual(so._inning_bucket(None), "missing")
+        self.assertEqual(so._inning_bucket(3), "<=5")
+        self.assertEqual(so._inning_bucket(5), "<=5")
+        self.assertEqual(so._inning_bucket(6), "6")
+        self.assertEqual(so._inning_bucket(7), "7")
+        self.assertEqual(so._inning_bucket(9), ">=8")
+
+    def test_line_bucketer_ranges(self):
+        self.assertEqual(so._line_bucket(None), "missing")
+        self.assertEqual(so._line_bucket(6.5), "<=7.5")
+        self.assertEqual(so._line_bucket(8.5), "8.5")
+        self.assertEqual(so._line_bucket(9.5), "9.5")
+        self.assertEqual(so._line_bucket(11.5), ">=10.5")
+
+    def test_ask_bucketer_ranges(self):
+        self.assertEqual(so._ask_bucket(None), "missing")
+        self.assertEqual(so._ask_bucket(0.40), "<0.55")
+        self.assertEqual(so._ask_bucket(0.65), "0.55-0.70")
+        self.assertEqual(so._ask_bucket(0.80), "0.70-0.85")
+        self.assertEqual(so._ask_bucket(0.90), ">=0.85")
+
+    def test_current_state_edge_bucketer_ranges(self):
+        self.assertEqual(so._current_state_edge_bucket(None), "missing")
+        self.assertEqual(so._current_state_edge_bucket(-0.01), "<0.00")
+        self.assertEqual(so._current_state_edge_bucket(0.02), "0.00-0.03")
+        self.assertEqual(so._current_state_edge_bucket(0.04), "0.03-0.06")
+        self.assertEqual(so._current_state_edge_bucket(0.08), ">=0.06")
+
+    def test_project_bet_carries_new_cohort_fields(self):
+        bet = so.project_bet(_row(
+            edge_at_ask=0.20, decision_ask=0.70,
+            current_state_value_edge=0.05,
+        ))
+        self.assertAlmostEqual(bet.edge_at_ask, 0.20)
+        self.assertAlmostEqual(bet.decision_ask, 0.70)
+        self.assertAlmostEqual(bet.current_state_value_edge, 0.05)
+
+    def test_project_bet_falls_back_to_alias_columns(self):
+        """`edge` (alias) + `entry_ask` (alias) propagate when the
+        canonical column names are missing. Important for backward-
+        compat with older training-table rows."""
+        row = _row()
+        # Drop canonical fields; populate aliases.
+        for k in (
+            "edge_at_ask", "decision_ask", "current_state_value_edge",
+        ):
+            row.pop(k, None)
+        row["edge"] = 0.18
+        row["entry_ask"] = 0.65
+        bet = so.project_bet(row)
+        self.assertAlmostEqual(bet.edge_at_ask, 0.18)
+        self.assertAlmostEqual(bet.decision_ask, 0.65)
+        self.assertIsNone(bet.current_state_value_edge)
+
+    def test_aggregate_cohort_empty_returns_none_fields(self):
+        c = so._aggregate_cohort([])
+        self.assertEqual(c["n_bets"], 0)
+        self.assertIsNone(c["production"]["bias"])
+        self.assertIsNone(c["alt_a"]["bias_delta_vs_prod_pp"])
+
+    def test_aggregate_cohort_computes_alt_a_delta(self):
+        """5 bets: poisson=0.9, empirical=0.5, won=0 -> bias_prod=+0.9,
+        bias_alt_a=+0.5, delta=+0.40 (= +40pp).
+        """
+        bets = [
+            so.project_bet(_row(
+                base_fair_value=0.9, fair_value=0.9,
+                inferred_state_base_empirical=0.5, target_win=0,
+            ))
+            for _ in range(5)
+        ]
+        c = so._aggregate_cohort(bets)
+        self.assertEqual(c["n_bets"], 5)
+        self.assertAlmostEqual(c["production"]["bias"], 0.9, places=4)
+        self.assertAlmostEqual(c["alt_a"]["bias"], 0.5, places=4)
+        self.assertAlmostEqual(
+            c["alt_a"]["bias_delta_vs_prod_pp"], 40.0, places=2,
+        )
+
+    def test_build_cohort_breakdown_groups_by_each_dimension(self):
+        bets = [
+            so.project_bet(_row(edge_at_ask=0.10, inning=3, line=6.5)),
+            so.project_bet(_row(edge_at_ask=0.20, inning=6, line=8.5)),
+            so.project_bet(_row(edge_at_ask=0.25, inning=8, line=10.5)),
+        ]
+        breakdown = so.build_cohort_breakdown(
+            bets, min_n_per_cohort=1,
+        )
+        # All 5 dimensions present
+        for dim in (
+            "edge_bucket", "inning_bucket", "line_bucket",
+            "ask_bucket", "current_state_edge_bucket",
+        ):
+            self.assertIn(dim, breakdown["by_dimension"])
+        # Per-bucket aggregates
+        edge_buckets = breakdown["by_dimension"]["edge_bucket"]
+        self.assertEqual(edge_buckets["<0.15"]["n_bets"], 1)
+        self.assertEqual(edge_buckets["0.18-0.22"]["n_bets"], 1)
+        self.assertEqual(edge_buckets[">=0.22"]["n_bets"], 1)
+
+    def test_top_cohorts_most_improved_sorted_descending(self):
+        """One cohort with big Alt A improvement, one with small,
+        one with regression. `most_improved` should rank biggest first.
+        """
+        # Cohort 1 (edge<0.15): 5 bets, big Alt A win
+        cohort_1 = [
+            so.project_bet(_row(
+                edge_at_ask=0.10,
+                base_fair_value=0.90, fair_value=0.90,
+                inferred_state_base_empirical=0.50, target_win=0,
+            ))
+            for _ in range(5)
+        ]
+        # Cohort 2 (edge>=0.22): 5 bets, small Alt A delta
+        cohort_2 = [
+            so.project_bet(_row(
+                edge_at_ask=0.25,
+                base_fair_value=0.90, fair_value=0.90,
+                inferred_state_base_empirical=0.85, target_win=0,
+            ))
+            for _ in range(5)
+        ]
+        breakdown = so.build_cohort_breakdown(
+            cohort_1 + cohort_2, min_n_per_cohort=5,
+        )
+        most_improved = breakdown["top_cohorts"]["most_improved"]
+        self.assertGreater(len(most_improved), 0)
+        # First entry should be cohort_1 (larger delta)
+        first = most_improved[0]
+        self.assertEqual(first["bucket"], "<0.15")
+        # Cohort 1: bias 0.9 -> 0.5 = 40pp; cohort 2: 0.9 -> 0.85 = 5pp
+        self.assertGreater(first["bias_delta_vs_prod_pp"], 30.0)
+
+    def test_top_cohorts_regressions_only_negative_deltas(self):
+        """A cohort where Alt A makes bias WORSE shows up in
+        `regressions`. Bias direction matters: when bias_prod is
+        negative (model UNDER-predicts), an empirical that is MORE
+        negative makes bias more negative. The signed delta should
+        flag it as a regression.
+        """
+        # 5 bets: poisson=0.30, empirical=0.10, won=1 (every bet wins)
+        # bias_prod = 0.30 - 1.00 = -0.70 (under-prediction)
+        # bias_alt_a = 0.10 - 1.00 = -0.90 (MORE under-prediction)
+        # signed delta = bias_alt_a - bias_prod = -0.20 -> *100 = -20pp
+        # (negative because bias_prod < 0 path: delta = alt_a - prod)
+        bets = [
+            so.project_bet(_row(
+                edge_at_ask=0.10,
+                base_fair_value=0.30, fair_value=0.30,
+                inferred_state_base_empirical=0.10, target_win=1,
+            ))
+            for _ in range(5)
+        ]
+        breakdown = so.build_cohort_breakdown(bets, min_n_per_cohort=5)
+        regressions = breakdown["top_cohorts"]["regressions"]
+        # The same 5 bets fall into ONE bucket per dimension (5 dims),
+        # so all 5 dimension entries will appear as regressions. The
+        # top_cohorts list is capped at 5 entries.
+        self.assertEqual(len(regressions), 5)
+        for r in regressions:
+            self.assertLess(r["bias_delta_vs_prod_pp"], 0.0)
+
+    def test_top_cohorts_excludes_small_samples(self):
+        """Cohort with n < min_n_per_cohort is in `by_dimension`
+        but NOT in `top_cohorts`."""
+        bets = [
+            so.project_bet(_row(
+                edge_at_ask=0.10,
+                base_fair_value=0.90, fair_value=0.90,
+                inferred_state_base_empirical=0.50, target_win=0,
+            ))
+            for _ in range(3)
+        ]
+        breakdown = so.build_cohort_breakdown(bets, min_n_per_cohort=5)
+        edge_buckets = breakdown["by_dimension"]["edge_bucket"]
+        # Bucket exists in per-dimension table
+        self.assertEqual(edge_buckets["<0.15"]["n_bets"], 3)
+        # But not in top_cohorts (3 < 5 = min_n)
+        most_improved = breakdown["top_cohorts"]["most_improved"]
+        self.assertEqual(
+            [e for e in most_improved if e["dimension"] == "edge_bucket"],
+            [],
+        )
+
+    def test_top_cohorts_largest_alt_b_savings_only_positive(self):
+        """Cohorts with $0 or negative Alt B savings are excluded
+        from the `largest_alt_b_savings` summary view in the markdown
+        (but still present in the raw flat list)."""
+        # All bets at fallback_level=2 are losers => Alt B saves money
+        bets = [
+            so.project_bet(_row(
+                edge_at_ask=0.20,
+                inferred_state_fallback_level=2,
+                target_win=0, target_profit=-10.0,
+            ))
+            for _ in range(5)
+        ]
+        breakdown = so.build_cohort_breakdown(bets, min_n_per_cohort=5)
+        savings = breakdown["top_cohorts"]["largest_alt_b_savings"]
+        self.assertGreater(len(savings), 0)
+        for e in savings:
+            # All entries in the summary have positive savings
+            # OR are 0 (when no bets were blocked).
+            self.assertGreaterEqual(e["alt_b_counterfactual_usd"], 0.0)
+
+    def test_payload_includes_cohort_breakdown_trailing_30d(self):
+        payload = so.build_payload(
+            [_bet() for _ in range(3)],
+        )
+        self.assertIn("cohort_breakdown_trailing_30d", payload)
+        ct = payload["cohort_breakdown_trailing_30d"]
+        self.assertIn("by_dimension", ct)
+        self.assertIn("top_cohorts", ct)
+        self.assertEqual(ct["n_bets_total"], 3)
+
+    def test_markdown_renders_cohort_section_when_present(self):
+        payload = so.build_payload(
+            [_bet() for _ in range(3)],
+        )
+        md = so.render_markdown(payload)
+        self.assertIn("Cohort breakdown", md)
+        self.assertIn("Per-dimension detail", md)
+
+
 class EndToEndTests(unittest.TestCase):
     def test_main_writes_json_and_md(self):
         with tempfile.TemporaryDirectory() as tmp:

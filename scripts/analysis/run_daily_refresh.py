@@ -1533,6 +1533,46 @@ def build_refresh_steps(config: RefreshConfig, session_dates: Sequence[str], max
                 command=[],
             )
         )
+        # Active #8 Alt-A staging cache (2026-05-17). Same history window
+        # as the production builder, but `--smoothing-mode
+        # empirical_when_available` materializes the runtime's on-the-fly
+        # Alt-A shadow (today's shadow-override report: -6pp aggregate
+        # bias on 30d) as a real cache file. Writes to a SEPARATE staging
+        # path; NEVER auto-promoted. Operator runs `promote.py stage1
+        # --source cache/mlb_ou_cache_alt_a.staging.json` after the
+        # paper-mode validation period clears its bar.
+        steps.append(
+            RefreshStep(
+                name="stage1_ou_cache_alt_a",
+                description=(
+                    "Rebuild Stage-1 O/U cache in Alt-A mode "
+                    "(empirical-when-available) to a SEPARATE staging "
+                    "path. No auto-promote. Same history window + "
+                    "staleness check as the production Stage-1 step."
+                ),
+                command=[
+                    _python(),
+                    _script("cache/build_mlb_ou_cache.py"),
+                    "--season-type",
+                    "regular",
+                    "--min-season",
+                    str(stage1_min_season),
+                    "--max-season",
+                    str(stage1_max_season),
+                    "--smoothing-mode",
+                    "empirical_when_available",
+                    "--out",
+                    str(PROJECT_DIR / "cache" / "mlb_ou_cache_alt_a.staging.json"),
+                ],
+                staleness_check=StalenessCheck(
+                    output_path=PROJECT_DIR / "cache" / "mlb_ou_cache_alt_a.staging.json",
+                    input_paths=(),
+                    input_dir_mtime_roots=(
+                        PROJECT_DIR / "data" / "games" / "regular",
+                    ),
+                ),
+            )
+        )
 
     if config.refresh_active_schedule:
         # Schedule-only refresh covering PRIOR MONTH + ACTIVE MONTH so
@@ -1881,12 +1921,23 @@ def build_refresh_steps(config: RefreshConfig, session_dates: Sequence[str], max
             ),
             RefreshStep(
                 name="unified_signals",
-                description="Rebuild canonical event-level signal table.",
+                description=(
+                    "Rebuild canonical event-level signal table. "
+                    "Mode=both folds paper sessions in alongside live "
+                    "(2026-05-19 fix discovered during paper-trading "
+                    "audit; previously hardcoded live-only, which "
+                    "blocked the paper-mode runway from feeding "
+                    "loss-attribution + shadow-override + training "
+                    "table). Mode tag on each row preserves the "
+                    "live/paper distinction for downstream consumers "
+                    "that need to filter (any metric using "
+                    "realized P&L or fill behavior)."
+                ),
                 command=[
                     _python(),
                     _script("scripts/analysis/build_unified_signal_table.py"),
                     "--mode",
-                    "live",
+                    "both",
                     *max_date_args,
                     *strict_flag,
                 ],
@@ -1940,12 +1991,27 @@ def build_refresh_steps(config: RefreshConfig, session_dates: Sequence[str], max
             ),
             RefreshStep(
                 name="signal_training_table",
-                description="Rebuild leakage-aware training table.",
+                description=(
+                    "Rebuild leakage-aware training table. Mode=both "
+                    "pairs with the unified_signals --mode both change "
+                    "(2026-05-19) so paper bets carrying Alt-A shadow "
+                    "fields reach loss-attribution + shadow-override "
+                    "reports. Safe because both reports use the `won` "
+                    "boolean (counterfactual: did the over/under hit), "
+                    "which is identical for paper and live bets -- "
+                    "paper's 100% taker assumption only distorts "
+                    "realized_profit/realized_executed, which these "
+                    "reports do not read. Other refresh steps that "
+                    "DO read fill behavior (clv_report, "
+                    "execution_diagnostics, ev_policy_backtest, "
+                    "queue_aware_execution_replay) stay --mode live "
+                    "intentionally."
+                ),
                 command=[
                     _python(),
                     _script("scripts/analysis/build_signal_training_table.py"),
                     "--mode",
-                    "live",
+                    "both",
                     *max_date_args,
                     *strict_flag,
                 ],

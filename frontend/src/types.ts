@@ -1,0 +1,130 @@
+/**
+ * TypeScript types for the daily-review JSON shape produced by
+ * `scripts/analysis/build_daily_human_review_report.py`. Only the
+ * fields the frontend reads are typed; the JSON has many more
+ * (16+ health blocks, deep diagnostics) and we treat the rest as
+ * `unknown` to avoid type-drift churn when the analysis layer
+ * adds new fields.
+ */
+
+export type ReviewIndex = {
+  dates: string[];
+  reviewsDir: string;
+};
+
+export type SessionSummary = {
+  orders_placed?: number | null;
+  orders_filled?: number | null;
+  wins?: number | null;
+  losses?: number | null;
+  total_profit?: number | null;
+  roi?: number | null;
+  total_bets?: number | null;
+  settled?: number | null;
+};
+
+export type BetTotals = {
+  count?: number;
+  filled?: number;
+  wins?: number;
+  losses?: number;
+  profit?: number;
+  roi?: number | null;
+  win_rate?: number | null;
+  avg_entry_ask?: number | null;
+  avg_limit_price?: number | null;
+  avg_fair_value?: number | null;
+  by_side?: {
+    over?: BetSideTotals;
+    under?: BetSideTotals;
+  };
+};
+
+export type BetSideTotals = {
+  count: number;
+  filled: number;
+  wins: number;
+  losses: number;
+  profit: number;
+  win_rate: number | null;
+  roi: number | null;
+};
+
+export type BetRow = {
+  bet_id?: string;
+  game?: string;
+  game_pk?: number;
+  away_abbrev?: string;
+  home_abbrev?: string;
+  line?: string;
+  side?: string;
+  entry_ask?: number | null;
+  fair_value?: number | null;
+  edge?: number | null;
+  inning?: number;
+  inning_state?: string;
+  stake?: number | null;
+  final_total?: number | null;
+  won?: boolean | null;
+  profit?: number | null;
+  inferred_state_base_empirical?: number | null;
+  fair_value_alt_empirical?: number | null;
+};
+
+/**
+ * Health blocks share a common surface: a list of free-form `alerts`
+ * strings. We don't type each block's deep fields; the UI counts
+ * alerts and surfaces status (green/yellow/red) based on the count.
+ */
+export type HealthBlock = {
+  alerts?: string[];
+  status?: string;
+  // Pass-through for block-specific fields the dedicated panels read.
+  [key: string]: unknown;
+};
+
+export type DailyReview = {
+  schema_version?: number;
+  generated_at_utc?: string;
+  session_date?: string;
+  mode?: string;
+  session_summary?: SessionSummary;
+  bet_totals?: BetTotals;
+  bets?: BetRow[];
+  notes?: string[];
+  source_files?: {
+    session?: string | null;
+    candidate_rollup?: string | null;
+    log?: string | null;
+  };
+  candidate_rollup_compact?: {
+    attempted_rows?: number;
+    written_rows?: number;
+    by_decision?: Record<string, number>;
+  };
+  // Health blocks (all optional; presence varies by ship date)
+  calibration_health?: HealthBlock;
+  fill_rate_health?: HealthBlock;
+  signal_quality_health?: HealthBlock;
+  regime_mix_health?: HealthBlock;
+  cohort_roi_health?: HealthBlock;
+  cohort_calibration_health?: HealthBlock;
+  loss_attribution_health?: HealthBlock;
+  cache_lineage_freshness_health?: HealthBlock;
+  stage1_cell_loss_health?: HealthBlock;
+  stage1_shadow_override_health?: HealthBlock;
+  cross_artifact_consistency_health?: HealthBlock;
+  stage1_alt_a_staging_health?: HealthBlock;
+  promotion_lag_health?: HealthBlock;
+  under_emission_health?: HealthBlock;
+  under_outcomes_counterfactual_health?: HealthBlock;
+  concept_drift_health?: HealthBlock;
+  drift_in_drift_health?: HealthBlock;
+  daemon_readiness_health?: HealthBlock;
+  under_book_coverage_health?: HealthBlock;
+  settlement_truth_health?: HealthBlock;
+  fast_demote_health?: HealthBlock;
+  gate_counterfactual_health?: HealthBlock;
+  log_health?: HealthBlock;
+  reconciler_summary?: HealthBlock;
+};

@@ -1,0 +1,406 @@
+/* MLB Bot Daily Review — minimal v1 styling.
+ *
+ * Design constraint: high information density (the daily review
+ * carries 17+ health blocks + per-bet detail + multi-day progress
+ * gates) so prefer compact, scannable layouts over generous
+ * whitespace. Dark-on-light because operators stare at this for
+ * long reads. Single accent color (blue) for interactive elements.
+ */
+
+:root {
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --border: #e2e6eb;
+  --border-strong: #cbd2db;
+  --text: #1f2933;
+  --text-muted: #6b7480;
+  --accent: #2563eb;
+  --accent-bg: #eff6ff;
+  --positive: #047857;
+  --negative: #b91c1c;
+  --neutral: #4b5563;
+  --warn-bg: #fffbeb;
+  --warn-border: #fcd34d;
+  --alert-bg: #fef2f2;
+  --alert-border: #fca5a5;
+  --info-bg: #eff6ff;
+  --info-border: #93c5fd;
+  --ok-bg: #f0fdf4;
+  --ok-border: #86efac;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 100vh;
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+  background: var(--card);
+  border-right: 1px solid var(--border);
+  padding: 16px 12px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.sidebar-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.sidebar-meta {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.date-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.date-button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+}
+.date-button:hover {
+  background: var(--accent-bg);
+}
+.date-button-selected {
+  background: var(--accent);
+  color: white;
+}
+.date-button-selected:hover {
+  background: var(--accent);
+}
+
+/* ---------- Main panel ---------- */
+.main {
+  padding: 20px 24px 48px;
+  max-width: 1200px;
+}
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.app-subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.error-banner {
+  background: var(--alert-bg);
+  border: 1px solid var(--alert-border);
+  padding: 10px 14px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  color: var(--negative);
+}
+.loading-banner {
+  background: var(--accent-bg);
+  border: 1px solid var(--info-border);
+  padding: 8px 14px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  font-style: italic;
+}
+
+/* ---------- Cards ---------- */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+}
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+.card-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.card-meta {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.empty-state {
+  color: var(--text-muted);
+  font-style: italic;
+  margin: 4px 0 0;
+}
+
+/* ---------- Session summary card ---------- */
+.session-date {
+  font-size: 22px;
+  margin: 0 0 4px;
+  display: inline-block;
+  margin-right: 12px;
+}
+.mode-badge {
+  display: inline-block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--text);
+  vertical-align: middle;
+}
+.mode-badge-paper { background: var(--accent-bg); color: var(--accent); }
+.mode-badge-live { background: #fee2e2; color: #b91c1c; }
+.generated-at {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.metric-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 16px;
+  margin-top: 8px;
+}
+.metric {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+.metric-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.metric-value {
+  font-size: 18px;
+  font-weight: 600;
+}
+.metric-positive { color: var(--positive); }
+.metric-negative { color: var(--negative); }
+.metric-neutral { color: var(--neutral); }
+
+/* ---------- Notes panel ---------- */
+.notes-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.note {
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  border-radius: 4px;
+  border-left: 3px solid var(--border-strong);
+  background: #fafbfc;
+  font-size: 13px;
+}
+.note-warn {
+  background: var(--warn-bg);
+  border-left-color: var(--warn-border);
+}
+.note-info {
+  background: var(--info-bg);
+  border-left-color: var(--info-border);
+}
+.note-neutral {
+  background: #fafbfc;
+}
+
+/* ---------- Progress milestones ---------- */
+.milestone-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.milestone {
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+.milestone:first-child {
+  border-top: none;
+  padding-top: 4px;
+}
+.milestone-title {
+  font-size: 14px;
+  margin: 0 0 2px;
+}
+.milestone-subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 10px;
+}
+.bar-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bar-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.bar-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+}
+.bar-current {
+  color: var(--text-muted);
+}
+.bar-current-ready {
+  color: var(--positive);
+  font-weight: 600;
+}
+.bar-track {
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+.bar-fill-ready {
+  background: var(--positive);
+}
+
+/* ---------- Bets table ---------- */
+.table-scroll {
+  overflow-x: auto;
+}
+.bets-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.bets-table th,
+.bets-table td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.bets-table th {
+  background: #fafbfc;
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.bets-table td.num,
+.bets-table th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.badge-win { background: var(--ok-bg); color: var(--positive); }
+.badge-loss { background: var(--alert-bg); color: var(--negative); }
+.bets-table tr.total-row td {
+  background: #fafbfc;
+  border-top: 2px solid var(--border-strong);
+  border-bottom: none;
+}
+
+/* ---------- Health status grid ---------- */
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+.health-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0;
+}
+.health-card summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.health-card summary::-webkit-details-marker {
+  display: none;
+}
+.health-label {
+  font-weight: 500;
+  font-size: 13px;
+}
+.health-status {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.health-card-ok {
+  background: var(--ok-bg);
+  border-color: var(--ok-border);
+}
+.health-card-ok .health-status { color: var(--positive); }
+.health-card-warn {
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+}
+.health-card-warn .health-status { color: #92400e; }
+.health-card-alert {
+  background: var(--alert-bg);
+  border-color: var(--alert-border);
+}
+.health-card-alert .health-status { color: var(--negative); }
+.health-card-missing {
+  background: #fafbfc;
+  color: var(--text-muted);
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.health-alerts {
+  list-style: disc;
+  padding: 0 12px 10px 30px;
+  margin: 0;
+  font-size: 12px;
+}
+.health-alerts li {
+  margin-bottom: 4px;
+  line-height: 1.4;
+}

@@ -27,6 +27,29 @@ DEFAULT_PAPER_ROOT = PROJECT_DIR / "data" / "paper_trading"
 DEFAULT_PROB_CALIBRATION_PATH = (
     PROJECT_DIR / "data" / "analysis_output" / "calibration" / "signal_win_calibration.json"
 )
+# Phase A5 (2026-05-19): UNDER-side probability calibrator artifact.
+# Trained separately (see scripts/analysis/calibrate_signal_probabilities.py
+# --side under). Loaded by the engine when --under-emission-mode is
+# `shadow` so each emitted UNDER candidate's FV passes through the same
+# calibration pipeline OVER uses.
+DEFAULT_PROB_CALIBRATION_UNDER_PATH = (
+    PROJECT_DIR
+    / "data"
+    / "analysis_output"
+    / "calibration"
+    / "signal_win_calibration_under.json"
+)
+# Phase A5 (2026-05-19): UNDER candidate emission mode.
+# `off` (default): the live engine does not emit UNDER candidates;
+# UNDER analysis runs only offline against the OVER candidate's
+# complement, which carries selection bias.
+# `shadow`: alongside every OVER candidate that reaches the FV phase,
+# the engine emits a sibling UNDER candidate row to the candidate
+# log. UNDER bets are NEVER placed (paper or live) -- pure logging
+# so the operator can validate UNDER signal quality before the
+# eventual paper-mode flip (B4 in the roadmap).
+DEFAULT_UNDER_EMISSION_MODE = "off"
+UNDER_EMISSION_MODES = ("off", "shadow")
 DEFAULT_EDGE_THRESHOLD           = 0.15   # [TR10] raised from 0.12 â€” edge [0.12,0.15) zone: 9 bets 55.6% WR -20.6% ROI
 DEFAULT_EDGE_THRESHOLD_HIGH_LINE = 0.16   # [TR10] raised from 0.13 proportionally with standard threshold
 DEFAULT_JUMP_THRESHOLD           = 0.06   # min ask rise over lookback window
@@ -417,8 +440,57 @@ def parse_trade_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace]
                    help=f"Gate 1 shadow: relax min_inning_high_line by this many innings (default: {DEFAULT_SHADOW_RELAXED_MIN_INNING_HIGH_LINE_OFFSET}).")
     p.add_argument("--prob-calibration-mode", choices=["off", "shadow", "enforce"], default=DEFAULT_PROB_CALIBRATION_MODE,
                    help=f"Probability calibration mode for fair_value (default: {DEFAULT_PROB_CALIBRATION_MODE}).")
+    # Active #8 prep (2026-05-17): Stage-1 Alt A shadow-empirical
+    # override. Mirrors --stage1-shadow-empirical-override on the
+    # live_engine CLI so paper mode can opt into per-tick Alt A
+    # logging too. SignalEngine reads `trade_args.stage1_shadow_empirical_mode`;
+    # the live CLI bridges its `--stage1-shadow-empirical-override` to
+    # the same attribute, so live + paper now share one runtime
+    # contract. Default `off`: no math, no logging change.
+    p.add_argument("--stage1-shadow-empirical-mode",
+                   dest="stage1_shadow_empirical_mode",
+                   choices=["off", "shadow"], default="off",
+                   help=(
+                       "Stage-1 Alt A (empirical-when-available) runtime "
+                       "mode. shadow = compute fair_value_alt_empirical "
+                       "alongside production fair_value on every candidate "
+                       "and log both; NO decision change. The offline "
+                       "build_stage1_shadow_override_report.py consumes "
+                       "the logged alt FVs to surface cumulative shadow "
+                       "improvement. (default: off)"
+                   ))
     p.add_argument("--prob-calibration-path", type=Path, default=DEFAULT_PROB_CALIBRATION_PATH,
                    help=f"Path to probability calibration artifact JSON (default: {DEFAULT_PROB_CALIBRATION_PATH}).")
+    # Phase A5 (2026-05-19): UNDER candidate emission. paper-only at
+    # first; the eventual paper-mode flip is gated by B4 in the
+    # roadmap (60-session UNDER validation milestone).
+    p.add_argument(
+        "--under-emission-mode",
+        type=str,
+        choices=UNDER_EMISSION_MODES,
+        default=DEFAULT_UNDER_EMISSION_MODE,
+        help=(
+            "UNDER candidate emission. `off` (default): no UNDER "
+            "candidates emitted by the live engine. `shadow`: alongside "
+            "every OVER candidate that reaches the FV phase, the engine "
+            "emits a sibling UNDER candidate row (decision_reason "
+            "tagged `shadow_under` when UNDER gates pass). NO UNDER "
+            "bets are placed in either mode -- this is observability "
+            "for Phase A5 of the bidirectional pivot; the eventual "
+            "UNDER paper-bet flip is a separate ship gated by B4 "
+            "validation."
+        ),
+    )
+    p.add_argument(
+        "--prob-calibration-under-path",
+        type=Path,
+        default=DEFAULT_PROB_CALIBRATION_UNDER_PATH,
+        help=(
+            f"Path to UNDER probability calibration artifact JSON "
+            f"(default: {DEFAULT_PROB_CALIBRATION_UNDER_PATH}). Loaded "
+            "when --under-emission-mode is `shadow`; otherwise unused."
+        ),
+    )
     p.add_argument("--shadow-no-score-drift-enabled", dest="shadow_no_score_drift_enabled",
                    action="store_true", default=DEFAULT_SHADOW_NO_SCORE_DRIFT_ENABLED,
                    help="Enable shadow candidate logging for no-score drift-low state-value setups.")

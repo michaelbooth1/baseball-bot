@@ -339,6 +339,52 @@ class SignalEngine(MLBPolymarketMonitor):
                 "decision change)"
             )
 
+        # Phase A5 (2026-05-19). UNDER candidate emission. Default
+        # `off`; operator opts in via `--under-emission-mode shadow`
+        # on live_engine_cli.py. When `shadow`, alongside every OVER
+        # candidate that reaches the FV phase, the engine emits a
+        # sibling UNDER candidate row (decision_reason = `shadow_under`
+        # when UNDER gates pass). NO UNDER bets are placed in either
+        # mode -- pure observability for the bidirectional pivot.
+        self._under_emission_mode = str(
+            getattr(trade_args, "under_emission_mode", "off") or "off"
+        ).strip().lower()
+        if self._under_emission_mode not in {"off", "shadow"}:
+            LOGGER.warning(
+                "Unknown UNDER emission mode '%s'; forcing off.",
+                self._under_emission_mode,
+            )
+            self._under_emission_mode = "off"
+        self._under_prob_calibrator: Optional[ProbabilityCalibrator] = None
+        if self._under_emission_mode == "shadow":
+            under_cal_path = Path(
+                getattr(trade_args, "prob_calibration_under_path",
+                        DEFAULT_PROB_CALIBRATION_UNDER_PATH)
+            )
+            try:
+                self._under_prob_calibrator = ProbabilityCalibrator.from_path(
+                    under_cal_path,
+                )
+                LOGGER.info(
+                    "UNDER emission mode: shadow (loaded UNDER "
+                    "calibrator from %s, method=%s; emits sibling "
+                    "UNDER candidate rows alongside every OVER FV-"
+                    "phase tick; NO bets placed)",
+                    under_cal_path,
+                    self._under_prob_calibrator.method,
+                )
+                _log_artifact_lineage_summary(
+                    "calibrator_under", under_cal_path,
+                )
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning(
+                    "UNDER calibrator unavailable at %s (%s); UNDER "
+                    "emission continues with identity calibration "
+                    "(under_fv = 1 - over_fv_raw uncalibrated).",
+                    under_cal_path, exc,
+                )
+                self._under_prob_calibrator = None
+
         # Phase C C1+C2+C3+C4 shadow (2026-05-17). Two-sided quote
         # engine. Default `off`; operator opts in via
         # `--quote-engine-mode shadow` from live_engine_cli.py. When

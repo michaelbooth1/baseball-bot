@@ -284,6 +284,107 @@ def extract_lineage_from_artifact(payload: Dict[str, Any]) -> Optional[Dict[str,
     return None
 
 
+# ---------------------------------------------------------------------------
+# Active #16 v4 (2026-05-17): cross-artifact consistency check.
+#
+# Every artifact stamped by lineage v2 records `input_hashes[path]` for the
+# files it was built from. After build time, those inputs may be updated by
+# the next daily refresh -- when that happens, the downstream artifact is
+# "stale relative to its inputs" until it rebuilds.
+#
+# `compare_input_hash` reads the recorded hash + computes the CURRENT hash
+# and classifies the relationship. The daily-review block consumes these
+# per-(artifact, input) verdicts and surfaces cross-artifact mismatches
+# (e.g. "calibrator was built against Stage-1 sha abc123 but current
+# Stage-1 has sha def456").
+# ---------------------------------------------------------------------------
+
+
+CONSISTENCY_MATCH = "match"
+CONSISTENCY_STALE = "stale"
+CONSISTENCY_NOT_TRACKED = "not_tracked"
+CONSISTENCY_CURRENT_MISSING = "current_missing"
+
+
+def compare_input_hash(
+    lineage: Optional[Dict[str, Any]],
+    input_path: Union[str, Path],
+    *,
+    project_root: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Compare a lineage's recorded hash for `input_path` against the
+    file's current hash on disk. Returns a verdict dict:
+
+      {
+        "input_path": "<repo-relative>",
+        "status": "match" | "stale" | "not_tracked" | "current_missing",
+        "recorded_hash": "<sha256:...>" | None,
+        "current_hash": "<sha256:...>" | None,
+      }
+
+    `not_tracked` means the lineage exists but didn't record a hash
+    for this path (the artifact may not depend on it, or pre-V2 lineage
+    didn't capture it). `current_missing` means the file doesn't exist
+    on disk now -- a different class of issue than `stale`.
+
+    Path resolution: when `project_root` is supplied, the path is
+    resolved relative to it AND the lineage's `input_hashes` keys are
+    treated as repo-relative paths (matching how compute_lineage stores
+    them). Without project_root, the lookup is exact-match.
+
+    Best-effort throughout: any failure returns `not_tracked`. The
+    consistency check must NEVER raise -- a broken check stamp is
+    less useful than a silent skip in the daily review.
+    """
+    out: Dict[str, Any] = {
+        "input_path": str(input_path),
+        "status": CONSISTENCY_NOT_TRACKED,
+        "recorded_hash": None,
+        "current_hash": None,
+    }
+    if lineage is None or not isinstance(lineage, dict):
+        return out
+    input_hashes = lineage.get("input_hashes") or {}
+    if not isinstance(input_hashes, dict):
+        return out
+
+    p = Path(input_path)
+    rel_key: Optional[str] = None
+    if project_root is not None:
+        try:
+            rel_key = p.resolve().relative_to(
+                project_root.resolve()
+            ).as_posix()
+        except (ValueError, OSError):
+            rel_key = None
+
+    # Try repo-relative key first (the canonical storage form), then
+    # fall back to the as-passed string.
+    recorded_hash = None
+    for candidate_key in (rel_key, str(input_path), str(p), p.as_posix()):
+        if candidate_key is None:
+            continue
+        if candidate_key in input_hashes:
+            recorded_hash = input_hashes[candidate_key]
+            out["input_path"] = candidate_key
+            break
+
+    if recorded_hash is None:
+        return out
+    out["recorded_hash"] = recorded_hash
+
+    current_hash = hash_file(p)
+    out["current_hash"] = current_hash
+    if current_hash is None:
+        out["status"] = CONSISTENCY_CURRENT_MISSING
+        return out
+    out["status"] = (
+        CONSISTENCY_MATCH if current_hash == recorded_hash
+        else CONSISTENCY_STALE
+    )
+    return out
+
+
 def _read_lineage_from_path(path: Path) -> Optional[Dict[str, Any]]:
     """Best-effort: open `path` as JSON and return its lineage block.
     Returns None when the file is missing, unreadable, or has no
