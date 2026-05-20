@@ -1786,71 +1786,13 @@ def build_refresh_steps(config: RefreshConfig, session_dates: Sequence[str], max
                     *strict_flag,
                 ],
             ),
-            RefreshStep(
-                name="calibrate_signal_probabilities",
-                description=(
-                    "Refit fair_value probability calibration (per-family Platt/"
-                    "isotonic) from the calibration-opportunity training table."
-                ),
-                command=[
-                    _python(),
-                    _script("scripts/analysis/calibrate_signal_probabilities.py"),
-                    "--input-path",
-                    str(
-                        PROJECT_DIR
-                        / "data"
-                        / "analysis_output"
-                        / "calibration_opportunity_training"
-                        / "calibration_opportunity_training_table.jsonl"
-                    ),
-                    "--input-kind",
-                    "auto",
-                    "--family-mode",
-                    "separate",
-                    "--artifact-purpose",
-                    "runtime-refit",
-                    "--mode",
-                    "live",
-                    *max_date_args,
-                    *strict_flag,
-                ],
-            ),
-            RefreshStep(
-                name="calibrate_signal_probabilities_under",
-                description=(
-                    "Phase A2 (2026-05-16): refit the UNDER-side fair_value "
-                    "probability calibration with flipped labels + raw probs. "
-                    "Same per-family Platt/isotonic machinery as Over; "
-                    "separate artifact (signal_win_calibration_under.json) "
-                    "and separate stability-gate selection history. UNDER "
-                    "calibration stays offline / shadow until Phase B/C "
-                    "wire it into the live engine."
-                ),
-                command=[
-                    _python(),
-                    _script("scripts/analysis/calibrate_signal_probabilities.py"),
-                    "--side",
-                    "under",
-                    "--input-path",
-                    str(
-                        PROJECT_DIR
-                        / "data"
-                        / "analysis_output"
-                        / "calibration_opportunity_training"
-                        / "calibration_opportunity_training_table.jsonl"
-                    ),
-                    "--input-kind",
-                    "auto",
-                    "--family-mode",
-                    "separate",
-                    "--artifact-purpose",
-                    "runtime-refit",
-                    "--mode",
-                    "live",
-                    *max_date_args,
-                    *strict_flag,
-                ],
-            ),
+            # Calibrate steps moved DOWN to after concept_drift_report
+            # (2026-05-20 audit fix: previously the calibrators ran here
+            # at refresh start, recording the PRIOR-DAY concept_drift hash;
+            # then concept_drift_report rebuilt later in the same refresh,
+            # leaving the calibrator's lineage hash stale -- 2 of 7
+            # cross-artifact alerts every day. The reorder ensures the
+            # calibrator records the FRESH concept_drift hash.)
             RefreshStep(
                 name="model_maturity_report",
                 description="Rebuild model family maturity/readiness report.",
@@ -1965,6 +1907,77 @@ def build_refresh_steps(config: RefreshConfig, session_dates: Sequence[str], max
                         / "unified_signals" / "signals_master.jsonl",
                     ),
                 ),
+            ),
+            # Calibrators MUST run AFTER concept_drift_report so their
+            # lineage hashes reference the freshly-rebuilt drift report
+            # (the calibrator records concept_drift_report_path in
+            # input_paths -- see calibrate_signal_probabilities.py:1561).
+            # Pre-2026-05-20: these ran early and recorded yesterday's
+            # drift hash, producing daily cross-artifact stale alerts.
+            RefreshStep(
+                name="calibrate_signal_probabilities",
+                description=(
+                    "Refit fair_value probability calibration (per-family Platt/"
+                    "isotonic) from the calibration-opportunity training table."
+                ),
+                command=[
+                    _python(),
+                    _script("scripts/analysis/calibrate_signal_probabilities.py"),
+                    "--input-path",
+                    str(
+                        PROJECT_DIR
+                        / "data"
+                        / "analysis_output"
+                        / "calibration_opportunity_training"
+                        / "calibration_opportunity_training_table.jsonl"
+                    ),
+                    "--input-kind",
+                    "auto",
+                    "--family-mode",
+                    "separate",
+                    "--artifact-purpose",
+                    "runtime-refit",
+                    "--mode",
+                    "live",
+                    *max_date_args,
+                    *strict_flag,
+                ],
+            ),
+            RefreshStep(
+                name="calibrate_signal_probabilities_under",
+                description=(
+                    "Phase A2 (2026-05-16): refit the UNDER-side fair_value "
+                    "probability calibration with flipped labels + raw probs. "
+                    "Same per-family Platt/isotonic machinery as Over; "
+                    "separate artifact (signal_win_calibration_under.json) "
+                    "and separate stability-gate selection history. UNDER "
+                    "calibration stays offline / shadow until Phase B/C "
+                    "wire it into the live engine."
+                ),
+                command=[
+                    _python(),
+                    _script("scripts/analysis/calibrate_signal_probabilities.py"),
+                    "--side",
+                    "under",
+                    "--input-path",
+                    str(
+                        PROJECT_DIR
+                        / "data"
+                        / "analysis_output"
+                        / "calibration_opportunity_training"
+                        / "calibration_opportunity_training_table.jsonl"
+                    ),
+                    "--input-kind",
+                    "auto",
+                    "--family-mode",
+                    "separate",
+                    "--artifact-purpose",
+                    "runtime-refit",
+                    "--mode",
+                    "live",
+                    *max_date_args,
+                    *strict_flag,
+                ],
             ),
             RefreshStep(
                 name="drift_in_drift_report",

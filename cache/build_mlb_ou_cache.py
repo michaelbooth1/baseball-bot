@@ -641,6 +641,12 @@ def _apply_alt_a_smoothing(
         "cells_kept_poisson_no_empirical": 0,
         "cells_kept_poisson_invalid_empirical": 0,
         "line_overrides": {line_to_poisson_key(line): 0 for line in lines},
+        # Per-line boundary skips: how often each line's empirical was
+        # exactly 0 or 1 (degenerate sample artifact). The aggregate
+        # cells_kept_poisson_invalid_empirical only counts cells where
+        # ALL lines hit the boundary; per-line is the actionable view
+        # for the scoped Alt-A design (Active #17).
+        "line_boundary_skips": {line_to_poisson_key(line): 0 for line in lines},
         "mean_abs_delta_logit": 0.0,
         "mean_signed_delta": 0.0,
         "n_line_deltas": 0,
@@ -676,6 +682,7 @@ def _apply_alt_a_smoothing(
             # Poisson in that case; the over-prediction story Alt-A is
             # solving is about the *interior* of the probability space.
             if not (0.0 < emp < 1.0):
+                summary["line_boundary_skips"][poi_key] += 1
                 if not any_override:
                     summary["cells_kept_poisson_invalid_empirical"] += 1
                 continue

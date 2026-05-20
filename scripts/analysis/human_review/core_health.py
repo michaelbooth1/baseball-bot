@@ -172,7 +172,25 @@ def _fill_rate_health(
     *,
     today_bet_totals: Dict[str, Any],
     trailing_reviews: List[Dict[str, Any]],
+    session_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
+    # Paper mode simulates 100% fill at the ask; the fill-rate counters
+    # are wired only on the live execution path. Suppress alerts when the
+    # session is anything other than live so paper reviews stop firing
+    # false-alarm "fill rate dropped" + "zero-fill day" notes that have
+    # no actionable diagnostic value in paper mode.
+    if session_mode != "live":
+        return {
+            "today": {
+                "placed": _safe_int(today_bet_totals.get("count")),
+                "filled": _safe_int(today_bet_totals.get("filled")),
+                "rate": None,
+            },
+            "baseline": {"placed": 0, "filled": 0, "rate": None, "days": 0},
+            "alerts": [],
+            "status": "paper_mode_skipped" if session_mode == "paper" else "non_live_skipped",
+            "session_mode": session_mode,
+        }
     today_placed = _safe_int(today_bet_totals.get("count"))
     today_filled = _safe_int(today_bet_totals.get("filled"))
     today_rate = (today_filled / today_placed) if today_placed else None

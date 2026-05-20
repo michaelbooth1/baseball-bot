@@ -464,9 +464,20 @@ def test_canonical_startup_includes_scrape_team_log_and_preflight_steps(tmp_path
     assert idx["preflight_artifacts"] < idx["candidate_universe_table"]
     assert idx["candidate_universe_table"] < idx["calibration_opportunity_training"]
     assert idx["calibration_opportunity_training"] < idx["calibrate_signal_probabilities"]
-    assert idx["calibrate_signal_probabilities"] < idx["model_maturity_report"]
+    # 2026-05-20 audit reorder: concept_drift_report MUST run before
+    # calibrate_signal_probabilities so the calibrator records the FRESH
+    # drift-report hash in its lineage. Previously calibrate ran first
+    # and stamped yesterday's drift hash, producing daily stale-input
+    # alerts in cross_artifact_consistency_health.
+    assert idx["concept_drift_report"] < idx["calibrate_signal_probabilities"]
+    assert idx["calibrate_signal_probabilities"] < idx["calibrate_signal_probabilities_under"]
+    assert idx["calibrate_signal_probabilities_under"] < idx["drift_in_drift_report"]
     assert idx["model_maturity_report"] < idx["fair_value_stage_ablation"]
     assert idx["fair_value_stage_ablation"] < idx["unified_signals"]
+    # Concept drift now precedes calibrate; model_maturity, ablation, and
+    # unified_signals all run BEFORE concept_drift_report so they don't
+    # bracket the new ordering.
+    assert idx["unified_signals"] < idx["concept_drift_report"]
     assert idx["signal_training_table"] < idx["clv_report"]
     assert idx["clv_report"] < idx["fv_disagreement_quality"]
     assert idx["fv_disagreement_quality"] < idx["train_baseline_models"]

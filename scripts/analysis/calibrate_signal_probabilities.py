@@ -199,6 +199,19 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--strict", action="store_true")
     p.add_argument("--verbose", action="store_true")
     p.add_argument(
+        "--min-train-date",
+        type=str,
+        default=None,
+        help=(
+            "Hygiene #24 (2026-05-20): restrict calibrator training to "
+            "samples with session_date >= this date (YYYY-MM-DD). Used "
+            "to exclude pre-model-upgrade rows when an upgrade has "
+            "shifted the input distribution (e.g., set to '2026-05-08' "
+            "after TR21 to drop pre-density_alt+hr_factor rows). "
+            "Default None = include all rows (back-compat)."
+        ),
+    )
+    p.add_argument(
         "--selection-history-path",
         type=Path,
         default=None,
@@ -1385,6 +1398,40 @@ def main(argv: Optional[List[str]] = None) -> None:
             )
         )
 
+    # Hygiene #24: --min-train-date filter. Drops samples with
+    # session_date < threshold so the operator can fit a
+    # post-upgrade-only calibrator without blending pre/post-regime
+    # rows. Date comparison is lexicographic since session_date is
+    # always ISO-8601 YYYY-MM-DD. Logged so the operator can verify
+    # the filter took effect.
+    min_train_date_filter_count = 0
+    if getattr(args, "min_train_date", None):
+        cutoff = str(args.min_train_date)
+        # Validate format early -- a bad cutoff would silently drop
+        # everything since "" < every ISO date.
+        if not (
+            len(cutoff) == 10 and cutoff[4] == "-" and cutoff[7] == "-"
+        ):
+            raise SystemExit(
+                f"--min-train-date must be YYYY-MM-DD, got {cutoff!r}"
+            )
+        kept = []
+        for s in samples:
+            sd = s.session_date or ""
+            if sd >= cutoff:
+                kept.append(s)
+            else:
+                min_train_date_filter_count += 1
+        LOGGER.info(
+            "min_train_date filter: cutoff=%s, kept=%d, dropped=%d "
+            "(from %d total before filter)",
+            cutoff,
+            len(kept),
+            min_train_date_filter_count,
+            len(samples),
+        )
+        samples = kept
+
     if not samples:
         if args.strict:
             raise SystemExit("Strict mode failed: no eligible settled rows for calibration.")
@@ -1568,6 +1615,10 @@ def main(argv: Optional[List[str]] = None) -> None:
                     "mode": args.mode,
                     "artifact_purpose": args.artifact_purpose,
                     "stability_gate_enabled": args.stability_gate_enabled,
+                    "min_train_date": getattr(args, "min_train_date", None),
+                    "min_train_date_filter_count": (
+                        min_train_date_filter_count
+                    ),
                 },
             },
         )

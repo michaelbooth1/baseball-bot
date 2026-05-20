@@ -19,10 +19,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+
+# Project-root bootstrap so bare `python scripts/analysis/build_daily_human_review_report.py`
+# finds the `scripts.analysis.human_review` package. Without this, only
+# `python -m scripts.analysis.build_daily_human_review_report` works -- and
+# the daily-refresh subprocess uses bare invocation, so the refresh silently
+# fails to build the review on this codepath.
+_PROJECT_ROOT_FOR_IMPORTS = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT_FOR_IMPORTS) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT_FOR_IMPORTS))
 
 from scripts.analysis.human_review import (
     _load_trailing_reviews,
@@ -37,6 +47,7 @@ from scripts.analysis.human_review import (
     _cohort_calibration_health,
     _cohort_roi_health,
     _calibration_health,
+    _calibrator_enforce_shipment_health,
     _regime_mix_health,
     _concept_drift_health,
     _drift_in_drift_health,
@@ -769,6 +780,7 @@ def _build_notes(
     candidate_rollup: Dict[str, Any],
     log_health: Dict[str, Any],
     calibration_health: Optional[Dict[str, Any]] = None,
+    calibrator_enforce_shipment_health: Optional[Dict[str, Any]] = None,
     fill_rate_health: Optional[Dict[str, Any]] = None,
     signal_quality_health: Optional[Dict[str, Any]] = None,
     regime_mix_health: Optional[Dict[str, Any]] = None,
@@ -838,6 +850,10 @@ def _build_notes(
     # drill into the JSON.
     for alert in (calibration_health or {}).get("alerts") or []:
         notes.append(f"Calibration drift: {alert}")
+    for alert in (
+        calibrator_enforce_shipment_health or {}
+    ).get("alerts") or []:
+        notes.append(f"Calibrator-enforce-shipment: {alert}")
     for alert in (fill_rate_health or {}).get("alerts") or []:
         notes.append(f"Fill-rate drift: {alert}")
     for alert in (signal_quality_health or {}).get("alerts") or []:
@@ -922,12 +938,21 @@ def build_report(
             "current_state_edge_band_diagnostics",
         }
     }
+    # concept_drift_health computes BEFORE calibration_health so the
+    # latter can read its `upgrade_attribution_summary` and reword the
+    # input-drift-triggered alert when all major-PSI features are
+    # attributable to known model upgrades (Hygiene #23, 2026-05-20).
+    concept_drift_health = _concept_drift_health(
+        report_path=DEFAULT_CONCEPT_DRIFT_REPORT,
+        session_date=session_date,
+    )
     calibration_health = _calibration_health(
         session_date=session_date,
         candidate_dir=candidate_dir,
         artifact_path=calibration_artifact,
         output_root=output_root,
         artifact_path_under=DEFAULT_CALIBRATION_ARTIFACT_UNDER,
+        concept_drift_health=concept_drift_health,
     )
     trailing_reviews = _load_trailing_reviews(
         output_root=output_root,
@@ -937,6 +962,17 @@ def build_report(
     )
     fill_rate_health = _fill_rate_health(
         today_bet_totals=bet_totals,
+        trailing_reviews=trailing_reviews,
+        session_mode=session.get("mode"),
+    )
+    # Shipment-effect monitor for band-gated calibrator-enforce
+    # (2026-05-20). Counterfactual under shadow, attribution under
+    # enforce. Read after _calibration_health since both consume the
+    # candidate log; this one specifically answers "is the calibrator-
+    # enforce gate biting at the right tail with the right volume."
+    calibrator_enforce_shipment_health = _calibrator_enforce_shipment_health(
+        session_date=session_date,
+        candidate_dir=candidate_dir,
         trailing_reviews=trailing_reviews,
     )
     signal_quality_health = _signal_quality_health(
@@ -958,13 +994,10 @@ def build_report(
         days=COHORT_ROI_BASELINE_WINDOW_DAYS,
         mode=session.get("mode"),
     )
-    # concept_drift_health computed BEFORE cohort_roi_health so the
-    # latter can append a "[concept-drift: <feature> PSI <value>, ...]"
-    # candidate-root-cause suffix to each alert.
-    concept_drift_health = _concept_drift_health(
-        report_path=DEFAULT_CONCEPT_DRIFT_REPORT,
-        session_date=session_date,
-    )
+    # concept_drift_health was already computed earlier (so
+    # calibration_health could consume its attribution summary);
+    # cohort_roi_health also reads it to append a "[concept-drift:
+    # <feature> PSI <value>, ...]" candidate-root-cause suffix.
     cohort_roi_health = _cohort_roi_health(
         today_bet_rows=bet_rows,
         trailing_reviews=trailing_reviews,
@@ -1065,6 +1098,7 @@ def build_report(
         candidate_rollup,
         log_health,
         calibration_health,
+        calibrator_enforce_shipment_health,
         fill_rate_health,
         signal_quality_health,
         regime_mix_health,
@@ -1124,6 +1158,9 @@ def build_report(
         "current_state_edge_band_diagnostics": session_summary.get("current_state_edge_band_diagnostics") or {},
         "stage2_suppression_dollar_audit": stage2_audit,
         "calibration_health": calibration_health,
+        "calibrator_enforce_shipment_health": (
+            calibrator_enforce_shipment_health
+        ),
         "fill_rate_health": fill_rate_health,
         "signal_quality_health": signal_quality_health,
         "regime_mix_health": regime_mix_health,
@@ -1294,6 +1331,56 @@ def render_markdown(report: Dict[str, Any]) -> str:
         for alert in cal_alerts:
             lines.append(f"  - {alert}")
 
+    ce = report.get("calibrator_enforce_shipment_health") or {}
+    ce_today = ce.get("today") or {}
+    ce_effect = ce_today.get("enforce_effect") or {}
+    ce_cal_metrics = ce_today.get("calibrator_metrics") or {}
+    ce_baseline = ce.get("trailing_baseline") or {}
+    ce_alerts = ce.get("alerts") or []
+    lines.extend([
+        "",
+        "## Calibrator-Enforce Shipment (2026-05-19 patch)",
+        f"- Decision mode: {ce.get('session_mode_at_decision_time')} "
+        f"({ce.get('read_mode')}); status: {ce.get('status')}",
+        f"- Candidates today: {ce_today.get('total_candidates_evaluated', 0)} "
+        f"(trade={ce_today.get('trade_decisions', 0)}, "
+        f"skip:gate_min_edge={ce_today.get('skip_due_to_gate_min_edge', 0)})",
+        f"- In-band-gated (raw_fv>={ce.get('thresholds', {}).get('band_gate_threshold', 0.9):.2f}): "
+        f"{ce_cal_metrics.get('in_band_gate_range_count', 0)}; "
+        f"mean |cal-raw| in-band: "
+        f"{_fmt_pct(ce_cal_metrics.get('mean_abs_delta_in_band'))}",
+        f"- {ce_effect.get('attribution_label', 'effect')}: "
+        f"{ce_effect.get('blocked_count', 0)}/"
+        f"{ce_effect.get('candidate_pool_size', 0)} "
+        f"({_fmt_pct(ce_effect.get('blocked_rate'))}) | by raw_fv: "
+        f">=0.95={(ce_effect.get('blocked_by_raw_fv_bucket') or {}).get('>=0.95', 0)}, "
+        f"0.90-0.95={(ce_effect.get('blocked_by_raw_fv_bucket') or {}).get('0.90-0.95', 0)}",
+        (
+            lambda bo, cf: (
+                f"- Blocked outcomes: {bo.get('would_have_won', 0)}W / "
+                f"{bo.get('would_have_lost', 0)}L of "
+                f"{bo.get('settled_count', 0)} settled "
+                f"({bo.get('undecided_count', 0)} undecided); "
+                f"WR={_fmt_pct(bo.get('win_rate_among_settled'))}; "
+                f"counterfactual save=${cf.get('saved_dollars', 0.0):+.2f} "
+                f"@ default-stake ${cf.get('default_stake', 0.0):.0f} "
+                f"[outcomes: {bo.get('outcomes_source_status', '?')}]"
+            )
+        )(
+            ce_effect.get("blocked_outcomes") or {},
+            (ce_effect.get("blocked_outcomes") or {}).get("counterfactual_pnl") or {},
+        ),
+        f"- Trailing baseline: "
+        f"today {ce_baseline.get('today_trades', 0)} trades vs "
+        f"{ce_baseline.get('baseline_days_used', 0)}d mean "
+        f"{ce_baseline.get('mean_daily_trades') or 'n/a'} "
+        f"(ratio: {_fmt_pct(ce_baseline.get('today_volume_ratio_vs_baseline'))})",
+    ])
+    if ce_alerts:
+        lines.append("- Active alerts:")
+        for alert in ce_alerts:
+            lines.append(f"  - {alert}")
+
     fill = report.get("fill_rate_health") or {}
     sig = report.get("signal_quality_health") or {}
     fill_today = fill.get("today") or {}
@@ -1377,6 +1464,19 @@ def write_report(report: Dict[str, Any], output_root: Path) -> Tuple[Path, Path]
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
+    # Auto-derive candidate-dir from sessions-dir when the operator
+    # overrode --sessions-dir (e.g. to point at paper_trading) but left
+    # --candidate-dir at its live_trading default. Without this, UNDER
+    # health blocks silently `check_error` because they look in the wrong
+    # mode's candidate_universe. Folder convention: <mode_root>/sessions
+    # is a sibling of <mode_root>/candidate_universe.
+    if (
+        args.candidate_dir == DEFAULT_CANDIDATE_DIR
+        and args.sessions_dir != DEFAULT_SESSIONS_DIR
+    ):
+        derived = args.sessions_dir.parent / "candidate_universe"
+        if derived.exists():
+            args.candidate_dir = derived
     session_date = args.session_date or _latest_session_date(args.sessions_dir)
     report = build_report(
         session_date=session_date,

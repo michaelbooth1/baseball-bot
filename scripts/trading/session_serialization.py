@@ -89,6 +89,7 @@ def build_paper_session_payload(engine: "SignalEngine") -> Dict[str, Any]:
 
     return {
         "date": engine.date_str,
+        "mode": "paper",
         "generated_at": _now_iso(),
         "params": {
             "edge_threshold": trade_args.edge_threshold,

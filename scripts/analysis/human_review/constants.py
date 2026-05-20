@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Dict, Tuple
 
 PROJECT_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_SESSIONS_DIR = PROJECT_DIR / "data" / "live_trading" / "sessions"
@@ -18,6 +18,55 @@ CALIBRATION_NEAR_IDENTITY_DELTA = 0.005
 CALIBRATION_LOW_APPLIED_SHARE = 0.05
 CALIBRATION_SHADOW_MODE_DOMINANT_SHARE = 0.95
 CALIBRATION_STALE_AGE_DAYS = 14
+
+# Calibrator-enforce shipment-effect observability (2026-05-20).
+# Surfaces "how many bets did band-gated calibrator-enforce block (or
+# would block, in counterfactual mode)?" so the operator can see the
+# effect of the 2026-05-19 enforce flip within one paper session.
+#
+# CALIBRATOR_ENFORCE_BAND_GATE_THRESHOLD: the raw_fv threshold below
+# which the calibrator is NOT applied even under enforce. Matches
+# DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW in signal_config.py. If you
+# change one, change both.
+CALIBRATOR_ENFORCE_BAND_GATE_THRESHOLD = 0.90
+# Edge thresholds the gate uses to decide block vs pass. Mirrors
+# DEFAULT_EDGE_THRESHOLD / DEFAULT_EDGE_THRESHOLD_HIGH_LINE.
+CALIBRATOR_ENFORCE_MIN_EDGE_LOW_LINE = 0.15
+CALIBRATOR_ENFORCE_MIN_EDGE_HIGH_LINE = 0.16
+CALIBRATOR_ENFORCE_HIGH_LINE_CUTOFF = 8.5
+# Alert thresholds.
+# Fire when the calibrator-enforce blocks >= this share of would-trade
+# candidates; might mean the gate is too aggressive for the current
+# regime (calibrator over-corrects).
+CALIBRATOR_ENFORCE_HIGH_BLOCK_RATE_ALERT = 0.80
+# Fire when enforce blocks 0 bets despite many would-trades being in
+# the band-gated range; suggests the calibrator is returning identity
+# or the gate is bypassed.
+CALIBRATOR_ENFORCE_MIN_BAND_GATED_CANDIDATES_FOR_ZERO_ALERT = 10
+# Volume drop vs trailing-7d baseline that triggers an alert.
+CALIBRATOR_ENFORCE_VOLUME_DROP_ALERT_PP = 0.50
+# Need at least this many days of trailing baseline before computing
+# the volume-drop alert (avoids false alarms on cold-start).
+CALIBRATOR_ENFORCE_BASELINE_MIN_DAYS = 3
+CALIBRATOR_ENFORCE_BASELINE_WINDOW_DAYS = 7
+
+# Would-block outcome tracking (2026-05-20 v2 ship). For each
+# would-block candidate (shadow counterfactual) or attributed-block
+# candidate (enforce attribution), look up the realized game outcome
+# and compute "did this block save a loss or mute a winner?"
+# Paper-mode default stake is $10/bet; used for counterfactual P&L.
+CALIBRATOR_ENFORCE_BLOCKED_OUTCOMES_DEFAULT_STAKE = 10.0
+# Fire when WR among settled blocks >= this on >=
+# CALIBRATOR_ENFORCE_BLOCKED_OUTCOMES_MIN_FOR_ALERT settled outcomes
+# -- enforce may be muting winners. 0.60 because break-even at typical
+# post-cal ask 0.75 is ~75% WR; 60%+ realized means the blocked set
+# is approaching profitable in expectation.
+CALIBRATOR_ENFORCE_BLOCKED_WR_MUTING_WINNERS = 0.60
+CALIBRATOR_ENFORCE_BLOCKED_OUTCOMES_MIN_FOR_ALERT = 5
+# Fire when cumulative counterfactual saved P&L is negative on
+# >= MIN_FOR_ALERT settled outcomes -- enforce is blocking but the
+# blocked set's expected value was positive.
+CALIBRATOR_ENFORCE_BLOCKED_NEGATIVE_SAVE_ALERT = 0.0
 
 DRIFT_TRAILING_WINDOW_DAYS = 7
 DRIFT_MIN_TODAY_SAMPLE = 3
@@ -127,6 +176,55 @@ PROMOTION_LAG_SESSION_ROOTS: Tuple[str, ...] = (
     "data/paper_trading/sessions",
 )
 PROMOTION_LAG_PENDING_HOURS_WARN = 24.0
+
+# Hygiene #23 (2026-05-20): Known model-upgrade dates with the
+# features whose distribution they materially shifted. Used by
+# _concept_drift_health to annotate PSI-major alerts as "attributable
+# to a planned upgrade" vs "real regime change" — the daily review
+# was generating alarming false-positive drift alerts after every
+# model upgrade because PSI's trailing baseline straddles the
+# upgrade date.
+#
+# `affected_features`: list of feature names whose distribution shifts
+#   when this upgrade ships. `direct` = the upgrade modifies the
+#   model layer producing this feature. `indirect` = the upgrade
+#   modifies a downstream/upstream layer that filters which rows
+#   reach this feature (e.g., base_fair_value's distribution shifts
+#   when Stage-2 deltas change because the bet-gate accepts a
+#   different sample mix).
+#
+# `description`: short string surfaced in the alert reword.
+#
+# When adding a new entry: capture the ship date precisely (look for
+# `cache/*.pre_*_<date>.bak` backup files or the promote.py audit
+# rows). An attribution stale by a week is fine; off by a month
+# isn't (would mis-attribute a real regime change).
+MODEL_UPGRADES: Tuple[Dict[str, Any], ...] = (
+    {
+        "date": "2026-05-08",
+        "name": "TR21",
+        "description": (
+            "Stage-2 density_alt + hr_factor families added "
+            "(cache/mlb_stage2_run_env.json.pre_density_alt_hr_factor_2026_05_08.bak)"
+        ),
+        "affected_features": {
+            "stage2_run_env_delta": "direct",
+            "base_fair_value": "indirect (bet-gate sample mix)",
+        },
+    },
+    {
+        "date": "2026-05-08",
+        "name": "TR20",
+        "description": (
+            "Stage-3 v2 (team_offense_v2) shipped per ROADMAP "
+            "Recently-Completed entry"
+        ),
+        "affected_features": {
+            "team_offense_delta": "direct",
+            "base_fair_value": "indirect (bet-gate sample mix)",
+        },
+    },
+)
 
 UNDER_COVERAGE_RATE_LOW_WARN = 0.50
 UNDER_COVERAGE_MIN_N_FOR_ALERT = 50

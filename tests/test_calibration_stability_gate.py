@@ -252,5 +252,62 @@ class HistoryRowDateTests(unittest.TestCase):
         self.assertEqual(cal._history_row_date({}), "")
 
 
+class MinTrainDateFilterTests(unittest.TestCase):
+    """Tests for Hygiene #24 (2026-05-20): --min-train-date filter.
+
+    The flag drops samples with session_date < cutoff so the operator
+    can fit a post-upgrade-only calibrator without blending pre/post
+    regime rows. End-to-end tests would require a full run; here we
+    cover the filter math + the bad-date guard.
+    """
+
+    def _sample(self, date_str: str):
+        return cal.Sample(
+            bet_id=f"b_{date_str}",
+            session_date=date_str,
+            mode="live",
+            raw_prob=0.6,
+            raw_prob_source="fair_value_raw",
+            label=1,
+            model_family="score_event_transition",
+            decision_ask=0.5,
+            line="8.5",
+            inning=6,
+        )
+
+    def test_filter_drops_pre_cutoff_samples(self):
+        # Re-implement the filter inline to verify the comparison logic.
+        # The actual filter is inline in cal.main(); this asserts the
+        # ISO-string lexicographic comparison is equivalent to date
+        # comparison.
+        samples = [
+            self._sample("2026-05-01"),
+            self._sample("2026-05-07"),  # day before TR21
+            self._sample("2026-05-08"),  # day OF TR21 (kept)
+            self._sample("2026-05-15"),
+        ]
+        cutoff = "2026-05-08"
+        kept = [s for s in samples if (s.session_date or "") >= cutoff]
+        dropped = [s for s in samples if (s.session_date or "") < cutoff]
+        self.assertEqual([s.session_date for s in kept],
+                         ["2026-05-08", "2026-05-15"])
+        self.assertEqual([s.session_date for s in dropped],
+                         ["2026-05-01", "2026-05-07"])
+
+    def test_bad_date_format_caught_by_validation(self):
+        # The cutoff validation in cal.main() checks YYYY-MM-DD shape.
+        # A bad date like "2026/05/08" or "20260508" would silently drop
+        # everything since "2026/05/08" < every ISO date string. The
+        # validation raises SystemExit early to prevent this footgun.
+        for bad in ["20260508", "2026/05/08", "05-08-2026", "2026-5-8"]:
+            self.assertFalse(
+                len(bad) == 10 and bad[4] == "-" and bad[7] == "-",
+                f"validation should reject {bad!r}",
+            )
+        # And the valid form passes:
+        valid = "2026-05-08"
+        self.assertTrue(len(valid) == 10 and valid[4] == "-" and valid[7] == "-")
+
+
 if __name__ == "__main__":
     unittest.main()

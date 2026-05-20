@@ -4193,8 +4193,25 @@ ledger rows), but the code exists.
     - Until shipped, the 2026-05-19 band-gated calibrator
       enforce (see Recently Completed) catches the high-FV
       overconfidence band downstream.
-
-## Hygiene (not blocking, but accumulating debt)
+    - **Boundary-empirical guard (2026-05-20 audit follow-up,
+      already in place across all paths)**: empirical rates
+      exactly equal to 0 or 1 (degenerate sample artifacts;
+      logit blows up) must NEVER be promoted over Poisson. The
+      build pass at `cache/build_mlb_ou_cache.py:678`, the
+      runtime shadow at
+      `scripts/trading/signal_pipeline_gates_post_fv.py:311`,
+      and the offline report at
+      `scripts/analysis/build_stage1_shadow_override_report.py:215`
+      all gate on `0.0 < emp < 1.0`. The 2026-05-19 session
+      surfaced 3 of 9 bets with `inferred_state_base_empirical
+      = 1.000` at n=130-162 -- these are real samples but
+      sit on a boundary the chain can't consume. Per-line
+      boundary-skip counter added to the Alt-A summary
+      (`line_boundary_skips`) so the staging-health block can
+      surface how often the guard fires per line. Scoped Alt-A
+      design must preserve this guard: cohorts where empirical
+      is reliably on the boundary should keep Poisson, not
+      get a "use empirical" override.
 
 14. **Backup retention policy + PSI-history GC.** *Shipped
     2026-05-17.* See the Recently Completed "Active #14: backup
@@ -4302,6 +4319,67 @@ ledger rows), but the code exists.
     change than the cheap wins; ship after Active #17 (Scoped
     Alt-A) demonstrates the cohort-aware promotion machinery
     works. Files: `cache/build_mlb_ou_cache.py`.
+
+21. **Chain-rebuild stale-input artifacts.**
+    *2026-05-20 audit follow-up.* The 2026-05-20 audit found
+    7 cross_artifact_consistency_health alerts firing every
+    refresh. Today's reorder (`concept_drift_report` now
+    runs BEFORE `calibrate_signal_probabilities`) eliminates
+    2 of them. The remaining 5 are downstream-of-
+    `signal_training_table.jsonl`: `walk_forward_cert`,
+    `ev_policy_report`, and `stage1_cell_loss_attribution`
+    all record the table's hash at their build moment, but
+    something modifies the table later in the refresh
+    (mtime sits ~22 min after walk_forward_cert finishes;
+    no refresh step OBVIOUSLY writes the file after build,
+    so root cause needs investigation -- possible
+    parallelism, possible side-effect from a step claiming
+    "read-only"). Two design directions:
+    (a) **Investigate-and-reorder** (cheaper): figure out
+        which step is updating `signal_training_table.jsonl`
+        after the build step and either ban the side-effect
+        or move consumers AFTER it.
+    (b) **Auto-chain-rebuild** (general fix): at end of
+        refresh, recompute cross-artifact consistency in
+        memory; for each stale artifact, look up its
+        rebuilder from a new
+        `ARTIFACT_LABEL_TO_REFRESH_STEP` mapping and re-run
+        it; cap iterations at 2 to prevent runaway. Surfaces
+        a `chain_rebuild_iterations` counter in the refresh
+        audit so operators see how often the fix-up runs.
+    Until shipped, the daily review's
+    `cross_artifact_consistency_health` still surfaces every
+    stale artifact for manual rebuilds. Files:
+    `scripts/analysis/run_daily_refresh.py`,
+    `scripts/analysis/human_review/system_health.py`
+    (`_cross_artifact_consistency_health` re-used).
+
+22. **Gate-counterfactual cross-window validation.**
+    *2026-05-20 audit follow-up.* The daily review's
+    `gate_counterfactual_health` block runs ONE window
+    (trailing-30d) and labels recommendations HIGH /
+    MEDIUM / LOW confidence based on within-window sample
+    size. The 2026-05-20 P2 audit found the
+    "HIGH-confidence" `gate_min_current_total 4 -> 5`
+    recommendation reverses direction on lifetime data
+    (30d blocked-cohort ROI -20.2% vs lifetime +4.5%, n=29)
+    and would block 14 post-calibrator-enforce bets that
+    are 12-2 with +35.7% ROI -- shipping it would have
+    actively hurt P&L. Root cause: the report doesn't
+    cross-check against lifetime or against the
+    post-calibrator regime. Two fixes for the report:
+    (a) when a within-window recommendation fires, also
+    compute the same cohort over lifetime and flag a
+    `window_reversal` warning if the direction inverts;
+    (b) when the runtime calibrator's `_prob_calibration_mode`
+    is `enforce`, the report should run the counterfactual
+    on POST-calibrator FV (the actual current decision
+    surface), not on raw FV. Until shipped, treat all
+    HIGH-confidence gate-counterfactual recommendations
+    as "candidate for audit," not "ready to ship." Files:
+    `scripts/analysis/build_gate_counterfactual_report.py`,
+    `scripts/analysis/human_review/core_health.py`
+    (`_gate_counterfactual_health`).
 
 ## Bidirectional trading -> market-making (long-horizon)
 

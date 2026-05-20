@@ -694,6 +694,7 @@ class FillRateAndSignalQualityDriftTests(unittest.TestCase):
             health = bdhr._fill_rate_health(
                 today_bet_totals={"count": 5, "filled": 1, "wins": 0},
                 trailing_reviews=trailing,
+                session_mode="live",
             )
             joined = " || ".join(health["alerts"])
             self.assertIn("fill rate dropped", joined)
@@ -708,6 +709,7 @@ class FillRateAndSignalQualityDriftTests(unittest.TestCase):
             health = bdhr._fill_rate_health(
                 today_bet_totals={"count": 6, "filled": 0, "wins": 0},
                 trailing_reviews=[],
+                session_mode="live",
             )
             joined = " || ".join(health["alerts"])
             self.assertIn("zero-fill day: 0/6", joined)
@@ -738,6 +740,7 @@ class FillRateAndSignalQualityDriftTests(unittest.TestCase):
             health = bdhr._fill_rate_health(
                 today_bet_totals={"count": 3, "filled": 1, "wins": 0},
                 trailing_reviews=trailing,
+                session_mode="live",
             )
             joined = " || ".join(health["alerts"])
             self.assertIn("fill rate dropped", joined)
@@ -1594,6 +1597,128 @@ class ConceptDriftHealthTests(unittest.TestCase):
             self.assertEqual(out["alerts"], ["weather_temp_f PSI=0.32 (major shift): ..."])
             self.assertEqual(out["feature_verdicts"]["weather_temp_f"]["verdict"], "major")
             self.assertEqual(out["feature_verdicts"]["stage2_run_env_delta"]["verdict"], "stable")
+
+    def test_upgrade_attribution_annotates_features_when_baseline_straddles(self):
+        # Hygiene #23: stage2_run_env_delta should get TR21
+        # attribution when baseline window includes 2026-05-08 AND the
+        # verdict is major. Stable features stay unannotated.
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "concept_drift_report.json"
+            path.write_text(json.dumps({
+                "schema_version": 1,
+                "generated_at_utc": "2026-05-19T01:00:00Z",
+                "active_date": "2026-05-19",
+                "current_window": {"start": "2026-05-12", "end": "2026-05-19", "n_rows": 100},
+                "baseline_window": {"start": "2026-04-12", "end": "2026-05-11", "n_rows": 76},
+                "thresholds": {"psi_major": 0.25},
+                "features": {
+                    "stage2_run_env_delta": {
+                        "kind": "continuous", "metric": "psi", "value": 2.29,
+                        "verdict": "major", "current_n": 100, "baseline_n": 76,
+                    },
+                    "weather_temp_f": {
+                        "kind": "continuous", "metric": "psi", "value": 0.05,
+                        "verdict": "stable", "current_n": 100, "baseline_n": 76,
+                    },
+                },
+                "alerts": [],
+            }), encoding="utf-8")
+            out = bdhr._concept_drift_health(
+                report_path=path, session_date="2026-05-19",
+            )
+            fv = out["feature_verdicts"]["stage2_run_env_delta"]
+            self.assertIn("upgrade_attributions", fv)
+            self.assertTrue(any(a["name"] == "TR21" for a in fv["upgrade_attributions"]))
+            self.assertNotIn(
+                "upgrade_attributions",
+                out["feature_verdicts"]["weather_temp_f"],
+            )
+            summary = out["upgrade_attribution_summary"]
+            self.assertEqual(summary["major_features"], ["stage2_run_env_delta"])
+            self.assertEqual(summary["attributed_features"], ["stage2_run_env_delta"])
+            self.assertTrue(summary["fully_attributed"])
+
+    def test_upgrade_attribution_skipped_when_baseline_predates_upgrade(self):
+        # Baseline ends 2026-04-01, before TR21 date 2026-05-08 ->
+        # PSI shift IS real regime change, NOT a model-upgrade artifact.
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "concept_drift_report.json"
+            path.write_text(json.dumps({
+                "schema_version": 1,
+                "generated_at_utc": "2026-04-15T01:00:00Z",
+                "active_date": "2026-04-15",
+                "current_window": {"start": "2026-04-08", "end": "2026-04-14", "n_rows": 30},
+                "baseline_window": {"start": "2026-03-08", "end": "2026-04-01", "n_rows": 70},
+                "thresholds": {"psi_major": 0.25},
+                "features": {
+                    "stage2_run_env_delta": {
+                        "kind": "continuous", "metric": "psi", "value": 0.40,
+                        "verdict": "major", "current_n": 30, "baseline_n": 70,
+                    },
+                },
+                "alerts": [],
+            }), encoding="utf-8")
+            out = bdhr._concept_drift_health(
+                report_path=path, session_date="2026-04-15",
+            )
+            fv = out["feature_verdicts"]["stage2_run_env_delta"]
+            self.assertNotIn("upgrade_attributions", fv)
+            self.assertFalse(out["upgrade_attribution_summary"]["fully_attributed"])
+
+    def test_calibrator_drift_alert_rewords_to_benign_when_fully_attributed(self):
+        # Build a synthetic calibrator artifact + concept_drift_health
+        # with full upgrade attribution. The reworded alert must
+        # contain "BENIGN" and the upgrade name.
+        with tempfile.TemporaryDirectory() as td:
+            artifact = Path(td) / "cal.json"
+            artifact.write_text(json.dumps({
+                "schema_version": 2,
+                "generated_at_utc": "2026-05-19T13:00:00Z",
+                "selected_method": "platt",
+                "default_family": "score_event_transition",
+                "families": {
+                    "score_event_transition": {
+                        "selected_method": "platt",
+                        "selection_audit": {
+                            "input_drift_triggered": True,
+                            "input_drift_major_features": [
+                                {"feature": "stage2_run_env_delta", "psi": 2.29},
+                            ],
+                            "input_drift_threshold": 0.25,
+                        },
+                    },
+                },
+            }), encoding="utf-8")
+            cdrift = {
+                "feature_verdicts": {
+                    "stage2_run_env_delta": {
+                        "verdict": "major",
+                        "upgrade_attributions": [
+                            {"name": "TR21", "date": "2026-05-08",
+                             "attribution_kind": "direct"},
+                        ],
+                    },
+                },
+                "upgrade_attribution_summary": {
+                    "major_features": ["stage2_run_env_delta"],
+                    "attributed_features": ["stage2_run_env_delta"],
+                    "fully_attributed": True,
+                },
+            }
+            cdir = Path(td) / "cu"
+            cdir.mkdir()
+            out_root = Path(td) / "out"
+            out_root.mkdir()
+            out = bdhr._calibration_health(
+                session_date="2026-05-19",
+                candidate_dir=cdir,
+                artifact_path=artifact,
+                output_root=out_root,
+                concept_drift_health=cdrift,
+            )
+            joined = " || ".join(out.get("alerts") or [])
+            self.assertIn("BENIGN", joined)
+            self.assertIn("TR21", joined)
 
     def test_stale_artifact_fires_age_alert(self):
         with tempfile.TemporaryDirectory() as td:
@@ -5882,6 +6007,227 @@ class Stage1ShadowOverrideHealthTests(unittest.TestCase):
                 [a for a in out["alerts"] if "REGRESSES" in a],
                 [],
             )
+
+
+class CalibratorEnforceShipmentHealthTests(unittest.TestCase):
+    """Coverage for the 2026-05-20 shipment-effect block.
+
+    Constructs minimal candidate JSONL files and asserts the
+    counterfactual block produces the expected would-block counts and
+    fires (or suppresses) alerts at the right boundaries.
+    """
+
+    def _write_candidates(
+        self, candidate_dir: Path, session_date: str, rows: list
+    ) -> None:
+        candidate_dir.mkdir(parents=True, exist_ok=True)
+        path = candidate_dir / f"{session_date}_candidates.jsonl"
+        with path.open("w", encoding="utf-8") as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+
+    def _trade_row(
+        self,
+        *,
+        raw_fv: float,
+        cal_fv: float,
+        decision_ask: float,
+        line: float,
+        mode: str = "shadow",
+    ) -> dict:
+        return {
+            "decision": "trade",
+            "decision_reason": "placed_bet",
+            "decision_ask": decision_ask,
+            "line": line,
+            "fair_value_raw": raw_fv,
+            "fair_value_calibrated": cal_fv,
+            "fair_value_calibration_applied": (mode == "enforce"),
+            "fair_value_calibration_mode": mode,
+        }
+
+    def test_shadow_counterfactual_block_counts_high_fv_trades(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cdir = Path(td) / "cu"
+            rows = [
+                # raw 0.98, cal 0.73, ask 0.80 -> post-cal edge -0.07
+                # < 0.16 (line=9.5) => WOULD BLOCK
+                self._trade_row(raw_fv=0.98, cal_fv=0.73,
+                                decision_ask=0.80, line=9.5),
+                # raw 0.96, cal 0.74, ask 0.78 -> edge -0.04 => WOULD BLOCK
+                self._trade_row(raw_fv=0.96, cal_fv=0.74,
+                                decision_ask=0.78, line=9.5),
+                # raw 0.85 (below band-gate) -> not affected by enforce
+                self._trade_row(raw_fv=0.85, cal_fv=0.78,
+                                decision_ask=0.70, line=8.5),
+                # raw 0.93 cal 0.85 ask 0.65 line=7.5 -> post-cal edge
+                # 0.20 > 0.15 => still trades
+                self._trade_row(raw_fv=0.93, cal_fv=0.85,
+                                decision_ask=0.65, line=7.5),
+            ]
+            self._write_candidates(cdir, "2026-05-19", rows)
+            out = bdhr._calibrator_enforce_shipment_health(
+                session_date="2026-05-19",
+                candidate_dir=cdir,
+                trailing_reviews=[],
+            )
+            self.assertEqual(out["session_mode_at_decision_time"], "shadow")
+            self.assertEqual(out["read_mode"], "counterfactual")
+            today = out["today"]
+            self.assertEqual(today["trade_decisions"], 4)
+            self.assertEqual(today["calibrator_metrics"]["in_band_gate_range_count"], 3)
+            eff = today["enforce_effect"]
+            self.assertEqual(eff["candidate_pool_size"], 4)
+            self.assertEqual(eff["blocked_count"], 2)
+            self.assertEqual(eff["blocked_by_raw_fv_bucket"][">=0.95"], 2)
+            self.assertEqual(eff["blocked_by_raw_fv_bucket"]["0.90-0.95"], 0)
+            self.assertEqual(eff["preserved_trades_with_calibrator_applied"], 1)
+            self.assertEqual(out["status"], "ok")
+
+    def test_high_block_rate_fires_alert(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cdir = Path(td) / "cu"
+            # 9 of 10 trades would be blocked (90% > 80% threshold)
+            rows = [
+                self._trade_row(raw_fv=0.98, cal_fv=0.73,
+                                decision_ask=0.80, line=9.5)
+                for _ in range(9)
+            ] + [
+                self._trade_row(raw_fv=0.93, cal_fv=0.85,
+                                decision_ask=0.65, line=7.5),
+            ]
+            self._write_candidates(cdir, "2026-05-19", rows)
+            out = bdhr._calibrator_enforce_shipment_health(
+                session_date="2026-05-19",
+                candidate_dir=cdir,
+                trailing_reviews=[],
+            )
+            self.assertEqual(out["status"], "alert")
+            joined = " || ".join(out["alerts"])
+            self.assertIn("9/10", joined)
+            self.assertIn("90%", joined)
+
+    def test_missing_candidate_file_returns_check_error(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cdir = Path(td) / "cu"
+            cdir.mkdir(parents=True)
+            out = bdhr._calibrator_enforce_shipment_health(
+                session_date="2026-05-19",
+                candidate_dir=cdir,
+                trailing_reviews=[],
+            )
+            self.assertEqual(out["status"], "check_error")
+            self.assertIn("not found", out.get("error", "").lower())
+
+    def _write_outcomes(
+        self, candidate_dir: Path, session_date: str, outcomes: list
+    ) -> None:
+        candidate_dir.mkdir(parents=True, exist_ok=True)
+        path = candidate_dir / f"{session_date}_outcomes.jsonl"
+        with path.open("w", encoding="utf-8") as f:
+            for o in outcomes:
+                f.write(json.dumps(o) + "\n")
+
+    def test_blocked_outcomes_counts_wins_losses_and_pnl(self) -> None:
+        # Three would-block bets:
+        #   game 1, line 9.5, over -> over_hit=False => would have LOST
+        #     (block saves +$10)
+        #   game 2, line 9.5, over -> over_hit=True => would have WON
+        #     (block costs us (10/0.78 - 10) = $2.82)
+        #   game 3, line 7.5, over -> over_hit=False => would have LOST
+        #     (block saves +$10)
+        # Plus one trade that stays (cal_fv high enough), and one game
+        # with no outcome (undecided counter).
+        with tempfile.TemporaryDirectory() as td:
+            cdir = Path(td) / "cu"
+            rows = [
+                dict(self._trade_row(raw_fv=0.98, cal_fv=0.73,
+                                     decision_ask=0.80, line=9.5),
+                     game_pk=1, side="over"),
+                dict(self._trade_row(raw_fv=0.97, cal_fv=0.74,
+                                     decision_ask=0.78, line=9.5),
+                     game_pk=2, side="over"),
+                dict(self._trade_row(raw_fv=0.96, cal_fv=0.72,
+                                     decision_ask=0.80, line=7.5),
+                     game_pk=3, side="over"),
+                # No matching outcome row -> undecided
+                dict(self._trade_row(raw_fv=0.99, cal_fv=0.73,
+                                     decision_ask=0.80, line=9.5),
+                     game_pk=99, side="over"),
+                # Stays a trade (post-cal edge above threshold)
+                dict(self._trade_row(raw_fv=0.93, cal_fv=0.85,
+                                     decision_ask=0.65, line=7.5),
+                     game_pk=5, side="over"),
+            ]
+            self._write_candidates(cdir, "2026-05-19", rows)
+            self._write_outcomes(cdir, "2026-05-19", [
+                {"game_pk": 1, "line": "9.5", "over_hit": False},
+                {"game_pk": 2, "line": "9.5", "over_hit": True},
+                {"game_pk": 3, "line": "7.5", "over_hit": False},
+            ])
+            out = bdhr._calibrator_enforce_shipment_health(
+                session_date="2026-05-19",
+                candidate_dir=cdir,
+                trailing_reviews=[],
+            )
+            bo = out["today"]["enforce_effect"]["blocked_outcomes"]
+            self.assertEqual(bo["outcomes_source_status"], "loaded")
+            self.assertEqual(bo["settled_count"], 3)
+            self.assertEqual(bo["would_have_won"], 1)
+            self.assertEqual(bo["would_have_lost"], 2)
+            self.assertEqual(bo["undecided_count"], 1)
+            self.assertAlmostEqual(
+                bo["win_rate_among_settled"], 1.0 / 3.0, places=4
+            )
+            # save = +10 -2.82 +10 = +17.18 (rounded)
+            self.assertAlmostEqual(
+                bo["counterfactual_pnl"]["saved_dollars"], 17.18, places=2
+            )
+
+    def test_blocked_outcomes_missing_outcomes_file_marks_status(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cdir = Path(td) / "cu"
+            self._write_candidates(cdir, "2026-05-19", [
+                dict(self._trade_row(raw_fv=0.98, cal_fv=0.73,
+                                     decision_ask=0.80, line=9.5),
+                     game_pk=1, side="over"),
+            ])
+            out = bdhr._calibrator_enforce_shipment_health(
+                session_date="2026-05-19",
+                candidate_dir=cdir,
+                trailing_reviews=[],
+            )
+            bo = out["today"]["enforce_effect"]["blocked_outcomes"]
+            self.assertEqual(bo["outcomes_source_status"], "missing")
+            self.assertEqual(bo["settled_count"], 0)
+            self.assertEqual(bo["undecided_count"], 1)
+            # No outcome data -> no saved-dollars computation possible
+            self.assertEqual(bo["counterfactual_pnl"]["saved_dollars"], 0.0)
+
+    def test_muting_winners_alert_fires_on_high_blocked_wr(self) -> None:
+        # 6 of 6 settled blocks WON -> WR 100% >> 60% alert threshold
+        # AND settled count (6) >= 5 alert minimum.
+        with tempfile.TemporaryDirectory() as td:
+            cdir = Path(td) / "cu"
+            rows = []
+            outcomes = []
+            for gpk in range(1, 7):
+                rows.append(dict(self._trade_row(
+                    raw_fv=0.98, cal_fv=0.73,
+                    decision_ask=0.80, line=9.5,
+                ), game_pk=gpk, side="over"))
+                outcomes.append(
+                    {"game_pk": gpk, "line": "9.5", "over_hit": True}
+                )
+            self._write_candidates(cdir, "2026-05-19", rows)
+            self._write_outcomes(cdir, "2026-05-19", outcomes)
+            out = bdhr._calibrator_enforce_shipment_health(
+                session_date="2026-05-19",
+                candidate_dir=cdir,
+                trailing_reviews=[],
+            )
+            joined = " || ".join(out.get("alerts") or [])
+            self.assertIn("muting winners", joined)
 
 
 if __name__ == "__main__":

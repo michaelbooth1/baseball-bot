@@ -11,6 +11,7 @@ from .constants import (
     CONCEPT_DRIFT_STALE_AGE_DAYS,
     DRIFT_IN_DRIFT_STALE_AGE_DAYS,
     PROMOTION_ATTRIBUTION_WINDOW_DAYS,
+    MODEL_UPGRADES,
 )
 from .helpers import (
     _load_json,
@@ -178,8 +179,11 @@ def _concept_drift_health(
         )
 
     feature_verdicts: Dict[str, Dict[str, Any]] = {}
+    baseline_window = report.get("baseline_window") or {}
+    base_start = baseline_window.get("start")
+    base_end = baseline_window.get("end")
     for fname, info in (report.get("features") or {}).items():
-        feature_verdicts[fname] = {
+        verdict_entry: Dict[str, Any] = {
             "kind": info.get("kind"),
             "metric": info.get("metric"),
             "value": info.get("value"),
@@ -187,7 +191,53 @@ def _concept_drift_health(
             "current_n": info.get("current_n"),
             "baseline_n": info.get("baseline_n"),
         }
+        # Hygiene #23: attribute PSI-major shifts to known model
+        # upgrades when the upgrade date falls within the baseline
+        # window. Without this annotation the alert reads as
+        # "untrustworthy calibrator" when the actual cause is a
+        # planned model improvement (TR20/TR21 etc.).
+        if (
+            str(info.get("verdict") or "") == "major"
+            and base_start
+            and base_end
+        ):
+            attributions: List[Dict[str, Any]] = []
+            for upg in MODEL_UPGRADES:
+                affected = upg.get("affected_features") or {}
+                if fname not in affected:
+                    continue
+                upg_date = str(upg.get("date") or "")
+                if base_start <= upg_date <= base_end:
+                    attributions.append({
+                        "name": upg.get("name"),
+                        "date": upg_date,
+                        "description": upg.get("description"),
+                        "attribution_kind": affected.get(fname),
+                    })
+            if attributions:
+                verdict_entry["upgrade_attributions"] = attributions
+        feature_verdicts[fname] = verdict_entry
     payload["feature_verdicts"] = feature_verdicts
+
+    # Aggregate attribution status: are ALL major-PSI features
+    # attributable to known upgrades? If so the calibrator drift
+    # alert reword can flip the alert from "alarming" to "benign".
+    major_features = [
+        f for f, v in feature_verdicts.items()
+        if str(v.get("verdict") or "") == "major"
+    ]
+    attributed_features = [
+        f for f in major_features
+        if feature_verdicts[f].get("upgrade_attributions")
+    ]
+    payload["upgrade_attribution_summary"] = {
+        "major_features": major_features,
+        "attributed_features": attributed_features,
+        "fully_attributed": (
+            bool(major_features)
+            and len(attributed_features) == len(major_features)
+        ),
+    }
 
     for alert_text in report.get("alerts") or []:
         payload["alerts"].append(str(alert_text))

@@ -261,6 +261,30 @@ def save_json(path: Path, payload: dict) -> None:
     tmp.replace(path)
 
 
+def _cached_game_is_final(path: Path) -> bool:
+    """Inspect a cached game JSON and return True only if the recorded
+    state is `Final`. Pre-game placeholders and in-progress snapshots
+    return False so the caller re-fetches them. 2026-05-20 audit fix:
+    previously --skip-existing skipped ANY cached file, leaving stale
+    pre-game placeholders forever -- the daily review's
+    settlement_truth_health then fired persistent `game_not_final_yet`
+    alerts (e.g. 7 such bets all from 2026-05-13 found in 2026-05-19
+    audit). Malformed/unreadable cache also returns False so it gets
+    rewritten by the next fetch.
+    """
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            cached = json.load(f)
+        status = (
+            cached.get("gameData", {})
+            .get("status", {})
+            .get("abstractGameState")
+        )
+        return str(status or "").lower() == "final"
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return False
+
+
 def fetch_and_store_game(
     g: GameRef,
     *,
@@ -272,7 +296,17 @@ def fetch_and_store_game(
 ) -> Tuple[int, str, Path]:
     out_path = game_output_path(g)
     if out_path.exists() and not overwrite:
-        return g.game_pk, "skipped_exists", out_path
+        # Only treat the cache as authoritative when it's a Final game.
+        # Otherwise (pre-game placeholder, in-progress snapshot, or
+        # corrupt) re-fetch -- the MLB scraper otherwise leaves stale
+        # placeholders forever.
+        if _cached_game_is_final(out_path):
+            # Counter name kept as "skipped_exists" for back-compat with
+            # downstream rollups; semantically this is now "skipped
+            # because cached AND final" (pre-game/in-progress cached
+            # files fall through and get re-fetched).
+            return g.game_pk, "skipped_exists", out_path
+        # fall through -- re-fetch the non-final cache
 
     session = requests.Session()
     session.headers.update({"Accept": "application/json", "User-Agent": "NHL-BOT-Baseball/1.0"})
