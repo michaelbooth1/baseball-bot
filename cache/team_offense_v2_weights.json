@@ -1,0 +1,38 @@
+{
+  "betas": {
+    "momentum_10": 0.1544290082036354,
+    "prior_season": -0.1577320383984614,
+    "season_to_date": 0.1409899624963579
+  },
+  "bounds": {
+    "max_logit_delta": 0.6
+  },
+  "generated_at_utc": "2026-05-19T22:06:17.908766Z",
+  "lineage": {
+    "builder_path": "scripts/analysis/promote_team_offense_v2.py",
+    "built_at_utc": "2026-05-19T22:06:17.926478Z",
+    "cli_args_summary": {
+      "dry_run": false,
+      "output_path": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\cache\\team_offense_v2_weights.json",
+      "source_artifact": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\data\\analysis_output\\team_offense_calibration\\phase4_models.json"
+    },
+    "git_branch": "main",
+    "git_dirty": true,
+    "git_sha": "db54aed720eb",
+    "input_dir_summaries": {},
+    "input_hashes": {
+      "data/analysis_output/team_offense_calibration/phase4_models.json": "sha256:8cec1d95e5c03522"
+    },
+    "python_version": "3.11.0",
+    "schema_version": 1
+  },
+  "model_name": "phase4_model3",
+  "schema_version": 1,
+  "shrinkage": {
+    "sigma_within_sq": 10.0,
+    "tau_sq_momentum": 0.2024,
+    "tau_sq_prior": 0.1688,
+    "tau_sq_season": 0.2385
+  },
+  "source_artifact": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\data\\analysis_output\\team_offense_calibration\\phase4_models.json"
+}

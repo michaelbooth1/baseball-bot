@@ -12,6 +12,41 @@ export type ReviewIndex = {
   reviewsDir: string;
 };
 
+/**
+ * Session JSON shape (subset of fields the weekly table reads).
+ * Session files live in data/{live_trading,paper_trading}/sessions/
+ * <date>_session.json and ALWAYS exist for any date the engine ran,
+ * regardless of whether a daily_human_review was built for them.
+ */
+export type SessionFile = {
+  date?: string;
+  mode?: string;
+  bets?: BetRow[];
+  summary?: {
+    total_profit?: number | null;
+    total_staked?: number | null;
+    win_rate?: number | null;
+    total_bets?: number | null;
+    settled?: number | null;
+    [key: string]: unknown;
+  };
+};
+
+export type SessionIndexEntry = {
+  date: string;
+  /** Folder name (`live` or `paper`) where the session file was found. */
+  modeFolder: string;
+  /** The session JSON's own `.mode` field (engine-authoritative).
+   *  May differ from `modeFolder` when e.g. a dry_run session lives
+   *  under `live_trading/`. */
+  mode: string;
+};
+
+export type SessionIndex = {
+  sessions: SessionIndexEntry[];
+  errors?: Array<{ modeFolder: string; detail: string }>;
+};
+
 export type SessionSummary = {
   orders_placed?: number | null;
   orders_filled?: number | null;

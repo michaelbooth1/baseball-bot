@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 signal_config.py -- Trade defaults and CLI parsing for SignalEngine.
 
@@ -50,8 +50,8 @@ DEFAULT_PROB_CALIBRATION_UNDER_PATH = (
 # eventual paper-mode flip (B4 in the roadmap).
 DEFAULT_UNDER_EMISSION_MODE = "off"
 UNDER_EMISSION_MODES = ("off", "shadow")
-DEFAULT_EDGE_THRESHOLD           = 0.15   # [TR10] raised from 0.12 â€” edge [0.12,0.15) zone: 9 bets 55.6% WR -20.6% ROI
-DEFAULT_EDGE_THRESHOLD_HIGH_LINE = 0.16   # [TR10] raised from 0.13 proportionally with standard threshold
+DEFAULT_EDGE_THRESHOLD           = 0.14   # [TR20] lowered from 0.15 for Stage-3 v2 model recalibration
+DEFAULT_EDGE_THRESHOLD_HIGH_LINE = 0.15   # [TR20] lowered from 0.16 for Stage-3 v2 model recalibration
 DEFAULT_JUMP_THRESHOLD           = 0.06   # min ask rise over lookback window
 DEFAULT_MAX_SPREAD               = 0.20   # ignore if book spread is wider than this
 DEFAULT_MIN_INNING               = 4      # don't bet before inning 4 (7.5 lines)
@@ -120,7 +120,7 @@ DEFAULT_FV_ASK_GAP_MIN_INNING  = 7      # [TR12] â€¦but only in inning >= th
 # lines) still pass. False-positive cost (skipping a real high-edge winner)
 # remains small in expectation; false-negative cost is concentrated and large.
 # Tunable via --extreme-edge-max if a future audit shifts the boundary.
-DEFAULT_EXTREME_EDGE_MAX        = 0.22
+DEFAULT_EXTREME_EDGE_MAX        = 0.17
 
 # [TR14] LTP-vs-ask shadow risk tag -- not an enforced gate. Historical examples
 # above 0.50 include winners/missed winners, so use this for diagnostics rather
@@ -174,7 +174,17 @@ DEFAULT_GATE_BLOWOUT_RELAX_MODE = "enforce"           # off|shadow|enforce|ab
 DEFAULT_GATE_RELAX_AB_FRACTION = 0.50
 
 # Probability calibration rollout (artifact fitted from unified dataset).
-DEFAULT_PROB_CALIBRATION_MODE = "shadow"  # off|shadow|enforce
+DEFAULT_PROB_CALIBRATION_MODE = "enforce"  # off|shadow|enforce
+# Band-gated enforce: only overwrite raw FV when raw >= this threshold.
+# Below the threshold, the calibrator is still scored (for observability)
+# but raw FV is kept (shadow-like behavior). 2026-05-19 audit found the
+# Platt calibrator is well-behaved at raw>=0.90 (pulls 0.97 -> 0.75, very
+# close to realized 0.70 on n=487) but over-pulls in [0.80,0.90) where
+# raw is only +5pp overconfident and calibrated lands -10 to -16pp UNDER
+# realized. Restricting enforce to the high-FV band captures the big EV
+# correction without amputating mid-band bets the model gets ~right.
+# Set to 0.0 to enforce across the whole range (the original behavior).
+DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW = 0.90
 
 # Shadow state-value/no-score drift diagnostics. These do not place trades.
 # They collect evidence for the broader premise:
@@ -440,6 +450,17 @@ def parse_trade_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace]
                    help=f"Gate 1 shadow: relax min_inning_high_line by this many innings (default: {DEFAULT_SHADOW_RELAXED_MIN_INNING_HIGH_LINE_OFFSET}).")
     p.add_argument("--prob-calibration-mode", choices=["off", "shadow", "enforce"], default=DEFAULT_PROB_CALIBRATION_MODE,
                    help=f"Probability calibration mode for fair_value (default: {DEFAULT_PROB_CALIBRATION_MODE}).")
+    p.add_argument("--prob-calibration-enforce-min-raw", type=float,
+                   default=DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW,
+                   help=(
+                       "Band-gated enforce: when --prob-calibration-mode=enforce, "
+                       "only overwrite raw FV when raw_prob >= this threshold. "
+                       "Below threshold, raw is kept (calibrator still scored "
+                       "for observability). 0.0 disables the gate (enforce "
+                       "across whole range). 2026-05-19 audit chose 0.90 to "
+                       "capture the [0.95,1.00) +28pp overconfidence band "
+                       f"without amputating mid-band bets (default: {DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW})."
+                   ))
     # Active #8 prep (2026-05-17): Stage-1 Alt A shadow-empirical
     # override. Mirrors --stage1-shadow-empirical-override on the
     # live_engine CLI so paper mode can opt into per-tick Alt A

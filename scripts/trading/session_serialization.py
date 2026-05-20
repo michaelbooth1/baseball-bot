@@ -47,6 +47,7 @@ from signal_config import (
     DEFAULT_MIN_CURRENT_TOTAL_RELAX_INNING,
     DEFAULT_MIN_CURRENT_TOTAL_RELAX_MAX_LEAD,
     DEFAULT_MIN_CURRENT_TOTAL_RELAX_MAX_RUNS_NEEDED,
+    DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW,
     DEFAULT_PROB_CALIBRATION_MODE,
     DEFAULT_SHADOW_NO_SCORE_DRIFT_ENABLED,
     DEFAULT_SHADOW_NO_SCORE_DRIFT_MAX_ASK,
@@ -180,6 +181,9 @@ def build_paper_session_payload(engine: "SignalEngine") -> Dict[str, Any]:
             "fv_ask_gap_min_inning": trade_args.fv_ask_gap_min_inning,
             "prob_calibration_mode": engine._prob_calibration_mode,
             "prob_calibration_path": str(engine._prob_calibration_path),
+            "prob_calibration_enforce_min_raw": float(
+                getattr(engine, "_prob_calibration_enforce_min_raw", 0.0)
+            ),
             "shadow_no_score_drift_enabled": bool(getattr(
                 trade_args,
                 "shadow_no_score_drift_enabled",
@@ -460,6 +464,10 @@ def build_live_session_payload(
                 DEFAULT_PROB_CALIBRATION_MODE,
             )),
             "prob_calibration_path": str(getattr(trade_args, "prob_calibration_path", "")),
+            "prob_calibration_enforce_min_raw": float(getattr(
+                trade_args, "prob_calibration_enforce_min_raw",
+                DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW,
+            )),
             "shadow_no_score_drift_enabled": bool(getattr(
                 trade_args,
                 "shadow_no_score_drift_enabled",

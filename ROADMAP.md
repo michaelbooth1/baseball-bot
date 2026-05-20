@@ -15,7 +15,36 @@ transition objective. It is split into five sections:
   quoting. Strategic, not a one-week task; phases A-E.
 - **Operational guidance** -- standing rules for day-to-day session work.
 
-Last roadmap review: **2026-05-19** (UNDER outcomes counterfactual
+Last roadmap review: **2026-05-19** (Band-gated calibrator
+ENFORCE shipped: 2026-05-19 FV-overconfidence audit confirmed
+**raw model is overconfident by +28pp at FV>=0.95** (487 settled
+predictions: claimed avg 0.97, realized 0.70). Audit drilled into
+the CLE@DET 7.5 LOSS (raw FV=0.979, base poisson=0.982 vs cell
+empirical=0.893 on n=112 exact-match samples -- a 9pp gap that
+production never sees because the cache is built in poisson-only
+mode). Two fixes considered: global Alt-A promotion + global
+calibrator enforce. Global Alt-A NOT shipped because the existing
+shadow-override report flags a -23.8pp inning>=8 regression --
+scoped (cohort-aware) Alt-A is the correct path and is now
+roadmap'd as Active #17. Calibrator enforce shipped with a
+band-gate: `DEFAULT_PROB_CALIBRATION_MODE` flipped from `shadow`
+to `enforce` AND new `DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW
+= 0.90` -- so the Platt calibrator now overwrites raw FV when
+raw>=0.90 (captures the +28pp dangerous-tail correction) while
+leaving the mid-band [0.80,0.90) alone (where the Platt fit
+over-pulls by 10-16pp under realized). Per-candidate diag adds
+`below_min_raw_kept_raw` + `enforce_min_raw_threshold` columns
++ new `below_min_raw_kept_raw` engine stat counter; session
+params persist the new threshold for audit. CLE@DET 7.5 bet
+would now calibrate ~0.78 (below 0.80 ask), skipping. Runbook:
+`docs/operational/fv-recalibration-2026-05-19.md`. Roadmap
+adds **Active #17** (Scoped Alt-A enforce -- cohort-aware
+empirical override) + **Hygiene #18-#20** (line-5.5 high-FV
+guard, mid-band calibrator refit, Negative-Binomial Stage-1
+tail). Tests: 31 signal_engine + 59 live_execution all green
+(one pre-existing golden-row test fails on an unrelated
+unstaged DEFAULT_EXTREME_EDGE_MAX 0.22->0.17 working-tree
+change). Earlier today: UNDER outcomes counterfactual
 trailing-7d aggregate shipped: smooths the per-day block's noise
 by walking the prior 6 dates + today, unioning settled rows, and
 re-aggregating. Trailing alerts at n>=50 fire within ~3 sessions
@@ -4132,6 +4161,39 @@ ledger rows), but the code exists.
     intentionally NOT added: promotions can wait, demotions
     cannot.
 
+17. **Scoped Alt-A enforce (cohort-aware empirical override).**
+    *2026-05-19 audit follow-up.* The 2026-05-19 FV audit
+    confirmed Poisson over-predicts by 4-7pp at high FV in the
+    Stage-1 cache across every line. A naive global
+    `--smoothing-mode empirical_when_available` flip of the
+    production builder would close most of the gap (mean signed
+    delta -2.7pp in probability units across 4200/4298 overridden
+    cells) BUT the existing shadow-override report shows
+    **-23.8pp regression on the `inning>=8` cohort** (n=7, noisy
+    but directionally clear). Operationally correct path is
+    scoped application: apply empirical-when-available only on
+    cohorts where the shadow report shows durable improvement;
+    keep Poisson on cohorts where it regresses.
+    - Design surface (open): a new per-cell or per-cohort
+      `smoothing_mode_decision` block in
+      `cache/build_mlb_ou_cache.py`'s Alt-A pass that reads the
+      latest `build_stage1_shadow_override_report.py`
+      `cohort_breakdown` artifact and overrides per-cell based
+      on the cohort the cell belongs to. Alternatively, runtime
+      gating in `signal_pipeline_gates_post_fv.py` that switches
+      `inferred_state_base_source` per candidate.
+    - Pre-req: the shadow-override report's per-cohort
+      breakdown is already shipped (2026-05-19). What's
+      needed is the consumer that turns its verdict into the
+      cell-or-runtime override decision.
+    - Files: `cache/build_mlb_ou_cache.py`,
+      `scripts/analysis/build_stage1_shadow_override_report.py`
+      (read), runtime path in `signal_engine.py` or
+      `signal_pipeline_gates_post_fv.py`.
+    - Until shipped, the 2026-05-19 band-gated calibrator
+      enforce (see Recently Completed) catches the high-FV
+      overconfidence band downstream.
+
 ## Hygiene (not blocking, but accumulating debt)
 
 14. **Backup retention policy + PSI-history GC.** *Shipped
@@ -4197,6 +4259,49 @@ ledger rows), but the code exists.
     alerts. Remaining v5 follow-up: lineage-aware demote UX
     + transitive consistency (walk the dependency graph rather
     than direct-input matches only).
+
+18. **Line-5.5 high-FV slice guard.** *2026-05-19 audit
+    follow-up.* Per the audit's per-line slice (1,376 settled
+    OVER predictions), at raw FV >= 0.90 the realized hit rate
+    for line=5.5 is **51% on n=92** vs claimed 96% -- the worst
+    miss in the dataset, and the calibrator only partially
+    rescues it. Even with band-gated enforce the residual EV is
+    poor. Options: (a) a hard per-line FV ceiling at 5.5 (e.g.
+    no bets at line=5.5 when raw_fv >= 0.90), (b) a per-line
+    stake dampener, (c) a separate Stage-1 build pass for the
+    extra-low-lines bucket. (a) is cheapest. Audit input data:
+    `data/analysis_output/calibration/signal_win_calibration_predictions.jsonl`.
+    Files: `scripts/trading/signal_pipeline_gates_post_fv.py`,
+    `signal_config.py` for the gate threshold.
+
+19. **Mid-band [0.80,0.90) calibrator under-confidence
+    refit.** *2026-05-19 audit follow-up.* The 2026-05-19
+    audit found the Platt calibrator pulls too aggressively
+    in [0.80,0.90) -- raw is +5-9pp overconfident vs realized
+    but calibrated is 10-16pp **under** realized. The
+    band-gated enforce ships shipped 2026-05-19 works around
+    this by NOT applying the calibrator in this band, but the
+    correct long-term fix is a per-line refit (Platt currently
+    fits a global slope+intercept; per-line + per-family would
+    let the [0.80,0.90) band reach a tighter local fit). Or
+    swap to isotonic which already wins on the no_score_drift
+    family. Files:
+    `scripts/analysis/calibrate_signal_probabilities.py`.
+
+20. **Replace Poisson tail with negative-binomial fit.**
+    *2026-05-19 audit follow-up.* The Stage-1 cache uses
+    Poisson smoothing which is structurally too thin-tailed
+    for run-scoring (offenses go cold for stretches; the
+    Poisson distribution under-models the fat left tail of
+    1-0-1-0 inning sequences). Audit shows poisson > empirical
+    by 4-7pp at every line where poisson >= 0.85 across 845-
+    1919 well-supported cells per line -- the bias is
+    structural, not sampling noise. Replacing with a
+    Negative-Binomial fit per phase lambda or per cell (where
+    n_samples adequate) would shorten the tail. Bigger model
+    change than the cheap wins; ship after Active #17 (Scoped
+    Alt-A) demonstrates the cohort-aware promotion machinery
+    works. Files: `cache/build_mlb_ou_cache.py`.
 
 ## Bidirectional trading -> market-making (long-horizon)
 

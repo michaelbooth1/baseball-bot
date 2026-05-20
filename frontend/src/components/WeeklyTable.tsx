@@ -1,10 +1,19 @@
 import type { FC } from "react";
-import type { DailyReview } from "../types";
+import type { SessionFile } from "../types";
 import { fmtMoney, fmtPct } from "../api";
 
 type Props = {
-  /** Trailing N reviews, any order. We group + sort internally. */
-  reviews: DailyReview[];
+  /**
+   * All session files (both live + paper) loaded from
+   * `/api/sessions/<modeFolder>/<date>`. We group by ISO week +
+   * mode internally. Order doesn't matter.
+   *
+   * Sessions are preferred over daily_human_review artifacts here
+   * because session JSONs exist for EVERY date the engine ran,
+   * regardless of which mode's `--sessions-dir` the daily refresh
+   * was run against.
+   */
+  sessions: SessionFile[];
 };
 
 type WeekRow = {
@@ -37,59 +46,64 @@ type ModeAggregate = {
 /**
  * Weekly win/loss/ROI roll-up.
  *
- * Groups loaded daily-review bets by ISO week (Monday -> Sunday).
- * Each row sums:
- *   - sessions: count of daily reviews in that week
- *   - count / wins / losses: per-bet from each review's `bets[].won`
- *   - profit: from `bet_totals.profit` (per-session pre-summed by
- *     the daily-review builder; reliable across paper + live modes
- *     where per-bet `stake` is missing)
- *   - stake: from `session_summary.total_staked` (authoritative
- *     per-session aggregate; per-bet `stake` is null in the daily
- *     review's compact bet rows)
+ * Reads session files (both live + paper) directly rather than
+ * daily_human_review artifacts. Reason: daily_human_review is
+ * built per-date from ONE `--sessions-dir` so it can miss the
+ * other mode's session even when both exist on disk. Session
+ * JSONs always exist in their respective folders.
+ *
+ * Groups by ISO week (Monday -> Sunday). Each row sums:
+ *   - sessions: count of session files in that week
+ *   - count / wins / losses: per-bet from each session's bets[]
+ *   - profit: from session.summary.total_profit (per-session
+ *     pre-summed by the engine)
+ *   - stake: from session.summary.total_staked (authoritative
+ *     per-session aggregate)
  *   - win_rate = wins / (wins + losses)
  *   - roi = profit / stake
  *
- * The footer `Total` row sums all loaded weeks. ISO week convention
- * (Mon-Sun) matches the project's `weekly_drift_rollup` artifact.
+ * Per-mode subtotal rows surface when more than one distinct mode
+ * appears in the loaded window, so live P&L and paper P&L can be
+ * read separately rather than mixed into one (potentially
+ * misleading) ROI.
+ *
+ * Mixed-mode caveat fires when paper + live both appear: paper's
+ * 100% taker assumption overstates realizable P&L.
  */
-export const WeeklyTable: FC<Props> = ({ reviews }) => {
-  // Group reviews by week-start (Monday)
-  const byWeek = new Map<string, DailyReview[]>();
-  for (const r of reviews) {
-    if (!r.session_date) continue;
-    const weekStart = mondayOfWeek(r.session_date);
+export const WeeklyTable: FC<Props> = ({ sessions }) => {
+  // Group sessions by week-start (Monday)
+  const byWeek = new Map<string, SessionFile[]>();
+  for (const s of sessions) {
+    const d = sessionDate(s);
+    if (!d) continue;
+    const weekStart = mondayOfWeek(d);
     if (!byWeek.has(weekStart)) byWeek.set(weekStart, []);
-    byWeek.get(weekStart)!.push(r);
+    byWeek.get(weekStart)!.push(s);
   }
 
   const weekRows: WeekRow[] = Array.from(byWeek.entries())
-    .map(([weekStart, weekReviews]) => {
-      const bets = weekReviews.flatMap((r) => r.bets ?? []);
+    .map(([weekStart, weekSessions]) => {
+      const bets = weekSessions.flatMap((s) => s.bets ?? []);
       const wins = bets.filter((b) => b.won === true).length;
       const losses = bets.filter((b) => b.won === false).length;
       const decided = wins + losses;
-      // Stake + profit live in the per-session summary blocks
-      // (the per-bet `stake` field is null in the compact daily-
-      // review bet rows; total_staked + bet_totals.profit are
-      // pre-aggregated by build_daily_human_review_report.py).
-      const stake = weekReviews.reduce(
-        (s, r) => s + (sessionTotalStaked(r) ?? 0),
+      const stake = weekSessions.reduce(
+        (sum, s) => sum + (sessionTotalStaked(s) ?? 0),
         0,
       );
-      const profit = weekReviews.reduce(
-        (s, r) => s + (sessionTotalProfit(r) ?? 0),
+      const profit = weekSessions.reduce(
+        (sum, s) => sum + (sessionTotalProfit(s) ?? 0),
         0,
       );
       const modeCounts: Record<string, number> = {};
-      for (const r of weekReviews) {
-        const m = r.mode ?? "unknown";
+      for (const s of weekSessions) {
+        const m = s.mode ?? "unknown";
         modeCounts[m] = (modeCounts[m] ?? 0) + 1;
       }
       return {
         weekStart,
         weekEnd: addDays(weekStart, 6),
-        sessions: weekReviews.length,
+        sessions: weekSessions.length,
         count: bets.length,
         wins,
         losses,
@@ -100,34 +114,32 @@ export const WeeklyTable: FC<Props> = ({ reviews }) => {
         modeCounts,
       };
     })
-    // Newest week first
     .sort((a, b) => b.weekStart.localeCompare(a.weekStart));
 
-  // Per-mode subtotal rows -- so the operator can read live and
-  // paper P&L separately rather than mixed into one ROI.
-  const byMode = new Map<string, DailyReview[]>();
-  for (const r of reviews) {
-    const m = r.mode ?? "unknown";
+  // Per-mode subtotal rows
+  const byMode = new Map<string, SessionFile[]>();
+  for (const s of sessions) {
+    const m = s.mode ?? "unknown";
     if (!byMode.has(m)) byMode.set(m, []);
-    byMode.get(m)!.push(r);
+    byMode.get(m)!.push(s);
   }
   const modeRows: ModeAggregate[] = Array.from(byMode.entries())
-    .map(([mode, modeReviews]) => {
-      const bets = modeReviews.flatMap((r) => r.bets ?? []);
+    .map(([mode, modeSessions]) => {
+      const bets = modeSessions.flatMap((s) => s.bets ?? []);
       const wins = bets.filter((b) => b.won === true).length;
       const losses = bets.filter((b) => b.won === false).length;
       const decided = wins + losses;
-      const stake = modeReviews.reduce(
-        (s, r) => s + (sessionTotalStaked(r) ?? 0),
+      const stake = modeSessions.reduce(
+        (sum, s) => sum + (sessionTotalStaked(s) ?? 0),
         0,
       );
-      const profit = modeReviews.reduce(
-        (s, r) => s + (sessionTotalProfit(r) ?? 0),
+      const profit = modeSessions.reduce(
+        (sum, s) => sum + (sessionTotalProfit(s) ?? 0),
         0,
       );
       return {
         mode,
-        sessions: modeReviews.length,
+        sessions: modeSessions.length,
         count: bets.length,
         wins,
         losses,
@@ -137,8 +149,6 @@ export const WeeklyTable: FC<Props> = ({ reviews }) => {
         roi: stake > 0 ? profit / stake : null,
       };
     })
-    // Sort: live -> paper -> rest alphabetical. Live is the
-    // operationally important one so it leads.
     .sort((a, b) => {
       const rank = (m: string) =>
         m === "live" ? 0 : m === "paper" ? 1 : 2;
@@ -151,8 +161,8 @@ export const WeeklyTable: FC<Props> = ({ reviews }) => {
       <section className="card">
         <h2 className="card-title">Weekly results</h2>
         <p className="empty-state">
-          No bet data in the trailing window. (Loaded {reviews.length}{" "}
-          review{reviews.length === 1 ? "" : "s"}.)
+          No session data on disk. (Loaded {sessions.length} session
+          {sessions.length === 1 ? "" : "s"}.)
         </p>
       </section>
     );
@@ -168,14 +178,7 @@ export const WeeklyTable: FC<Props> = ({ reviews }) => {
   const totalStake = weekRows.reduce((s, w) => s + w.stake, 0);
   const totalRoi = totalStake > 0 ? totalProfit / totalStake : null;
   const totalWinRate = totalDecided > 0 ? totalWins / totalDecided : null;
-
-  // Whether to render per-mode subtotals: only when more than one
-  // distinct mode appears in the loaded reviews. Single-mode windows
-  // would just duplicate the grand-total row.
   const showModeBreakdown = modeRows.length > 1;
-  // Mixed-mode caveat: surface only when paper sessions are mixed
-  // with live sessions, since that's the case where summing the ROI
-  // is misleading (paper assumes 100% taker; live has ~46% fill).
   const hasPaper = modeRows.some((m) => m.mode === "paper");
   const hasLive = modeRows.some((m) => m.mode === "live");
   const showPaperCaveat = hasPaper && hasLive;
@@ -187,9 +190,9 @@ export const WeeklyTable: FC<Props> = ({ reviews }) => {
         {weekRows.length === 1 ? "" : "s"})
       </h2>
       <p className="card-meta">
-        Bets grouped by ISO week (Monday → Sunday). Each row sums
-        per-bet outcomes across that week's sessions. Win-rate
-        denominator excludes unsettled bets; stake includes them.
+        Bets grouped by ISO week (Monday → Sunday) from session JSONs
+        (paper + live). Win-rate denominator excludes unsettled bets;
+        stake includes them.
         {showPaperCaveat && (
           <>
             {" "}
@@ -280,11 +283,23 @@ export const WeeklyTable: FC<Props> = ({ reviews }) => {
 };
 
 const WeekTableRow: FC<{ week: WeekRow }> = ({ week: w }) => {
+  const modesDisplay = Object.entries(w.modeCounts)
+    .sort(([a], [b]) => {
+      const rank = (m: string) =>
+        m === "live" ? 0 : m === "paper" ? 1 : 2;
+      const r = rank(a) - rank(b);
+      return r !== 0 ? r : a.localeCompare(b);
+    })
+    .map(([m, c]) =>
+      Object.keys(w.modeCounts).length === 1 ? m : `${m} (${c})`,
+    )
+    .join(", ");
   return (
     <tr>
       <td>
         {w.weekStart} → {w.weekEnd}
       </td>
+      <td className="modes-cell">{modesDisplay}</td>
       <td className="num">{w.sessions}</td>
       <td className="num">{w.count}</td>
       <td className="num">{w.wins}</td>
@@ -306,36 +321,25 @@ function signClass(v: number | null | undefined): string {
   return "metric-neutral";
 }
 
-/**
- * Authoritative per-session stake. Pulled from `session_summary
- * .total_staked` which is pre-aggregated by the daily-review
- * builder across paper + live modes. Per-bet `bet.stake` in the
- * compact bet rows is null; don't try to derive from that.
- */
-function sessionTotalStaked(r: DailyReview): number | null {
-  const v = (r.session_summary as Record<string, unknown> | undefined)?.[
-    "total_staked"
-  ];
+/** Session date lives at `.date` in the session JSON. */
+function sessionDate(s: SessionFile): string | null {
+  return typeof s.date === "string" && s.date ? s.date : null;
+}
+
+function sessionTotalStaked(s: SessionFile): number | null {
+  const v = s.summary?.total_staked;
   return typeof v === "number" ? v : null;
 }
 
-/**
- * Authoritative per-session profit. `bet_totals.profit` is the
- * builder's per-session sum. Falls back to
- * `session_summary.total_profit` for older review formats.
- */
-function sessionTotalProfit(r: DailyReview): number | null {
-  const fromTotals = r.bet_totals?.profit;
-  if (typeof fromTotals === "number") return fromTotals;
-  const fromSummary = r.session_summary?.total_profit;
-  return typeof fromSummary === "number" ? fromSummary : null;
+function sessionTotalProfit(s: SessionFile): number | null {
+  const v = s.summary?.total_profit;
+  return typeof v === "number" ? v : null;
 }
 
 /** YYYY-MM-DD of the Monday of the ISO week containing `date`. */
 function mondayOfWeek(date: string): string {
   const d = new Date(date + "T00:00:00Z");
-  const dayOfWeek = d.getUTCDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-  // Distance from previous Monday: Sun -> 6, Mon -> 0, Tue -> 1, ...
+  const dayOfWeek = d.getUTCDay();
   const daysFromMonday = (dayOfWeek + 6) % 7;
   d.setUTCDate(d.getUTCDate() - daysFromMonday);
   return d.toISOString().slice(0, 10);

@@ -263,11 +263,19 @@ class SignalEngine(MLBPolymarketMonitor):
         self._prob_calibration_path = Path(
             getattr(trade_args, "prob_calibration_path", DEFAULT_PROB_CALIBRATION_PATH)
         )
+        self._prob_calibration_enforce_min_raw = float(
+            getattr(
+                trade_args,
+                "prob_calibration_enforce_min_raw",
+                DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW,
+            )
+        )
         self._prob_calibrator: Optional[ProbabilityCalibrator] = None
         self._prob_calibration_stats: Dict[str, int] = {
             "scored": 0,
             "applied": 0,
             "shadow_scored": 0,
+            "below_min_raw_kept_raw": 0,
             "disabled_or_missing": 0,
             "family_missing": 0,
             "family_missing_fail_closed": 0,
@@ -495,7 +503,7 @@ class SignalEngine(MLBPolymarketMonitor):
             "min_total=%d  min_total_relax=%s(i=%d,t=%d,ask>=%.2f,lead<=%d,rn<=%.2f)  "
             "blowout_relax=%s(inn<=%d,ask>=%.2f,rn<=%.2f)  "
             "ask_edge_ramp=%s(start=%.2f,end=%.2f,max=%.3f)  "
-            "prob_calibration=%s  "
+            "prob_calibration=%s(min_raw=%.2f)  "
             "min_inning_high_line=%d(>=%.1f)  confirm=%d  "
             "dedup=%.0fs  inning_dedup=%d(per-line)  "
             "capture=%.0fs  stage2=%s  stage3=loaded",
@@ -523,6 +531,7 @@ class SignalEngine(MLBPolymarketMonitor):
             float(getattr(trade_args, "ask_edge_ramp_end", DEFAULT_ASK_EDGE_RAMP_END)),
             float(getattr(trade_args, "ask_edge_ramp_max_boost", DEFAULT_ASK_EDGE_RAMP_MAX_BOOST)),
             self._prob_calibration_mode,
+            self._prob_calibration_enforce_min_raw,
             trade_args.min_inning_high_line,
             trade_args.high_line_cutoff,
             trade_args.confirmation_ticks,
@@ -688,12 +697,26 @@ class SignalEngine(MLBPolymarketMonitor):
         except TypeError:
             calibrated_raw = self._prob_calibrator.calibrate(raw)
         calibrated = min(max(calibrated_raw, 1e-8), 1.0 - 1e-8)
-        applied = self._prob_calibration_mode == "enforce"
+        # Band-gated enforce (2026-05-19): only overwrite raw FV when
+        # raw >= threshold. Below threshold the calibrator is still
+        # scored (calibrated_prob + delta logged) but raw is kept --
+        # shadow-like behavior for the mid-band where the calibrator
+        # over-pulls. See docs/operational/fv-recalibration-2026-05-19.md.
+        below_threshold = (
+            self._prob_calibration_mode == "enforce"
+            and raw < self._prob_calibration_enforce_min_raw
+        )
+        applied = (
+            self._prob_calibration_mode == "enforce"
+            and not below_threshold
+        )
         final_prob = calibrated if applied else raw
 
         self._prob_calibration_stats["scored"] += 1
         if applied:
             self._prob_calibration_stats["applied"] += 1
+        elif below_threshold:
+            self._prob_calibration_stats["below_min_raw_kept_raw"] += 1
         else:
             self._prob_calibration_stats["shadow_scored"] += 1
 
@@ -702,6 +725,8 @@ class SignalEngine(MLBPolymarketMonitor):
                 "calibrated_prob": calibrated,
                 "delta": calibrated - raw,
                 "applied": applied,
+                "below_min_raw_kept_raw": below_threshold,
+                "enforce_min_raw_threshold": self._prob_calibration_enforce_min_raw,
                 "family_fallback_used": bool(family_missing),
             }
         )

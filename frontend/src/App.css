@@ -95,6 +95,52 @@ body {
 .date-button-selected:hover {
   background: var(--accent);
 }
+.date-button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+.date-label {
+  font-variant-numeric: tabular-nums;
+}
+.date-tags {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.date-tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--text);
+}
+.date-tag-paper { background: var(--accent-bg); color: var(--accent); }
+.date-tag-live { background: #fee2e2; color: #b91c1c; }
+.date-tag-dry_run { background: #fef3c7; color: #92400e; }
+.date-tag-unknown { background: var(--border); color: var(--text-muted); }
+.date-button-selected .date-tag {
+  background: rgba(255, 255, 255, 0.22);
+  color: white;
+}
+.date-button-selected .date-tag-paper,
+.date-button-selected .date-tag-live,
+.date-button-selected .date-tag-dry_run {
+  /* preserve color contrast on selected row */
+  background: rgba(255, 255, 255, 0.22);
+  color: white;
+}
+.date-review-mark {
+  font-size: 11px;
+  color: var(--positive);
+  font-weight: 700;
+}
+.date-button-selected .date-review-mark {
+  color: white;
+}
 
 /* ---------- Main panel ---------- */
 .main {
@@ -128,6 +174,15 @@ body {
   border-radius: 6px;
   margin-bottom: 12px;
   font-style: italic;
+}
+.info-banner {
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  padding: 8px 14px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--text);
 }
 
 /* ---------- Cards ---------- */
@@ -337,6 +392,22 @@ body {
   background: #fafbfc;
   border-top: 2px solid var(--border-strong);
   border-bottom: none;
+}
+/* Per-mode subtotal rows (live / paper / dry_run) -- slightly
+ * tinted so they read as "between per-week and grand total" in
+ * the visual hierarchy. */
+.bets-table tr.subtotal-row td {
+  background: #f4f6f8;
+  font-size: 12px;
+  color: var(--text);
+  border-top: 1px solid var(--border-strong);
+}
+.bets-table tr.subtotal-row + tr:not(.subtotal-row) td {
+  border-top: 1px solid var(--border-strong);
+}
+.modes-cell {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 /* ---------- Health status grid ---------- */

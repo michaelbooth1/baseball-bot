@@ -60,7 +60,7 @@ def _pick_model3_fit(phase4_payload: Dict[str, Any]) -> Dict[str, Any]:
             "phase4_models.json: expected top-level 'models' dict, found "
             f"{type(candidates).__name__}"
         )
-    for key in ("model_3", "Model 3", "model3", "phase4_model3"):
+    for key in ("model_3_blend", "model_3", "Model 3", "model3", "phase4_model3"):
         if key in candidates:
             return candidates[key]
     # Fall back: pick any model whose summary mentions a three-window
@@ -74,7 +74,7 @@ def _pick_model3_fit(phase4_payload: Dict[str, Any]) -> Dict[str, Any]:
 def _extract_betas(model3: Dict[str, Any]) -> Dict[str, float]:
     """Pull the three betas out of the Model 3 fit object."""
     # Phase 4 output schema variations: try several known key paths.
-    coefs = model3.get("coefficients") or model3.get("betas") or model3.get("fit")
+    coefs = model3.get("coefficients") or model3.get("betas") or model3.get("fit") or model3
     if not isinstance(coefs, dict):
         raise RuntimeError(
             "Model 3 fit: no 'coefficients'/'betas'/'fit' dict found"
@@ -83,12 +83,15 @@ def _extract_betas(model3: Dict[str, Any]) -> Dict[str, float]:
     for src_key, dest_key in (
         ("prior_season", "prior_season"),
         ("beta_prior_season", "prior_season"),
+        ("beta_prior", "prior_season"),
         ("b_prior", "prior_season"),
         ("season_to_date", "season_to_date"),
         ("beta_season_to_date", "season_to_date"),
+        ("beta_season", "season_to_date"),
         ("b_season", "season_to_date"),
         ("momentum_10", "momentum_10"),
         ("beta_momentum_10", "momentum_10"),
+        ("beta_momentum", "momentum_10"),
         ("b_momentum", "momentum_10"),
     ):
         if src_key in coefs:
@@ -108,9 +111,25 @@ def _extract_shrinkage(phase4_payload: Dict[str, Any]) -> Dict[str, float]:
     if not isinstance(candidates, dict):
         return {}
     out: Dict[str, float] = {}
+    
+    # 1. Check flat keys
     for src in ("sigma_within_sq", "tau_sq_season", "tau_sq_prior", "tau_sq_momentum"):
         if src in candidates:
             out[src] = float(candidates[src])
+            
+    # 2. Check nested keys
+    if "sigma_within_sq" in candidates and "sigma_within_sq" not in out:
+        out["sigma_within_sq"] = float(candidates["sigma_within_sq"])
+        
+    tau_sq_nested = candidates.get("tau_sq_per_window") or {}
+    if isinstance(tau_sq_nested, dict):
+        if "season_rpg_to_date" in tau_sq_nested:
+            out["tau_sq_season"] = float(tau_sq_nested["season_rpg_to_date"])
+        if "prior_season_rpg" in tau_sq_nested:
+            out["tau_sq_prior"] = float(tau_sq_nested["prior_season_rpg"])
+        if "momentum_rpg_10" in tau_sq_nested:
+            out["tau_sq_momentum"] = float(tau_sq_nested["momentum_rpg_10"])
+            
     return out
 
 

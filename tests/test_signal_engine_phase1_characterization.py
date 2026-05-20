@@ -114,10 +114,14 @@ def _make_engine_stub(trade_args=None):
     engine._shadow_gate3_would_pass = 0
     engine._prob_calibration_mode = "off"
     engine._prob_calibrator = None
+    # Stub default 0.0 = no band gate. Tests that need to characterize
+    # band-gated enforce override this attribute explicitly.
+    engine._prob_calibration_enforce_min_raw = 0.0
     engine._prob_calibration_stats = {
         "scored": 0,
         "applied": 0,
         "shadow_scored": 0,
+        "below_min_raw_kept_raw": 0,
         "disabled_or_missing": 0,
     }
     return engine
@@ -415,6 +419,38 @@ class SignalEngineGateCharacterizationTests(unittest.TestCase):
         self.assertTrue(diag["applied"])
         self.assertEqual(engine._prob_calibration_stats["scored"], 2)
         self.assertEqual(engine._prob_calibration_stats["applied"], 1)
+
+    def test_probability_calibration_band_gated_enforce(self) -> None:
+        """Band-gated enforce (2026-05-19 audit fix): under enforce, only
+        overwrite raw FV when raw >= threshold. Below threshold the
+        calibrator is still scored for observability but raw is kept.
+        Default threshold 0.90 captures the [0.95,1.00) +28pp
+        overconfidence band while leaving the mid-band alone where the
+        Platt calibrator otherwise over-pulls.
+        """
+        engine = _make_engine_stub()
+        engine._prob_calibrator = _FakeCalibrator()
+        engine._prob_calibration_mode = "enforce"
+        engine._prob_calibration_enforce_min_raw = 0.90
+
+        # raw=0.80 < 0.90 threshold: raw kept, calibrator scored.
+        final_prob, diag = engine._calibrate_fair_value(raw_prob=0.80)
+        self.assertAlmostEqual(final_prob, 0.80, places=8)
+        self.assertAlmostEqual(diag["calibrated_prob"], 0.70, places=8)
+        self.assertFalse(diag["applied"])
+        self.assertTrue(diag["below_min_raw_kept_raw"])
+        self.assertAlmostEqual(diag["enforce_min_raw_threshold"], 0.90, places=8)
+        self.assertEqual(engine._prob_calibration_stats["scored"], 1)
+        self.assertEqual(engine._prob_calibration_stats["applied"], 0)
+        self.assertEqual(engine._prob_calibration_stats["below_min_raw_kept_raw"], 1)
+
+        # raw=0.95 >= 0.90: enforce applies normally.
+        final_prob, diag = engine._calibrate_fair_value(raw_prob=0.95)
+        self.assertAlmostEqual(final_prob, 0.85, places=8)
+        self.assertTrue(diag["applied"])
+        self.assertFalse(diag["below_min_raw_kept_raw"])
+        self.assertEqual(engine._prob_calibration_stats["applied"], 1)
+        self.assertEqual(engine._prob_calibration_stats["below_min_raw_kept_raw"], 1)
 
     def test_probability_calibration_missing_family_shadow_warns_enforce_fails_closed(self) -> None:
         payload = {
