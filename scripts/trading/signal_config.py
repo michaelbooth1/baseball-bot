@@ -50,8 +50,8 @@ DEFAULT_PROB_CALIBRATION_UNDER_PATH = (
 # eventual paper-mode flip (B4 in the roadmap).
 DEFAULT_UNDER_EMISSION_MODE = "off"
 UNDER_EMISSION_MODES = ("off", "shadow")
-DEFAULT_EDGE_THRESHOLD           = 0.14   # [TR20] lowered from 0.15 for Stage-3 v2 model recalibration
-DEFAULT_EDGE_THRESHOLD_HIGH_LINE = 0.15   # [TR20] lowered from 0.16 for Stage-3 v2 model recalibration
+DEFAULT_EDGE_THRESHOLD           = 0.15   # [TR10] raised from 0.12 â€” edge [0.12,0.15) zone: 9 bets 55.6% WR -20.6% ROI
+DEFAULT_EDGE_THRESHOLD_HIGH_LINE = 0.16   # [TR10] raised from 0.13 proportionally with standard threshold
 DEFAULT_JUMP_THRESHOLD           = 0.06   # min ask rise over lookback window
 DEFAULT_MAX_SPREAD               = 0.20   # ignore if book spread is wider than this
 DEFAULT_MIN_INNING               = 4      # don't bet before inning 4 (7.5 lines)
@@ -120,7 +120,7 @@ DEFAULT_FV_ASK_GAP_MIN_INNING  = 7      # [TR12] â€¦but only in inning >= th
 # lines) still pass. False-positive cost (skipping a real high-edge winner)
 # remains small in expectation; false-negative cost is concentrated and large.
 # Tunable via --extreme-edge-max if a future audit shifts the boundary.
-DEFAULT_EXTREME_EDGE_MAX        = 0.17
+DEFAULT_EXTREME_EDGE_MAX        = 0.22
 
 # [TR14] LTP-vs-ask shadow risk tag -- not an enforced gate. Historical examples
 # above 0.50 include winners/missed winners, so use this for diagnostics rather
