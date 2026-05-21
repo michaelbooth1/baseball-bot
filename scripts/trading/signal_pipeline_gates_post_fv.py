@@ -44,6 +44,8 @@ from signal_config import (
     DEFAULT_ASK_EDGE_RAMP_MAX_BOOST,
     DEFAULT_ASK_EDGE_RAMP_START,
     DEFAULT_EXTREME_EDGE_MAX,
+    STAGE1_ALT_A_SCOPE_RULES,
+    STAGE1_ALT_A_SCOPE_DEFAULT_ACTION,
 )
 from stage1_cache_audit import resolve_cell_line_probability
 from stage1_support import prefixed_stage1_support_fields
@@ -360,6 +362,110 @@ def _attach_stage1_shadow_empirical_fields(
             empirical, stage2_run_env_delta, team_offense_delta, exc,
         )
         # Already initialized to None above; leave them as-is.
+
+
+def _apply_stage1_alt_a_scope(
+    self: "SignalEngine",
+    *,
+    candidate_payload: Dict[str, object],
+    current_best_fv: float,
+    inning: int,
+) -> float:
+    """Active #17 (2026-05-21): Scoped Alt-A enforce.
+
+    Reads `_stage1_alt_a_scope_mode` from the engine. When `enforce`,
+    consults the cohort-rule list in `STAGE1_ALT_A_SCOPE_RULES`. If a
+    rule says `apply` for this candidate's cohort AND the upstream
+    `_attach_stage1_shadow_empirical_fields` successfully computed an
+    alt empirical FV, swap the production fair_value to use it.
+
+    Always logs the scope decision so operators can audit in shadow
+    mode before flipping to enforce.
+
+    Returns the (possibly swapped) best_fv. Mutates
+    `candidate_payload` in place when a swap happens:
+      - `fair_value` <- alt empirical FV
+      - `inferred_state_base_source` <- 'empirical_scoped_alt_a'
+      - `stage1_alt_a_scope_decision` <- 'applied'
+
+    Fail-open: any exception is logged at debug and the original
+    Poisson FV is preserved.
+    """
+    mode = str(getattr(self, "_stage1_alt_a_scope_mode", "off"))
+    candidate_payload["stage1_alt_a_scope_mode"] = mode
+    candidate_payload["stage1_alt_a_scope_decision"] = "mode_off"
+    candidate_payload["stage1_alt_a_scope_rule_matched"] = None
+
+    if mode == "off":
+        return current_best_fv
+
+    # Resolve the action from the rule list.
+    cohort_values = {
+        "inning": inning,
+        # Add more dimensions here as the rule list grows.
+    }
+    action = STAGE1_ALT_A_SCOPE_DEFAULT_ACTION
+    matched_rule_name = None
+    matched_rule_reason = None
+    try:
+        for rule in STAGE1_ALT_A_SCOPE_RULES:
+            dim = str(rule.get("dimension") or "")
+            pred = rule.get("predicate")
+            if dim not in cohort_values or not callable(pred):
+                continue
+            if pred(cohort_values[dim]):
+                action = str(rule.get("action") or action)
+                matched_rule_name = str(rule.get("name") or "")
+                matched_rule_reason = str(rule.get("reason") or "")
+                break
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.debug("scope rule eval failed: %r", exc)
+        candidate_payload["stage1_alt_a_scope_decision"] = "rule_eval_error"
+        return current_best_fv
+
+    candidate_payload["stage1_alt_a_scope_action"] = action
+    candidate_payload["stage1_alt_a_scope_rule_matched"] = matched_rule_name
+
+    # If shadow mode, log the decision but never swap.
+    if mode == "shadow":
+        if action == "apply":
+            candidate_payload["stage1_alt_a_scope_decision"] = "would_apply_in_shadow"
+        else:
+            candidate_payload["stage1_alt_a_scope_decision"] = "held_poisson_in_shadow"
+        return current_best_fv
+
+    # mode == enforce. Need the alt empirical FV to have been computed.
+    if action != "apply":
+        candidate_payload["stage1_alt_a_scope_decision"] = "held_poisson_enforce"
+        return current_best_fv
+    alt_fv = candidate_payload.get("fair_value_alt_empirical")
+    used_empirical = bool(
+        candidate_payload.get("fair_value_alt_empirical_used_empirical")
+    )
+    if alt_fv is None or not used_empirical:
+        # Shadow path didn't run or empirical was boundary/missing.
+        # Keep Poisson FV.
+        candidate_payload["stage1_alt_a_scope_decision"] = "alt_fv_unavailable"
+        return current_best_fv
+
+    try:
+        new_fv = float(alt_fv)
+    except (TypeError, ValueError):
+        candidate_payload["stage1_alt_a_scope_decision"] = "alt_fv_unparseable"
+        return current_best_fv
+
+    # Swap.
+    candidate_payload["fair_value"] = new_fv
+    candidate_payload["inferred_state_base_source"] = "empirical_scoped_alt_a"
+    candidate_payload["stage1_alt_a_scope_decision"] = "applied"
+    if matched_rule_reason:
+        candidate_payload["stage1_alt_a_scope_reason"] = matched_rule_reason
+    LOGGER.info(
+        "Scoped Alt-A applied: poisson_fv=%.4f -> empirical_fv=%.4f "
+        "(inning=%s, matched_rule=%s)",
+        current_best_fv, new_fv, inning, matched_rule_name or "default",
+    )
+    return new_fv
 
 
 def run_inference_and_fv_phase(
@@ -742,6 +848,18 @@ def run_inference_and_fv_phase(
         line=market.line,
         inning=inning,
         decision_ask=ask,
+    )
+
+    # Active #17 (2026-05-21): Scoped Alt-A enforce. When mode is
+    # `enforce` AND the cohort rules say apply AND the alt empirical
+    # FV was successfully computed, swap `best_fv` to use the
+    # empirical-based chain. The swap mutates candidate_payload to
+    # keep downstream code (gates, logging) consistent.
+    best_fv = _apply_stage1_alt_a_scope(
+        self,
+        candidate_payload=candidate_payload,
+        current_best_fv=best_fv,
+        inning=inning,
     )
 
     current_state_snapshot = _compute_state_value_snapshot(self, ctx)

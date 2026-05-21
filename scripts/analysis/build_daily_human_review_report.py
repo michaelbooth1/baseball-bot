@@ -60,6 +60,7 @@ from scripts.analysis.human_review import (
     _cross_artifact_consistency_health,
     _promotion_lag_health,
     _daemon_readiness_health,
+    _refresh_staleness_health,
     _under_emission_health,
     _under_outcomes_counterfactual_health,
     _wilson_upper_bound,
@@ -689,7 +690,15 @@ def _summarize_bets(bets: Iterable[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]
             by_side[side] = _empty_side_totals()
         side_totals = by_side[side]
         status = str(bet.get("order_status") or "")
-        is_filled = status == "filled"
+        # Paper bets don't set order_status (only live execution does),
+        # so without this fallback the wins/losses/profit counters
+        # stayed at 0 for every paper session. 2026-05-21 fix: treat
+        # the absence of order_status as paper-mode and count as filled
+        # when the bet is settled. Live behavior unchanged.
+        if status:
+            is_filled = (status == "filled")
+        else:
+            is_filled = bool(bet.get("settled"))
         won = bet.get("won")
         profit = _safe_float(bet.get("profit"))
         fill_cost = bet.get("fill_cost_usdc", bet.get("fill_cost"))
@@ -789,6 +798,7 @@ def _build_notes(
     concept_drift_health: Optional[Dict[str, Any]] = None,
     drift_in_drift_health: Optional[Dict[str, Any]] = None,
     daemon_readiness_health: Optional[Dict[str, Any]] = None,
+    refresh_staleness_health: Optional[Dict[str, Any]] = None,
     under_book_coverage_health: Optional[Dict[str, Any]] = None,
     settlement_truth_health: Optional[Dict[str, Any]] = None,
     fast_demote_health: Optional[Dict[str, Any]] = None,
@@ -870,6 +880,8 @@ def _build_notes(
         notes.append(f"Drift-in-drift: {alert}")
     for alert in (daemon_readiness_health or {}).get("alerts") or []:
         notes.append(f"Daemon-readiness: {alert}")
+    for alert in (refresh_staleness_health or {}).get("alerts") or []:
+        notes.append(f"Refresh-staleness: {alert}")
     for alert in (under_book_coverage_health or {}).get("alerts") or []:
         notes.append(f"Under-book-coverage: {alert}")
     for alert in (settlement_truth_health or {}).get("alerts") or []:
@@ -1025,6 +1037,13 @@ def build_report(
         report_path=DEFAULT_DAEMON_RETROSPECTIVE_REPORT,
         session_date=session_date,
     )
+    # 2026-05-21 (P1b): refresh-staleness alert. Fires when the
+    # daily refresh hasn't run in N days -- caught a real outage
+    # where the refresh stopped firing for 48h and downstream
+    # artifacts silently went stale.
+    refresh_staleness_health = _refresh_staleness_health(
+        session_date=session_date,
+    )
     under_book_coverage_health = _under_book_coverage_health(
         report_path=DEFAULT_MODEL_MATURITY_REPORT,
         session_date=session_date,
@@ -1107,6 +1126,7 @@ def build_report(
         concept_drift_health,
         drift_in_drift_health,
         daemon_readiness_health,
+        refresh_staleness_health,
         under_book_coverage_health,
         settlement_truth_health,
         fast_demote_health,
@@ -1180,6 +1200,7 @@ def build_report(
         "concept_drift_health": concept_drift_health,
         "drift_in_drift_health": drift_in_drift_health,
         "daemon_readiness_health": daemon_readiness_health,
+        "refresh_staleness_health": refresh_staleness_health,
         "under_book_coverage_health": under_book_coverage_health,
         "settlement_truth_health": settlement_truth_health,
         "fast_demote_health": fast_demote_health,

@@ -55,6 +55,7 @@ from .system_health import (
     _promotion_lag_health,
     _daemon_readiness_health,
     _daemon_staleness_check,
+    _refresh_staleness_health,
 )
 from .under_health import (
     _under_emission_health,
@@ -111,6 +112,7 @@ __all__ = [
     "_promotion_lag_health",
     "_daemon_readiness_health",
     "_daemon_staleness_check",
+    "_refresh_staleness_health",
     "_under_emission_health",
     "_under_outcomes_counterfactual_health",
     "_collect_under_settled_rows",

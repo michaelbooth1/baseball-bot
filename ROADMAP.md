@@ -4162,6 +4162,28 @@ ledger rows), but the code exists.
     cannot.
 
 17. **Scoped Alt-A enforce (cohort-aware empirical override).**
+    *Shipped 2026-05-21.* Per-candidate runtime decision in
+    `_apply_stage1_alt_a_scope` (signal_pipeline_gates_post_fv.py):
+    when `--stage1-alt-a-scope-mode enforce` AND the candidate's
+    cohort doesn't match a `hold_poisson` rule AND the upstream
+    shadow path computed an alt empirical FV, swap production
+    `fair_value` to use it. Default mode `shadow` so operators
+    audit per-candidate decisions before flipping enforce. Initial
+    rule list (signal_config.STAGE1_ALT_A_SCOPE_RULES) has one
+    explicit `hold_poisson` for inning>=8 (the known -23.8pp
+    regression cohort); everything else gets `apply` by default.
+    Adds 5 new fields to candidate log:
+    `stage1_alt_a_scope_mode|decision|action|rule_matched|reason`
+    for daily-review audit. Boundary-empirical guard preserved
+    (alt_fv_unavailable when 0/1 boundary fires upstream). 5 unit
+    tests cover the 3 modes x apply/hold cohorts. Net effect on
+    2026-05-20 paper data (counterfactual): 4 of 5 losses had
+    cell empirical < poisson by avg 8pp -- scoped Alt-A would
+    have pulled those FVs down enough to skip the bets, while
+    the inning>=8 cohort (where today happened to have no losses)
+    keeps Poisson. Original 2026-05-19 follow-up text retained
+    below for design context.
+
     *2026-05-19 audit follow-up.* The 2026-05-19 FV audit
     confirmed Poisson over-predicts by 4-7pp at high FV in the
     Stage-1 cache across every line. A naive global

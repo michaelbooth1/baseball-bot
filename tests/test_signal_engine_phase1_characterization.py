@@ -113,6 +113,11 @@ def _make_engine_stub(trade_args=None):
     engine._shadow_gate3_blocked = 0
     engine._shadow_gate3_would_pass = 0
     engine._prob_calibration_mode = "off"
+    # Stub-only: keep the scope feature off so legacy characterization
+    # tests don't need to predict per-cohort decisions. Tests that
+    # specifically exercise Scoped Alt-A (Active #17) set this to
+    # "shadow" or "enforce" explicitly.
+    engine._stage1_alt_a_scope_mode = "off"
     engine._prob_calibrator = None
     # Stub default 0.0 = no band gate. Tests that need to characterize
     # band-gated enforce override this attribute explicitly.
@@ -1239,6 +1244,13 @@ class SignalEngineCandidateLoggingCharacterizationTests(unittest.TestCase):
                     # pass before serialization).
                     "stage1_shadow_empirical_mode": "off",
                     "fair_value_alt_empirical_used_empirical": False,
+                    # 2026-05-21 (Active #17): scoped Alt-A. Stub
+                    # forces mode=off so only the mode tag is written
+                    # (no per-candidate decision computed).
+                    "stage1_alt_a_scope_mode": "off",
+                    "stage1_alt_a_scope_decision": "mode_off",
+                    # stage1_alt_a_scope_rule_matched is None in
+                    # off-mode and dropped by the None-stripping pass.
                     "edge": 0.75 - 0.67,
                     "min_edge_base": 0.16,
                     "min_edge_ask_boost": 0.0,

@@ -152,6 +152,19 @@ STAGE1_SHADOW_OVERRIDE_STALE_AGE_DAYS = 14
 STAGE1_CELL_LOSS_MIN_ABS_BIAS = 0.05
 STAGE1_CELL_LOSS_FALLBACK_RATE_NOTES_FLOOR = 0.50
 
+# 2026-05-21 (P1b): refresh-staleness alert. The daily refresh
+# produces a `<date>_startup_refresh.json` artifact under
+# DEFAULT_STARTUP_REFRESH_DIR. If the newest artifact's effective
+# date is older than REFRESH_STALENESS_HOURS_WARN, the daily-review
+# block fires an alert. Caught a real outage on 2026-05-20/21 where
+# the refresh hadn't fired for 2 days but cross-artifact + drift
+# alerts were the only downstream symptoms.
+DEFAULT_STARTUP_REFRESH_DIR = (
+    PROJECT_DIR / "data" / "analysis_output" / "startup_refresh"
+)
+REFRESH_STALENESS_HOURS_WARN = 36.0   # 1 missed day is OK
+REFRESH_STALENESS_HOURS_ALERT = 60.0  # 2+ missed days is an outage
+
 DEFAULT_STAGE1_CACHE_PATH = PROJECT_DIR / "cache" / "mlb_ou_cache.json"
 DEFAULT_STAGE2_CACHE_PATH = PROJECT_DIR / "cache" / "mlb_stage2_run_env.json"
 DEFAULT_STAGE3_V2_WEIGHTS_PATH = (

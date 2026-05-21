@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Dict, Tuple
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 
@@ -185,6 +185,61 @@ DEFAULT_PROB_CALIBRATION_MODE = "enforce"  # off|shadow|enforce
 # correction without amputating mid-band bets the model gets ~right.
 # Set to 0.0 to enforce across the whole range (the original behavior).
 DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW = 0.90
+
+# 2026-05-21 (P1c): correlated-line exposure cap. Originally lived in
+# live_engine_cli.py and only applied to live trading. The 2026-05-20
+# audit found paper sessions were placing multiple correlated bets
+# per game (e.g. HOU@MIN O7.5 + O6.5 both lost, MIL@CHC O6.5 + O5.5
+# both lost -- 4 of today's 5 losses came from 2 wrong-on-the-game
+# predictions doubled up). Lifting the cap into shared signal_config
+# so paper inherits the same protection. Live override stays
+# unchanged (live_engine.py:_evaluate_correlated_line_cap reads from
+# live_args which keeps its own copies of these flags for back-compat).
+#
+# Two independent rules:
+#   - Count cap: at most N over-side bets on the same game (default 2)
+#   - Spacing cap: every new over line must be at least G runs away
+#     from already-placed over lines (default 1.5 -- blocks O7.5+O8.5
+#     but allows O7.5+O9.5). Set to 0 to disable either rule.
+DEFAULT_MAX_CORRELATED_OVER_LINES_PER_GAME = 2
+DEFAULT_MIN_CORRELATED_LINE_GAP = 1.5
+
+# 2026-05-21 (P2a): Scoped Alt-A enforce. Per-candidate cohort
+# decision: should the FV chain use Poisson (default) or the cell's
+# own empirical rate (Alt-A)? Driven by the shadow-override report's
+# cohort findings -- specifically that Alt-A REGRESSES on the
+# inning>=8 cohort (-23.8pp bias delta) while IMPROVING the
+# aggregate (+6.6pp). A global Alt-A flip would help most bets but
+# hurt late-inning ones. Scoped enforce gives us the lift without
+# the regression.
+#
+# Mode: `off` skips the scope check; `shadow` computes the decision
+# + logs but uses Poisson; `enforce` swaps in the empirical value
+# (when alt was computed AND no boundary guard fired AND the cohort
+# rule says apply). Default `shadow` so the swap is auditable in the
+# candidate log before being load-bearing on placements.
+STAGE1_ALT_A_SCOPE_MODES = ("off", "shadow", "enforce")
+DEFAULT_STAGE1_ALT_A_SCOPE_MODE = "shadow"
+# Cohort rules: ordered list, first match wins. Each rule:
+#   dimension: 'inning' (more dims can be added later: edge_bucket,
+#       line, current_state_edge, etc.)
+#   predicate: callable evaluating the candidate's cohort value
+#   action: 'apply' (use Alt-A) | 'hold_poisson' (keep Poisson)
+# Default fallback (no rule matches) is `apply`. Conservative: add
+# explicit `hold_poisson` rules for known-regression cohorts.
+STAGE1_ALT_A_SCOPE_RULES: Tuple[Dict[str, Any], ...] = (
+    {
+        "name": "inning_gte_8_regression",
+        "dimension": "inning",
+        "predicate": lambda v: v is not None and int(v) >= 8,
+        "action": "hold_poisson",
+        "reason": (
+            "shadow-override report 2026-05-19: Alt-A regresses by "
+            "-23.8pp on inning>=8 cohort (n=7)"
+        ),
+    },
+)
+STAGE1_ALT_A_SCOPE_DEFAULT_ACTION = "apply"
 
 # Shadow state-value/no-score drift diagnostics. These do not place trades.
 # They collect evidence for the broader premise:
@@ -450,6 +505,29 @@ def parse_trade_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace]
                    help=f"Gate 1 shadow: relax min_inning_high_line by this many innings (default: {DEFAULT_SHADOW_RELAXED_MIN_INNING_HIGH_LINE_OFFSET}).")
     p.add_argument("--prob-calibration-mode", choices=["off", "shadow", "enforce"], default=DEFAULT_PROB_CALIBRATION_MODE,
                    help=f"Probability calibration mode for fair_value (default: {DEFAULT_PROB_CALIBRATION_MODE}).")
+    p.add_argument(
+        "--max-correlated-over-lines-per-game",
+        type=int,
+        default=DEFAULT_MAX_CORRELATED_OVER_LINES_PER_GAME,
+        help=(
+            "Max number of over-side bets on the same game (paper + "
+            "live). Highly correlated outcomes -- placing N is "
+            "effectively N-times exposure on one trade idea. 0 "
+            "disables the count rule. (default: "
+            f"{DEFAULT_MAX_CORRELATED_OVER_LINES_PER_GAME})"
+        ),
+    )
+    p.add_argument(
+        "--min-correlated-line-gap",
+        type=float,
+        default=DEFAULT_MIN_CORRELATED_LINE_GAP,
+        help=(
+            "Minimum runs between placed over lines on the same game "
+            "(paper + live). 1.5 blocks O7.5+O8.5 (gap=1.0) but "
+            "allows O7.5+O9.5 (gap=2.0). 0 disables the spacing rule. "
+            f"(default: {DEFAULT_MIN_CORRELATED_LINE_GAP})"
+        ),
+    )
     p.add_argument("--prob-calibration-enforce-min-raw", type=float,
                    default=DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW,
                    help=(
@@ -479,6 +557,22 @@ def parse_trade_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace]
                        "build_stage1_shadow_override_report.py consumes "
                        "the logged alt FVs to surface cumulative shadow "
                        "improvement. (default: off)"
+                   ))
+    p.add_argument("--stage1-alt-a-scope-mode",
+                   dest="stage1_alt_a_scope_mode",
+                   choices=list(STAGE1_ALT_A_SCOPE_MODES),
+                   default=DEFAULT_STAGE1_ALT_A_SCOPE_MODE,
+                   help=(
+                       "Active #17 (2026-05-21): Scoped Alt-A enforce. "
+                       "off = no scope decision; shadow = compute decision "
+                       "+ log but use Poisson FV; enforce = swap in "
+                       "empirical FV when the cohort rules in "
+                       "STAGE1_ALT_A_SCOPE_RULES say apply (default "
+                       "rule: hold Poisson on inning>=8 per the "
+                       "shadow-override report's known regression). "
+                       "Requires --stage1-shadow-empirical-mode=shadow "
+                       "for the empirical FV to be computed first. "
+                       f"(default: {DEFAULT_STAGE1_ALT_A_SCOPE_MODE})"
                    ))
     p.add_argument("--prob-calibration-path", type=Path, default=DEFAULT_PROB_CALIBRATION_PATH,
                    help=f"Path to probability calibration artifact JSON (default: {DEFAULT_PROB_CALIBRATION_PATH}).")

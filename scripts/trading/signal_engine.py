@@ -347,6 +347,30 @@ class SignalEngine(MLBPolymarketMonitor):
                 "decision change)"
             )
 
+        # Active #17 (2026-05-21): Scoped Alt-A enforce mode.
+        # Default `shadow` -- compute scope decision + log it but
+        # don't swap FV. Operator audits per-candidate rule matches
+        # before flipping to `enforce`.
+        self._stage1_alt_a_scope_mode = str(
+            getattr(trade_args, "stage1_alt_a_scope_mode",
+                    DEFAULT_STAGE1_ALT_A_SCOPE_MODE)
+            or DEFAULT_STAGE1_ALT_A_SCOPE_MODE
+        ).strip().lower()
+        if self._stage1_alt_a_scope_mode not in set(STAGE1_ALT_A_SCOPE_MODES):
+            LOGGER.warning(
+                "Unknown stage1 Alt-A scope mode '%s'; forcing %s.",
+                self._stage1_alt_a_scope_mode, DEFAULT_STAGE1_ALT_A_SCOPE_MODE,
+            )
+            self._stage1_alt_a_scope_mode = DEFAULT_STAGE1_ALT_A_SCOPE_MODE
+        if self._stage1_alt_a_scope_mode != "off":
+            LOGGER.info(
+                "Stage-1 Alt-A scope mode: %s (%d rules in policy; "
+                "default action=%s)",
+                self._stage1_alt_a_scope_mode,
+                len(STAGE1_ALT_A_SCOPE_RULES),
+                STAGE1_ALT_A_SCOPE_DEFAULT_ACTION,
+            )
+
         # Phase A5 (2026-05-19). UNDER candidate emission. Default
         # `off`; operator opts in via `--under-emission-mode shadow`
         # on live_engine_cli.py. When `shadow`, alongside every OVER
@@ -600,6 +624,71 @@ class SignalEngine(MLBPolymarketMonitor):
             ask=ask,
             runs_needed=runs_needed,
         )
+
+    def _evaluate_correlated_line_cap(self, *, game, market) -> Optional[str]:
+        """Return a skip-reason string if a correlated-line cap would
+        block this placement, else None. Paper-mode version; lives in
+        SignalEngine so both paper and live inherit it. Live overrides
+        with a status-aware filter (`live_engine.py`) for richer
+        accounting of pending/filled order states.
+
+        Two independent rules (matching the live override's contract):
+          - **Count cap** (default 2): at most N over-side bets per game
+          - **Spacing cap** (default 1.5): every new over line must be
+            at least G runs away from already-placed over lines
+
+        Set either flag to 0 to disable that rule.
+        """
+        max_lines_per_game = int(getattr(
+            self.trade_args,
+            "max_correlated_over_lines_per_game",
+            DEFAULT_MAX_CORRELATED_OVER_LINES_PER_GAME,
+        ))
+        min_line_gap = float(getattr(
+            self.trade_args,
+            "min_correlated_line_gap",
+            DEFAULT_MIN_CORRELATED_LINE_GAP,
+        ))
+        if max_lines_per_game <= 0 and min_line_gap <= 0.0:
+            return None
+
+        try:
+            this_line_value: Optional[float] = float(market.line)
+        except (TypeError, ValueError):
+            this_line_value = None
+
+        # Paper version: every bet on the same game's over side counts
+        # as exposure. No order_status filter -- paper bets don't carry
+        # one and any settled bet is effectively "placed."
+        same_game_over_bets = [
+            b for b in self._bets
+            if getattr(b, "game_pk", None) == game.game_pk
+            and str(getattr(b, "side", "over")).lower() == "over"
+        ]
+        if max_lines_per_game > 0 and len(same_game_over_bets) >= max_lines_per_game:
+            LOGGER.info(
+                "Correlated-line count cap (%d) hit for %s@%s -- "
+                "skipping line=%s (existing lines: %s)",
+                max_lines_per_game, game.away_abbrev, game.home_abbrev,
+                market.line,
+                [getattr(b, "line", "?") for b in same_game_over_bets],
+            )
+            return "correlated_line_count_cap"
+        if this_line_value is not None and min_line_gap > 0.0:
+            for prior_bet in same_game_over_bets:
+                try:
+                    prior_line = float(getattr(prior_bet, "line", ""))
+                except (TypeError, ValueError):
+                    continue
+                if abs(this_line_value - prior_line) < min_line_gap:
+                    LOGGER.info(
+                        "Correlated-line spacing cap hit for %s@%s "
+                        "(line=%s within %.1f of existing line=%s) -- skipping",
+                        game.away_abbrev, game.home_abbrev, market.line,
+                        min_line_gap, prior_bet.line,
+                    )
+                    return "correlated_line_gap_cap"
+        return None
 
     def _calibrate_fair_value(
         self,
@@ -1060,6 +1149,19 @@ class SignalEngine(MLBPolymarketMonitor):
         ltp: Optional[float] = None,
         state_value_diagnostics: Optional[Dict[str, object]] = None,
     ) -> Optional[BetRecord]:
+        # 2026-05-21 (P1c): correlated-line exposure cap. The check
+        # was previously live-only (in live_engine_placement); lifting
+        # it here so paper inherits the same protection. Paper version
+        # counts every same-game over bet (no order_status filter
+        # since paper bets don't carry one). LiveTradingEngine has its
+        # own override that adds the live-specific status filter.
+        correlated_skip = self._evaluate_correlated_line_cap(
+            game=game, market=market
+        )
+        if correlated_skip is not None:
+            self._last_place_bet_skip_reason = correlated_skip
+            return None
+
         self._bet_counter += 1
         bet_id = f"{self.date_str}_{game.game_pk}_{market.line}_{self._bet_counter:04d}"
 

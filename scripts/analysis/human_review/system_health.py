@@ -752,3 +752,114 @@ def _daemon_readiness_health(
 
     return payload
 
+
+def _refresh_staleness_health(
+    *,
+    session_date: str,
+    startup_refresh_dir: Optional[Path] = None,
+    warn_hours: float = None,
+    alert_hours: float = None,
+) -> Dict[str, Any]:
+    """Surface when the daily refresh hasn't run recently.
+
+    The refresh writes a `<date>_startup_refresh.json` artifact under
+    `data/analysis_output/startup_refresh/`. If the newest such
+    artifact's effective date is older than the configured threshold,
+    fire an alert -- the calibrator, concept_drift_report, training
+    table, and cross-artifact consistency block all silently rot
+    when the refresh is missing.
+
+    Effective date is parsed from the filename (the `<date>` slug),
+    not file mtime, because mtime can be touched by manual edits.
+    Ignores `_plan` artifacts (dry-runs without execution).
+    """
+    from .constants import (
+        DEFAULT_STARTUP_REFRESH_DIR,
+        REFRESH_STALENESS_HOURS_WARN,
+        REFRESH_STALENESS_HOURS_ALERT,
+    )
+    refresh_dir = startup_refresh_dir or DEFAULT_STARTUP_REFRESH_DIR
+    warn_hours = warn_hours if warn_hours is not None else REFRESH_STALENESS_HOURS_WARN
+    alert_hours = alert_hours if alert_hours is not None else REFRESH_STALENESS_HOURS_ALERT
+
+    payload: Dict[str, Any] = {
+        "artifact_dir": str(refresh_dir),
+        "alerts": [],
+        "thresholds": {
+            "warn_hours": warn_hours,
+            "alert_hours": alert_hours,
+        },
+    }
+    if not refresh_dir.exists():
+        payload["status"] = "check_error"
+        payload["error"] = "startup_refresh directory missing"
+        return payload
+
+    # Collect <date>_startup_refresh.json filenames, parse the date
+    # slug. Ignore plan-only artifacts (suffix _plan) -- the operator
+    # may dry-run without actually executing the steps.
+    dated = []
+    for f in refresh_dir.glob("*_startup_refresh.json"):
+        name = f.name
+        if "_plan" in name:
+            continue
+        date_str = name.split("_")[0]
+        if len(date_str) == 10 and date_str[4] == "-" and date_str[7] == "-":
+            dated.append((date_str, f))
+    if not dated:
+        payload["status"] = "no_refresh_artifacts"
+        payload["last_refresh_date"] = None
+        return payload
+    # Sort ascending by date string (lexicographic == chronological for ISO).
+    # Skip future-dated artifacts (data anomaly; e.g. a stale 2026-06-15
+    # artifact in 2026-05-21's dataset would lie about freshness).
+    dated.sort(key=lambda x: x[0])
+    valid = [(d, f) for d, f in dated if d <= session_date]
+    if not valid:
+        payload["status"] = "all_future_dated"
+        payload["last_refresh_date"] = None
+        return payload
+    last_date, last_file = valid[-1]
+    payload["last_refresh_date"] = last_date
+    payload["last_refresh_artifact"] = last_file.name
+
+    # Hours between last_date midnight and session_date midnight is
+    # the floor; add 12h to approximate "the refresh was run sometime
+    # that day" so a same-day refresh shows ~0-12h age, not exactly 0.
+    try:
+        sd = datetime.fromisoformat(session_date)
+        ld = datetime.fromisoformat(last_date)
+        delta_hours = max(0.0, (sd - ld).total_seconds() / 3600.0)
+    except (ValueError, TypeError):
+        payload["status"] = "check_error"
+        payload["error"] = "could not parse session_date or last_date"
+        return payload
+    payload["hours_since_last_refresh"] = round(delta_hours, 1)
+
+    if delta_hours >= alert_hours:
+        payload["status"] = "alert"
+        payload["alerts"].append(
+            f"daily refresh STALE: last successful refresh was "
+            f"{last_date} ({delta_hours:.0f}h ago, >= "
+            f"{alert_hours:.0f}h alert threshold). The calibrator, "
+            "concept_drift_report, signal_training_table, and "
+            "cross-artifact consistency are all rotting silently. "
+            "Run `python scripts/analysis/run_daily_refresh.py` "
+            "(or check Windows Task Scheduler / your cron) to "
+            "restore the daily pipeline."
+        )
+    elif delta_hours >= warn_hours:
+        payload["status"] = "warn"
+        payload["alerts"].append(
+            f"daily refresh getting stale: last successful refresh was "
+            f"{last_date} ({delta_hours:.0f}h ago, >= "
+            f"{warn_hours:.0f}h warn threshold). If today's run also "
+            "skips, downstream artifacts will start firing false "
+            "drift alerts. Trigger the refresh manually if scheduled "
+            "task isn't running."
+        )
+    else:
+        payload["status"] = "ok"
+
+    return payload
+

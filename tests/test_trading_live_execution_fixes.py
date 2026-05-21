@@ -1576,6 +1576,185 @@ class CorrelatedLineCapTests(unittest.TestCase):
         self.assertEqual(result, "correlated_line_gap_cap")
 
 
+class ScopedAltAEnforceTests(unittest.TestCase):
+    """Active #17 (2026-05-21) -- _apply_stage1_alt_a_scope behaviors.
+
+    Three modes (off / shadow / enforce) x two cohorts (inning>=8
+    hold-poisson, default apply). When mode=enforce + cohort=apply +
+    alt-empirical-FV available, FV gets swapped.
+    """
+
+    def _engine(self, scope_mode="enforce"):
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "trading"))
+        import signal_engine as se
+        engine = se.SignalEngine.__new__(se.SignalEngine)
+        engine._stage1_alt_a_scope_mode = scope_mode
+        return engine
+
+    def _call_scope(self, engine, *, payload, best_fv, inning):
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "trading"))
+        import signal_pipeline_gates_post_fv as gpf
+        return gpf._apply_stage1_alt_a_scope(
+            engine,
+            candidate_payload=payload,
+            current_best_fv=best_fv,
+            inning=inning,
+        )
+
+    def test_mode_off_writes_only_mode_tag(self):
+        engine = self._engine(scope_mode="off")
+        payload = {}
+        result = self._call_scope(
+            engine, payload=payload, best_fv=0.98, inning=6,
+        )
+        self.assertEqual(result, 0.98)
+        self.assertEqual(payload["stage1_alt_a_scope_mode"], "off")
+        self.assertEqual(payload["stage1_alt_a_scope_decision"], "mode_off")
+        # FV unchanged
+        self.assertNotIn("fair_value", payload)
+
+    def test_shadow_logs_decision_but_does_not_swap(self):
+        engine = self._engine(scope_mode="shadow")
+        payload = {
+            "fair_value_alt_empirical": 0.88,
+            "fair_value_alt_empirical_used_empirical": True,
+        }
+        result = self._call_scope(
+            engine, payload=payload, best_fv=0.98, inning=6,
+        )
+        # No swap even though alt available
+        self.assertEqual(result, 0.98)
+        self.assertEqual(payload["stage1_alt_a_scope_decision"], "would_apply_in_shadow")
+
+    def test_enforce_swaps_fv_on_apply_rule(self):
+        engine = self._engine(scope_mode="enforce")
+        payload = {
+            "fair_value_alt_empirical": 0.88,
+            "fair_value_alt_empirical_used_empirical": True,
+        }
+        result = self._call_scope(
+            engine, payload=payload, best_fv=0.98, inning=6,
+        )
+        # Default rule = apply -> swap
+        self.assertAlmostEqual(result, 0.88, places=6)
+        self.assertEqual(payload["fair_value"], 0.88)
+        self.assertEqual(payload["inferred_state_base_source"], "empirical_scoped_alt_a")
+        self.assertEqual(payload["stage1_alt_a_scope_decision"], "applied")
+        self.assertEqual(payload["stage1_alt_a_scope_action"], "apply")
+
+    def test_enforce_holds_poisson_on_inning_gte_8_regression_cohort(self):
+        engine = self._engine(scope_mode="enforce")
+        payload = {
+            "fair_value_alt_empirical": 0.88,
+            "fair_value_alt_empirical_used_empirical": True,
+        }
+        # Inning 9 -> hold_poisson rule fires
+        result = self._call_scope(
+            engine, payload=payload, best_fv=0.98, inning=9,
+        )
+        self.assertEqual(result, 0.98)  # Poisson kept
+        self.assertNotIn("fair_value", payload)  # not swapped
+        self.assertEqual(payload["stage1_alt_a_scope_decision"], "held_poisson_enforce")
+        self.assertEqual(payload["stage1_alt_a_scope_action"], "hold_poisson")
+        self.assertEqual(
+            payload["stage1_alt_a_scope_rule_matched"],
+            "inning_gte_8_regression",
+        )
+
+    def test_enforce_holds_when_alt_fv_missing(self):
+        # Apply-cohort but alt_fv wasn't computed (e.g., shadow mode off
+        # OR boundary-empirical guard blocked). Must keep Poisson.
+        engine = self._engine(scope_mode="enforce")
+        payload = {
+            "fair_value_alt_empirical": None,
+            "fair_value_alt_empirical_used_empirical": False,
+        }
+        result = self._call_scope(
+            engine, payload=payload, best_fv=0.98, inning=6,
+        )
+        self.assertEqual(result, 0.98)
+        self.assertEqual(payload["stage1_alt_a_scope_decision"], "alt_fv_unavailable")
+
+
+class PaperCorrelatedLineCapTests(unittest.TestCase):
+    """2026-05-21 (P1c) -- correlated-line cap was previously live-only.
+    Paper bets had no protection, so the 2026-05-20 paper session bet
+    HOU@MIN twice (both lost), MIL@CHC twice (both lost), and BOS@KC
+    three times. Lifted the cap into SignalEngine. These tests assert
+    paper inherits the protection via the parent class.
+    """
+
+    def _paper_engine(self, *, max_lines=2, min_gap=1.5, existing_bets=None):
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "trading"))
+        import signal_engine as se
+        engine = se.SignalEngine.__new__(se.SignalEngine)
+        engine._bets = list(existing_bets or [])
+        engine.trade_args = SimpleNamespace(
+            max_correlated_over_lines_per_game=max_lines,
+            min_correlated_line_gap=min_gap,
+        )
+        return engine
+
+    def _paper_bet(self, *, game_pk, line, side="over"):
+        return SimpleNamespace(game_pk=game_pk, line=line, side=side)
+
+    def _game(self, game_pk=1, away="MIN", home="CLE"):
+        return SimpleNamespace(game_pk=game_pk, away_abbrev=away, home_abbrev=home)
+
+    def _market(self, line="8.5"):
+        return SimpleNamespace(line=line)
+
+    def test_paper_spacing_cap_blocks_adjacent_line(self):
+        # Re-creates the 2026-05-20 HOU@MIN failure: O7.5 placed,
+        # then O6.5 (gap=1.0 < 1.5) should now be blocked.
+        prior = self._paper_bet(game_pk=1, line="7.5", side="over")
+        engine = self._paper_engine(existing_bets=[prior])
+        result = engine._evaluate_correlated_line_cap(
+            game=self._game(game_pk=1),
+            market=self._market(line="6.5"),
+        )
+        self.assertEqual(result, "correlated_line_gap_cap")
+
+    def test_paper_count_cap_blocks_third_bet(self):
+        # Re-creates the 2026-05-20 BOS@KC failure: 3 bets on the
+        # same game. Third should be blocked by count cap (default 2).
+        prior_a = self._paper_bet(game_pk=1, line="6.5", side="over")
+        prior_b = self._paper_bet(game_pk=1, line="8.5", side="over")
+        engine = self._paper_engine(existing_bets=[prior_a, prior_b])
+        result = engine._evaluate_correlated_line_cap(
+            game=self._game(game_pk=1),
+            market=self._market(line="10.5"),  # spacing OK but count cap fires
+        )
+        self.assertEqual(result, "correlated_line_count_cap")
+
+    def test_paper_caps_skip_when_disabled(self):
+        prior = self._paper_bet(game_pk=1, line="7.5", side="over")
+        engine = self._paper_engine(
+            max_lines=0, min_gap=0.0, existing_bets=[prior],
+        )
+        result = engine._evaluate_correlated_line_cap(
+            game=self._game(game_pk=1),
+            market=self._market(line="8.5"),
+        )
+        self.assertIsNone(result)
+
+    def test_paper_caps_no_cross_game_interference(self):
+        # Bet on game 1 doesn't affect game 2.
+        prior = self._paper_bet(game_pk=1, line="7.5", side="over")
+        engine = self._paper_engine(existing_bets=[prior])
+        result = engine._evaluate_correlated_line_cap(
+            game=self._game(game_pk=2),
+            market=self._market(line="7.5"),
+        )
+        self.assertIsNone(result)
+
+
 class CalibratedStakeMultiplierTests(unittest.TestCase):
     """Active #6 part 2: pure-function tests for the calibrated-edge
     multiplier and the calibrated-edge resolution helper."""
