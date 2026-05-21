@@ -1585,6 +1585,73 @@ def parse_trade_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace]
     return _parse_trade_args_impl(argv)
 
 
+def _run_paper_startup_refresh(date_str: str, trade_args) -> None:
+    """2026-05-21 (P1b followup): run the daily-refresh pipeline before
+    paper engine boots. Mirrors live's startup-refresh wiring
+    (see live_engine_setup.run_startup_refresh) minus the live-only
+    fields (daily_budget, per_game_budget_fraction). Without this,
+    paper-only days skip the refresh entirely and the calibrator /
+    drift report / training table silently go stale -- caught by the
+    2026-05-21 audit when the engine ran 2 days on stale artifacts.
+
+    Default enabled (`--startup-refresh`); operator can opt out via
+    `--no-startup-refresh`. Fail-open unless `--startup-refresh-strict`.
+    """
+    if not getattr(trade_args, "startup_refresh", True):
+        LOGGER.info("Paper startup refresh disabled by --no-startup-refresh.")
+        return
+    try:
+        from run_daily_refresh import (
+            RefreshConfig as _StartupRefreshConfig,
+            run_startup_refresh as _run_startup_refresh_impl,
+        )
+    except ImportError:
+        LOGGER.warning(
+            "run_daily_refresh not importable; skipping paper startup refresh."
+        )
+        return
+
+    strict = bool(getattr(trade_args, "startup_refresh_strict", False))
+    config = _StartupRefreshConfig(
+        active_date=date_str,
+        strict=strict,
+        stake=float(getattr(trade_args, "stake", 10.0) or 10.0),
+    )
+    LOGGER.info(
+        "Paper startup refresh: active_date=%s strict=%s "
+        "(disable with --no-startup-refresh)",
+        date_str, strict,
+    )
+    try:
+        payload = _run_startup_refresh_impl(config)
+    except Exception:
+        if strict:
+            LOGGER.exception(
+                "Paper startup refresh failed in strict mode; aborting."
+            )
+            raise
+        LOGGER.exception(
+            "Paper startup refresh failed; continuing (fail-open). "
+            "Daily review's refresh_staleness_health block will flag "
+            "the resulting artifact age."
+        )
+        return
+
+    LOGGER.info(
+        "Paper startup refresh complete: max_refresh_date=%s "
+        "steps_ok=%s steps_failed=%s manifest=%s",
+        payload.get("max_refresh_date") or "none",
+        payload.get("steps_ok"),
+        payload.get("steps_failed"),
+        payload.get("manifest_path"),
+    )
+    if payload.get("steps_failed"):
+        LOGGER.warning(
+            "Paper startup refresh had failures; inspect manifest "
+            "before trusting refreshed artifacts."
+        )
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -1596,6 +1663,23 @@ def main() -> None:
     if not trade_args.cache_path.exists():
         LOGGER.error("Cache not found: %s", trade_args.cache_path)
         sys.exit(1)
+
+    # Resolve the active date the same way SignalEngine.__init__ does.
+    # We need it before the engine is constructed so the refresh sees
+    # the right active_date.
+    from zoneinfo import ZoneInfo
+    from datetime import datetime as _dt
+    try:
+        _tz = ZoneInfo(getattr(monitor_args, "timezone", "America/New_York"))
+    except Exception:
+        _tz = None
+    if monitor_args.date:
+        _refresh_date = monitor_args.date
+    elif _tz is not None:
+        _refresh_date = _dt.now(_tz).strftime("%Y-%m-%d")
+    else:
+        _refresh_date = _dt.now().strftime("%Y-%m-%d")
+    _run_paper_startup_refresh(date_str=_refresh_date, trade_args=trade_args)
 
     LOGGER.info(
         "Starting paper trader (TR5)  "

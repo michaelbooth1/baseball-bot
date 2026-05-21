@@ -505,6 +505,35 @@ def parse_trade_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace]
                    help=f"Gate 1 shadow: relax min_inning_high_line by this many innings (default: {DEFAULT_SHADOW_RELAXED_MIN_INNING_HIGH_LINE_OFFSET}).")
     p.add_argument("--prob-calibration-mode", choices=["off", "shadow", "enforce"], default=DEFAULT_PROB_CALIBRATION_MODE,
                    help=f"Probability calibration mode for fair_value (default: {DEFAULT_PROB_CALIBRATION_MODE}).")
+    # 2026-05-21: paper-mode startup refresh wiring. Live engine has
+    # had startup-refresh since 2026-05-08, but paper (signal_engine.main)
+    # never triggered it -- so when the operator ran paper-only for 2+
+    # days, the calibrator/drift report/training table silently went
+    # stale (caught by P1b audit 2026-05-21). Mirrors live's contract:
+    # default enabled, fail-open unless --startup-refresh-strict.
+    p.add_argument(
+        "--startup-refresh", dest="startup_refresh",
+        action="store_true", default=True,
+        help=(
+            "Run the daily-refresh pipeline before paper engine boot "
+            "(default: enabled). Same wiring as live's startup refresh. "
+            "Keeps calibrator / drift report / training table fresh "
+            "across paper-only days."
+        ),
+    )
+    p.add_argument(
+        "--no-startup-refresh", dest="startup_refresh",
+        action="store_false",
+        help="Skip the daily refresh before paper engine boot (fast launch).",
+    )
+    p.add_argument(
+        "--startup-refresh-strict", dest="startup_refresh_strict",
+        action="store_true", default=False,
+        help=(
+            "Abort paper startup if any refresh step fails. "
+            "Default is fail-open (log + proceed)."
+        ),
+    )
     p.add_argument(
         "--max-correlated-over-lines-per-game",
         type=int,
