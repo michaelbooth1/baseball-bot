@@ -142,9 +142,26 @@ def _resolve_operator(arg_value: Optional[str]) -> str:
     return str(env) or "unknown"
 
 
+# 2026-05-23: registry of known lever names. File-swap levers
+# (stage2, stage3_v2) and the CLI-mutation levers promote.py owns
+# directly (stake_scaling, gate_threshold) plus CLI-flag levers
+# operator flips manually with backfill stubs (prob_calibration,
+# stage1_alt_a_scope). Add new lever names HERE before referencing
+# them in PromotionEvent or backfill scripts -- the backfill script
+# asserts membership.
+KNOWN_LEVERS = frozenset({
+    "stage2",
+    "stage3_v2",
+    "stake_scaling",
+    "gate_threshold",
+    "prob_calibration",
+    "stage1_alt_a_scope",
+})
+
+
 @dataclass
 class PromotionEvent:
-    lever: str            # "stage2" | "stage3_v2" | "stake_scaling" | "gate_threshold"
+    lever: str            # one of KNOWN_LEVERS (see above)
     # action: short label. Interpretation depends on `direction`:
     #   direction=promote: "promoted" | "dry_run" | "blocked" | "forced"
     #   direction=demote:  "demoted"  | "dry_run" | "blocked" | "forced"

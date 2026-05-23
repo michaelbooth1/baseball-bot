@@ -738,7 +738,31 @@ class MLBPolymarketMonitor:
                         self._on_tick_batch([])
                     except Exception as exc:
                         LOGGER.warning("Final tick hook before exit failed: %s", exc)
-                    LOGGER.info("All scheduled games are final and no active monitors remain; exiting.")
+                    # 2026-05-22 (audit followup): if --date is in the past
+                    # AND all games already final at the very first schedule
+                    # poll, the operator almost certainly didn't mean to run
+                    # on yesterday's games. Make the exit message explicit
+                    # about the date mismatch instead of the bland "all
+                    # final" line.
+                    _today = datetime.now(self.tz).strftime("%Y-%m-%d")
+                    if (
+                        self.args.date
+                        and self.args.date < _today
+                        and self._poll_cycles <= 1
+                    ):
+                        LOGGER.warning(
+                            "All scheduled games for --date=%s are already "
+                            "final at the very first schedule fetch (today "
+                            "is %s). This usually means --date is stale: "
+                            "did you mean to run on TODAY'S games? Re-launch "
+                            "without --date, or with --date %s. Exiting.",
+                            self.args.date, _today, _today,
+                        )
+                    else:
+                        LOGGER.info(
+                            "All scheduled games are final and no active "
+                            "monitors remain; exiting."
+                        )
                     break
 
                 time.sleep(0.4)

@@ -219,6 +219,16 @@ PRE_SIGNAL_COLUMNS = [
     "shadow_transition_inferred_runs",
     "shadow_extreme_edge",
     "shadow_extreme_edge_threshold",
+    # 2026-05-22 (audit followup): persist the active extreme_edge_max
+    # at decision time, so cohort reports can distinguish bets placed
+    # under today's gate from bets placed under an older, looser
+    # threshold. Without this, the trailing-30d "edge_bucket>=0.22"
+    # cohort silently includes pre-TR19 (extreme_edge_max=0.30) bets
+    # and looks like a gate bug. attach_modeling_observability_fields
+    # already writes these to candidate rows; this column carries them
+    # into the training table.
+    "extreme_edge_max",
+    "gate_policy_version",
     "shadow_ltp_at_signal",
     "shadow_ltp_ask_gap",
     "shadow_ltp_ask_gap_threshold",

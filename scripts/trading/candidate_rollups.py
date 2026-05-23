@@ -72,6 +72,15 @@ def ensure_candidate_rollup_state(engine: "SignalEngine") -> None:
         engine._candidate_rollup_by_reason = Counter()
     if not hasattr(engine, "_candidate_rollup_by_strategy"):
         engine._candidate_rollup_by_strategy = Counter()
+    # 2026-05-23 (audit followup): split strategy counts by side too.
+    # Caught when 5/22's score_event_transition count jumped 3.5x vs
+    # 5/20 (982 -> 3422). Investigation showed ~2x was just under-
+    # emission shipping that day -- every OVER candidate now also
+    # writes a sibling UNDER row at the FV phase. Without a per-side
+    # breakdown, future audits would have to manually scan candidate
+    # JSONLs to disentangle. Key is `(strategy, side)`.
+    if not hasattr(engine, "_candidate_rollup_by_strategy_side"):
+        engine._candidate_rollup_by_strategy_side = Counter()
     if not hasattr(engine, "_candidate_rollup_by_game_line_reason"):
         engine._candidate_rollup_by_game_line_reason = Counter()
     if not hasattr(engine, "_candidate_rollup_by_shadow_diagnostic"):
@@ -102,6 +111,8 @@ def observe_candidate_rollup(
     engine._candidate_rollup_by_decision[decision] += 1
     engine._candidate_rollup_by_reason[f"{decision}:{reason}"] += 1
     engine._candidate_rollup_by_strategy[strategy] += 1
+    side = _rollup_text(row, "side", default="over")
+    engine._candidate_rollup_by_strategy_side[f"{strategy}:{side}"] += 1
     engine._candidate_rollup_by_game_line_reason[f"{game_key}|{line}|{decision}:{reason}"] += 1
 
     shadow_fields = compute_shadow_diagnostic_fields(row)
@@ -133,6 +144,7 @@ def candidate_rollup_snapshot(engine: "SignalEngine", *, top_n: int = 50) -> Dic
     by_decision = getattr(engine, "_candidate_rollup_by_decision", Counter())
     by_reason = getattr(engine, "_candidate_rollup_by_reason", Counter())
     by_strategy = getattr(engine, "_candidate_rollup_by_strategy", Counter())
+    by_strategy_side = getattr(engine, "_candidate_rollup_by_strategy_side", Counter())
     by_game_line_reason = getattr(engine, "_candidate_rollup_by_game_line_reason", Counter())
     by_shadow_diagnostic = getattr(engine, "_candidate_rollup_by_shadow_diagnostic", Counter())
     attempted = sum(by_write_status.values())
@@ -164,6 +176,13 @@ def candidate_rollup_snapshot(engine: "SignalEngine", *, top_n: int = 50) -> Dic
         "by_decision": _counter_top(by_decision, top_n),
         "by_decision_reason": _counter_top(by_reason, top_n),
         "by_state_value_strategy": _counter_top(by_strategy, top_n),
+        # 2026-05-23: per-side split. When under_emission_mode is
+        # shadow, by_state_value_strategy roughly doubles because every
+        # OVER candidate that reaches the FV phase writes a sibling
+        # UNDER row. Compare {strategy}:over vs {strategy}:under to
+        # see the asymmetry directly. Audits should derive per-side
+        # rates from this counter, not from by_state_value_strategy.
+        "by_state_value_strategy_side": _counter_top(by_strategy_side, top_n),
         "by_shadow_diagnostic": _counter_top(by_shadow_diagnostic, top_n),
         "top_game_line_reasons": _counter_top(by_game_line_reason, top_n),
     }

@@ -31,7 +31,7 @@ import time
 from collections import Counter, defaultdict
 from dataclasses import asdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -397,11 +397,19 @@ class SignalEngine(MLBPolymarketMonitor):
                 self._under_prob_calibrator = ProbabilityCalibrator.from_path(
                     under_cal_path,
                 )
-                LOGGER.info(
-                    "UNDER emission mode: shadow (loaded UNDER "
-                    "calibrator from %s, method=%s; emits sibling "
-                    "UNDER candidate rows alongside every OVER FV-"
-                    "phase tick; NO bets placed)",
+                LOGGER.warning(
+                    "UNDER emission mode: shadow -- UNDER CALIBRATOR IS "
+                    "UNRELIABLE. Loaded from %s (method=%s), but the "
+                    "2026-05-22 debut day showed FV severely off: "
+                    "DET@BAL O7.5 inn4 model said P(under)=0.73, game "
+                    "ended at 11 runs. All 17 emitted UNDER candidates "
+                    "would have lost full stake at $10/bet = $170. "
+                    "Treat shadow_under counterfactual P&L with extreme "
+                    "skepticism; do NOT promote to live until calibrator "
+                    "is refit on a much larger UNDER sample. Candidate "
+                    "rows stamped shadow_under_calibration_status="
+                    "unreliable_pre_refit so downstream cohort blocks "
+                    "can filter.",
                     under_cal_path,
                     self._under_prob_calibrator.method,
                 )
@@ -1585,6 +1593,288 @@ def parse_trade_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace]
     return _parse_trade_args_impl(argv)
 
 
+def _check_refresh_freshness(
+    date_str: str,
+    *,
+    refresh_dir: Path = None,
+    warn_hours: float = 36.0,
+    alert_hours: float = 60.0,
+) -> Dict[str, Any]:
+    """Return a freshness snapshot of the most-recent startup_refresh
+    artifact relative to `date_str`.
+
+    Companion to `human_review.system_health._refresh_staleness_health`
+    -- same date-from-filename parsing so the boot log and the daily
+    review block always agree on what "stale" means. Skips `_plan`
+    artifacts (dry-runs) and future-dated artifacts (data anomalies
+    like the stale 2026-06-15 plan caught by the 2026-05-22 audit).
+
+    Status values: `ok` (< warn_hours), `warn` (warn..alert),
+    `alert` (>= alert), `no_refresh_artifacts`, `all_future_dated`,
+    `check_error`.
+    """
+    if refresh_dir is None:
+        refresh_dir = (
+            Path(__file__).resolve().parents[2]
+            / "data" / "analysis_output" / "startup_refresh"
+        )
+    snap: Dict[str, Any] = {
+        "artifact_dir": str(refresh_dir),
+        "session_date": date_str,
+        "thresholds": {"warn_hours": warn_hours, "alert_hours": alert_hours},
+        "last_refresh_date": None,
+        "last_refresh_artifact": None,
+        "hours_since_last_refresh": None,
+        "status": "check_error",
+    }
+    if not refresh_dir.exists():
+        snap["error"] = "startup_refresh directory missing"
+        return snap
+    dated = []
+    for f in refresh_dir.glob("*_startup_refresh.json"):
+        name = f.name
+        if "_plan" in name:
+            continue
+        slug = name.split("_")[0]
+        if len(slug) == 10 and slug[4] == "-" and slug[7] == "-":
+            dated.append((slug, f))
+    if not dated:
+        snap["status"] = "no_refresh_artifacts"
+        return snap
+    dated.sort(key=lambda x: x[0])
+    valid = [(d, f) for d, f in dated if d <= date_str]
+    if not valid:
+        snap["status"] = "all_future_dated"
+        return snap
+    # Defense: a plan-only artifact (body `plan_only: True` with
+    # `steps_ok: 0`) can sneak in without the `_plan` filename suffix
+    # -- see the misnamed 2026-06-15 file the 2026-05-22 audit caught.
+    # The filename filter above won't catch those. Walk newest->oldest
+    # and pick the newest artifact whose body confirms an executed
+    # refresh (plan_only != True AND steps_ok > 0). Falls back to the
+    # newest dated artifact if no body-validated entry is found, so
+    # the function never returns silently empty when files exist.
+    import json as _json
+    last_date, last_file = None, None
+    for d, f in reversed(valid):
+        try:
+            with f.open(encoding="utf-8") as _fp:
+                body = _json.load(_fp)
+        except (OSError, ValueError):
+            continue
+        if body.get("plan_only"):
+            continue
+        if int(body.get("steps_ok") or 0) <= 0:
+            continue
+        last_date, last_file = d, f
+        break
+    if last_file is None:
+        last_date, last_file = valid[-1]
+    snap["last_refresh_date"] = last_date
+    snap["last_refresh_artifact"] = last_file.name
+    try:
+        from datetime import datetime as _dt2
+        sd = _dt2.fromisoformat(date_str)
+        ld = _dt2.fromisoformat(last_date)
+        hours = max(0.0, (sd - ld).total_seconds() / 3600.0)
+    except (ValueError, TypeError) as exc:
+        snap["error"] = f"date parse failed: {exc}"
+        return snap
+    snap["hours_since_last_refresh"] = round(hours, 1)
+    if hours >= alert_hours:
+        snap["status"] = "alert"
+    elif hours >= warn_hours:
+        snap["status"] = "warn"
+    else:
+        snap["status"] = "ok"
+    return snap
+
+
+def _log_refresh_freshness(snap: Dict[str, Any], *, phase: str) -> None:
+    """Log the freshness snapshot at the severity that matches its status."""
+    status = snap.get("status", "unknown")
+    last = snap.get("last_refresh_date") or "none"
+    age = snap.get("hours_since_last_refresh")
+    age_str = f"{age:.1f}h" if isinstance(age, (int, float)) else "n/a"
+    thresholds = snap.get("thresholds", {})
+    warn_h = thresholds.get("warn_hours", 36.0)
+    alert_h = thresholds.get("alert_hours", 60.0)
+    msg = (
+        f"refresh-freshness {phase}: status={status} last={last} "
+        f"age={age_str} (warn>={warn_h:.0f}h alert>={alert_h:.0f}h)"
+    )
+    if status == "alert":
+        LOGGER.error(msg)
+    elif status in ("warn", "no_refresh_artifacts", "all_future_dated"):
+        LOGGER.warning(msg)
+    elif status == "check_error":
+        LOGGER.warning(msg + f" error={snap.get('error')}")
+    else:
+        LOGGER.info(msg)
+
+
+def _log_mode_lever_summary(trade_args) -> Dict[str, str]:
+    """Boot-time one-line summary of which CLI-flag mode levers are
+    in enforce / shadow / off / ab. Returns the snapshot dict for
+    tests / callers.
+
+    Caught by 2026-05-23 audit: calibrator-enforce + scoped-Alt-A-
+    enforce both shipped to production on 5/22 silently — both are
+    CLI-flag levers so they don't write to promotion_events.jsonl,
+    and (before this) didn't surface in session params either. The
+    operator's terminal had no obvious sign that two behavioral
+    promotions were live. This log line makes every promotion
+    visible at every boot, and tags the line with "ENFORCE
+    PROMOTIONS ACTIVE" when any lever is in enforce mode so it's
+    easy to grep for.
+
+    Mode levers covered (all paper-relevant; live adds its own):
+      - prob_calibration_mode
+      - stage1_shadow_empirical_mode
+      - stage1_alt_a_scope_mode
+      - gate_blowout_relax_mode
+      - gate_min_current_total_relax_mode
+      - under_emission_mode
+    """
+    levers = (
+        "prob_calibration_mode",
+        "stage1_shadow_empirical_mode",
+        "stage1_alt_a_scope_mode",
+        "gate_blowout_relax_mode",
+        "gate_min_current_total_relax_mode",
+        "under_emission_mode",
+    )
+    snapshot: Dict[str, str] = {}
+    for name in levers:
+        val = getattr(trade_args, name, None)
+        if val is None:
+            continue
+        snapshot[name] = str(val).strip().lower() or "off"
+
+    by_mode: Dict[str, list] = {"enforce": [], "shadow": [], "ab": [], "off": []}
+    for name, val in snapshot.items():
+        # Strip the trailing "_mode" for display brevity.
+        display = name[:-5] if name.endswith("_mode") else name
+        bucket = val if val in by_mode else "off"
+        by_mode[bucket].append(display)
+
+    def _fmt(names):
+        return ", ".join(sorted(names)) if names else "(none)"
+
+    if by_mode["enforce"]:
+        prefix = "ENFORCE PROMOTIONS ACTIVE"
+        log_fn = LOGGER.warning  # WARN so it's visible above INFO chatter
+    else:
+        prefix = "Mode levers"
+        log_fn = LOGGER.info
+
+    parts = [f"enforce={_fmt(by_mode['enforce'])}"]
+    if by_mode["ab"]:
+        parts.append(f"ab={_fmt(by_mode['ab'])}")
+    parts.append(f"shadow={_fmt(by_mode['shadow'])}")
+    parts.append(f"off={_fmt(by_mode['off'])}")
+    log_fn("%s | %s", prefix, " | ".join(parts))
+    return snapshot
+
+
+def _check_gate_threshold_drift(trade_args) -> Dict[str, Any]:
+    """Boot-time check: are enforced-gate thresholds set looser than the
+    codebase default?
+
+    Caught by the 2026-05-22 deep audit: the trailing-30d cohort showed
+    17 bets at edge>=0.22 losing -$190 in live mode. Investigation found
+    the active `extreme_edge_max` was 0.30 (TR17 default) for the 4/18-
+    5/04 placements; TR19 tightened the default to 0.22 on 5/08 and
+    those bets correctly stopped. The audit incorrectly attributed the
+    cohort to a gate bug because the bucket label `>=0.22` matches the
+    current default but doesn't tell you what threshold was active at
+    placement time. This check prevents a recurrence: if the operator's
+    saved CLI command pins a looser value than the codebase default,
+    log a WARN at boot so they see it before the day runs.
+
+    Returns a snapshot dict for logging / testing. Each entry is
+    `{ "looser_than_default": bool, "runtime": float, "default": float,
+       "looseness_pp": float }`. Empty dict if no drift.
+    """
+    from signal_config import (
+        DEFAULT_EXTREME_EDGE_MAX,
+        DEFAULT_EDGE_THRESHOLD,
+        DEFAULT_EDGE_THRESHOLD_HIGH_LINE,
+        DEFAULT_MIN_ENTRY_ASK,
+        DEFAULT_MIN_ENTRY_ASK_HIGH_LINE,
+        DEFAULT_MIN_INNING,
+        DEFAULT_MIN_INNING_HIGH_LINE,
+        DEFAULT_RUNS_NEEDED_MAX,
+        DEFAULT_MIN_CURRENT_TOTAL,
+    )
+    # For each gate, "looser" means a value that would let MORE bets
+    # through. Per-gate direction:
+    #   - extreme_edge_max: looser = larger (raises the cap)
+    #   - edge_threshold(_high_line): looser = smaller (lowers the min)
+    #   - min_entry_ask(_high_line): looser = smaller (cheaper bets pass)
+    #   - min_inning(_high_line): looser = smaller (earlier innings pass)
+    #   - runs_needed_max: looser = larger (more bets pass)
+    #   - min_current_total: looser = smaller (lower-total games pass)
+    gates = [
+        ("extreme_edge_max", DEFAULT_EXTREME_EDGE_MAX, "larger"),
+        ("edge_threshold", DEFAULT_EDGE_THRESHOLD, "smaller"),
+        ("edge_threshold_high_line", DEFAULT_EDGE_THRESHOLD_HIGH_LINE, "smaller"),
+        ("min_entry_ask", DEFAULT_MIN_ENTRY_ASK, "smaller"),
+        ("min_entry_ask_high_line", DEFAULT_MIN_ENTRY_ASK_HIGH_LINE, "smaller"),
+        ("min_inning", DEFAULT_MIN_INNING, "smaller"),
+        ("min_inning_high_line", DEFAULT_MIN_INNING_HIGH_LINE, "smaller"),
+        ("runs_needed_max", DEFAULT_RUNS_NEEDED_MAX, "larger"),
+        ("min_current_total", DEFAULT_MIN_CURRENT_TOTAL, "smaller"),
+    ]
+    drift: Dict[str, Any] = {}
+    for name, default, direction in gates:
+        runtime = getattr(trade_args, name, None)
+        if runtime is None:
+            continue
+        try:
+            runtime_f = float(runtime)
+            default_f = float(default)
+        except (TypeError, ValueError):
+            continue
+        if direction == "larger":
+            looser = runtime_f > default_f
+            pp = round(runtime_f - default_f, 4)
+        else:
+            looser = runtime_f < default_f
+            pp = round(default_f - runtime_f, 4)
+        if looser:
+            drift[name] = {
+                "runtime": runtime_f,
+                "default": default_f,
+                "looseness_pp": pp,
+                "direction": direction,
+            }
+    return drift
+
+
+def _log_gate_threshold_drift(drift: Dict[str, Any]) -> None:
+    """Log gate-drift WARN entries -- one per drifted gate."""
+    if not drift:
+        LOGGER.info("Gate thresholds: all match codebase defaults.")
+        return
+    LOGGER.warning(
+        "Gate-threshold drift: %d gate(s) are set LOOSER than the "
+        "codebase default. The codebase defaults reflect the most "
+        "recently-tuned thresholds (e.g. TR19's 0.22 extreme_edge_max). "
+        "If your saved CLI command pins an older value, recent walk-"
+        "forward evidence may say to tighten -- review and update.",
+        len(drift),
+    )
+    for name, info in sorted(drift.items()):
+        LOGGER.warning(
+            "  drift: --%s runtime=%s default=%s (%s by %s)",
+            name.replace("_", "-"),
+            info["runtime"], info["default"],
+            "looser" if info["direction"] == "larger" else "looser",
+            info["looseness_pp"],
+        )
+
+
 def _run_paper_startup_refresh(date_str: str, trade_args) -> None:
     """2026-05-21 (P1b followup): run the daily-refresh pipeline before
     paper engine boots. Mirrors live's startup-refresh wiring
@@ -1664,6 +1954,19 @@ def main() -> None:
         LOGGER.error("Cache not found: %s", trade_args.cache_path)
         sys.exit(1)
 
+    # 2026-05-22 (audit followup): gate-threshold-drift WARN. Caught
+    # the 4/18-5/04 extreme_edge_max=0.30 era that polluted the
+    # trailing-30d cohort report. Fires at boot so the operator sees
+    # any saved CLI flag that's looser than today's codebase default
+    # before the day's trading runs.
+    _log_gate_threshold_drift(_check_gate_threshold_drift(trade_args))
+
+    # 2026-05-23 (audit followup): mode-lever summary. Caught when
+    # calibrator-enforce + scoped-Alt-A-enforce both flipped on 5/22
+    # with no visible audit trail. One WARN-tier line at boot tells
+    # the operator which CLI-flag levers are in enforce vs shadow.
+    _log_mode_lever_summary(trade_args)
+
     # Resolve the active date the same way SignalEngine.__init__ does.
     # We need it before the engine is constructed so the refresh sees
     # the right active_date.
@@ -1679,7 +1982,67 @@ def main() -> None:
         _refresh_date = _dt.now(_tz).strftime("%Y-%m-%d")
     else:
         _refresh_date = _dt.now().strftime("%Y-%m-%d")
+
+    # 2026-05-22 (audit followup): stale --date detection. Caught when
+    # the operator launched today (5/22) with --date 2026-05-21 baked
+    # into the saved CLI command; the bot ran the daily refresh for
+    # 20+ minutes, then loaded yesterday's all-final schedule, then
+    # exited with "all scheduled games are final". This WARN fires
+    # in seconds so the operator can Ctrl-C and re-launch with the
+    # right date before the refresh burns time.
+    if monitor_args.date and _tz is not None:
+        try:
+            _today_str = _dt.now(_tz).strftime("%Y-%m-%d")
+            if monitor_args.date < _today_str:
+                _days_back = (
+                    _dt.strptime(_today_str, "%Y-%m-%d")
+                    - _dt.strptime(monitor_args.date, "%Y-%m-%d")
+                ).days
+                LOGGER.warning(
+                    "STALE --date FLAG: --date=%s is %d day(s) in the past "
+                    "(today is %s). This is fine for backfill/replay, but if "
+                    "you meant to run on TODAY'S games, Ctrl-C now and re-"
+                    "launch without --date (or with --date %s). The startup "
+                    "refresh below will run for ~20min before the engine "
+                    "loads what is likely an all-final schedule.",
+                    monitor_args.date, _days_back, _today_str, _today_str,
+                )
+            elif monitor_args.date > _today_str:
+                LOGGER.warning(
+                    "FUTURE --date FLAG: --date=%s is after today (%s). "
+                    "Schedule fetch will return no games; engine will exit "
+                    "early.",
+                    monitor_args.date, _today_str,
+                )
+        except (TypeError, ValueError):
+            pass
+
+    # 2026-05-22 (audit followup): boot-time refresh-freshness heartbeat.
+    # Snapshot pre, run refresh, snapshot post. Logged at INFO/WARN/ERROR
+    # by status. If --require-fresh-refresh and post is still alert-stale,
+    # abort -- catches the case where the refresh attempt itself succeeded
+    # but produced an artifact older than threshold (e.g. forced active_date).
+    _max_age_h = float(getattr(trade_args, "max_refresh_age_hours", 60.0) or 60.0)
+    _snap_pre = _check_refresh_freshness(_refresh_date, alert_hours=_max_age_h)
+    _log_refresh_freshness(_snap_pre, phase="pre-refresh")
     _run_paper_startup_refresh(date_str=_refresh_date, trade_args=trade_args)
+    _snap_post = _check_refresh_freshness(_refresh_date, alert_hours=_max_age_h)
+    _log_refresh_freshness(_snap_post, phase="post-refresh")
+    if (
+        getattr(trade_args, "require_fresh_refresh", False)
+        and _snap_post.get("status") == "alert"
+    ):
+        LOGGER.error(
+            "Aborting: --require-fresh-refresh is set and the post-refresh "
+            "freshness check is still alert-stale (%.1fh >= %.0fh). Last "
+            "refresh artifact: %s. Run "
+            "`python scripts/analysis/run_daily_refresh.py` manually or "
+            "drop --require-fresh-refresh to proceed.",
+            _snap_post.get("hours_since_last_refresh") or -1.0,
+            _max_age_h,
+            _snap_post.get("last_refresh_artifact"),
+        )
+        sys.exit(1)
 
     LOGGER.info(
         "Starting paper trader (TR5)  "

@@ -64,6 +64,12 @@ from signal_config import (
     DEFAULT_SHADOW_RELAXED_BLOWOUT_COND_MIN_INNING,
     DEFAULT_SHADOW_RELAXED_ENABLED,
     DEFAULT_STABLE_WINDOW,
+    # 2026-05-23 (audit followup): paper params writer needs the same
+    # enforced-gate defaults as live for auditability parity.
+    DEFAULT_STAGE1_ALT_A_SCOPE_MODE,
+    DEFAULT_MAX_CORRELATED_OVER_LINES_PER_GAME,
+    DEFAULT_MIN_CORRELATED_LINE_GAP,
+    DEFAULT_MAX_REFRESH_AGE_HOURS,
 )
 
 if TYPE_CHECKING:
@@ -185,6 +191,38 @@ def build_paper_session_payload(engine: "SignalEngine") -> Dict[str, Any]:
             "prob_calibration_enforce_min_raw": float(
                 getattr(engine, "_prob_calibration_enforce_min_raw", 0.0)
             ),
+            # 2026-05-23 (audit followup): enforced-gate / feature flags
+            # missing from prior paper sessions. Caught when the 5/22
+            # daily audit could not tell what calibrator / scope / cap
+            # config was active. The live writer already has some of
+            # these; this block keeps paper auditable side-by-side.
+            # NOTE: kept paper-relevant only — orders_*/kelly_*/daily_*
+            # remain live-only because paper has no order lifecycle.
+            "extreme_edge_max": float(getattr(
+                trade_args, "extreme_edge_max", DEFAULT_EXTREME_EDGE_MAX,
+            )),
+            "ltp_ask_gap_max": float(getattr(
+                trade_args, "ltp_ask_gap_max", DEFAULT_LTP_ASK_GAP_MAX,
+            )),
+            "stage1_alt_a_scope_mode": str(getattr(
+                trade_args, "stage1_alt_a_scope_mode",
+                DEFAULT_STAGE1_ALT_A_SCOPE_MODE,
+            )),
+            "max_correlated_over_lines_per_game": int(getattr(
+                trade_args, "max_correlated_over_lines_per_game",
+                DEFAULT_MAX_CORRELATED_OVER_LINES_PER_GAME,
+            )),
+            "min_correlated_line_gap": float(getattr(
+                trade_args, "min_correlated_line_gap",
+                DEFAULT_MIN_CORRELATED_LINE_GAP,
+            )),
+            "require_fresh_refresh": bool(getattr(
+                trade_args, "require_fresh_refresh", False,
+            )),
+            "max_refresh_age_hours": float(getattr(
+                trade_args, "max_refresh_age_hours",
+                DEFAULT_MAX_REFRESH_AGE_HOURS,
+            )),
             "shadow_no_score_drift_enabled": bool(getattr(
                 trade_args,
                 "shadow_no_score_drift_enabled",

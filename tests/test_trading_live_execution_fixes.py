@@ -1679,6 +1679,186 @@ class ScopedAltAEnforceTests(unittest.TestCase):
         self.assertEqual(result, 0.98)
         self.assertEqual(payload["stage1_alt_a_scope_decision"], "alt_fv_unavailable")
 
+    def test_scope_fields_survive_candidate_serialization_pipeline(self):
+        # 2026-05-22 audit followup: the audit observed 0 scope-field rows
+        # in 5/20 and 5/21 candidate JSONLs. Root cause was operational
+        # (no score_event_transition candidates reached the post-FV path
+        # on 5/21's late-start session, and 5/20 was pre-ship). This test
+        # locks the wiring so a future serialization change can't strip
+        # scope fields silently — string scope fields must survive
+        # compact_raw_candidate_row + drop_none_values, while a
+        # rule_matched of None gets correctly stripped by the null filter.
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "trading"))
+        from candidate_logging import compact_raw_candidate_row
+        from candidate_paths import drop_none_values
+
+        engine = self._engine(scope_mode="shadow")
+        payload = {
+            "schema_version": 1,
+            "session_date": "2026-05-22",
+            "mode": "paper",
+            "side": "over",
+            "decision": "trade",
+            "decision_reason": "placed",
+            "game_pk": 822977,
+            "line": "7.5",
+            "inning": 6,
+            "fair_value": 0.95,
+            "fair_value_raw": 0.95,
+            "base_fair_value": 0.85,
+            "stage2_run_env_delta": 0.02,
+            "team_offense_delta": 0.01,
+            "fair_value_alt_empirical": 0.88,
+            "fair_value_alt_empirical_used_empirical": True,
+        }
+        self._call_scope(engine, payload=payload, best_fv=0.95, inning=6)
+        # In shadow mode on the default-apply cohort, scope fields are
+        # set but FV is not swapped.
+        self.assertEqual(payload["stage1_alt_a_scope_mode"], "shadow")
+        self.assertEqual(
+            payload["stage1_alt_a_scope_decision"], "would_apply_in_shadow"
+        )
+        self.assertEqual(payload["stage1_alt_a_scope_action"], "apply")
+        self.assertIsNone(payload["stage1_alt_a_scope_rule_matched"])
+
+        compact = drop_none_values(compact_raw_candidate_row(payload))
+        # The three string fields must survive serialization.
+        self.assertEqual(compact["stage1_alt_a_scope_mode"], "shadow")
+        self.assertEqual(
+            compact["stage1_alt_a_scope_decision"], "would_apply_in_shadow"
+        )
+        self.assertEqual(compact["stage1_alt_a_scope_action"], "apply")
+        # rule_matched=None is correctly stripped by drop_none_values
+        # (default-apply path matches no named rule). When a named rule
+        # fires, the field survives — covered below.
+        self.assertNotIn("stage1_alt_a_scope_rule_matched", compact)
+
+        # When a named rule fires (inning>=8 regression cohort), the
+        # rule_matched string must also survive serialization.
+        payload2 = dict(payload)
+        # Reset scope fields for clean re-eval.
+        for k in list(payload2):
+            if "stage1_alt_a_scope" in k:
+                del payload2[k]
+        self._call_scope(engine, payload=payload2, best_fv=0.95, inning=9)
+        compact2 = drop_none_values(compact_raw_candidate_row(payload2))
+        self.assertEqual(
+            compact2["stage1_alt_a_scope_rule_matched"],
+            "inning_gte_8_regression",
+        )
+        self.assertEqual(compact2["stage1_alt_a_scope_action"], "hold_poisson")
+
+
+class UnderEmissionCalibrationStampTests(unittest.TestCase):
+    """2026-05-23 (audit followup) -- under-side emission audit trail.
+
+    The 2026-05-22 debut of shadow_under emission produced 17 candidates
+    all on DET@BAL O7.5 inn4 with FV severely off (model P(under)=0.73,
+    actual final=11 runs). This locks the safeguard that every
+    UNDER candidate row carries a calibration-quality stamp so
+    downstream cohort/calibration health blocks can filter under-side
+    rows until the calibrator is refit.
+    """
+
+    def test_signal_pipeline_stamps_unreliable_pre_refit_on_under_payload(self):
+        # Inspect the source directly -- the stamp is set on every
+        # under_payload before it reaches record_candidate_decision.
+        # An integration test against the full pipeline would need
+        # heavy fixture wiring; the static check is cheaper and
+        # sufficient to catch removal/typo.
+        with open(
+            PROJECT_DIR / "scripts" / "trading" / "signal_pipeline.py",
+            encoding="utf-8",
+        ) as f:
+            src = f.read()
+        self.assertIn(
+            'under_payload["shadow_under_calibration_status"]', src,
+            "shadow_under_calibration_status field missing from "
+            "under-emission payload; downstream cohort filters will "
+            "silently include unreliable under data.",
+        )
+        self.assertIn(
+            '"unreliable_pre_refit"', src,
+            "calibration-status value should be `unreliable_pre_refit` "
+            "to match the documented downstream filter contract.",
+        )
+
+
+class GateThresholdDriftBootCheckTests(unittest.TestCase):
+    """2026-05-22 (audit followup) -- _check_gate_threshold_drift.
+
+    Context: the audit's "16 trailing-30d bets at edge>=0.22 leaking
+    -$190" cohort turned out to be historical bets placed when the
+    active extreme_edge_max was 0.30 (pre-TR19), not a current gate
+    bug. The post-mortem: an operator-CLI override or stale saved
+    command can silently pin a looser threshold than the codebase
+    default; the boot heartbeat surfaces this so the next saved
+    command can be reviewed before a session runs.
+    """
+
+    def _args_at_defaults(self):
+        return SimpleNamespace(
+            extreme_edge_max=sc.DEFAULT_EXTREME_EDGE_MAX,
+            edge_threshold=sc.DEFAULT_EDGE_THRESHOLD,
+            edge_threshold_high_line=sc.DEFAULT_EDGE_THRESHOLD_HIGH_LINE,
+            min_entry_ask=sc.DEFAULT_MIN_ENTRY_ASK,
+            min_entry_ask_high_line=sc.DEFAULT_MIN_ENTRY_ASK_HIGH_LINE,
+            min_inning=sc.DEFAULT_MIN_INNING,
+            min_inning_high_line=sc.DEFAULT_MIN_INNING_HIGH_LINE,
+            runs_needed_max=sc.DEFAULT_RUNS_NEEDED_MAX,
+            min_current_total=sc.DEFAULT_MIN_CURRENT_TOTAL,
+        )
+
+    def test_defaults_produce_no_drift(self):
+        self.assertEqual(se._check_gate_threshold_drift(self._args_at_defaults()), {})
+
+    def test_historical_extreme_edge_max_030_is_flagged(self):
+        # The exact value that polluted the 4/18-5/04 trailing-30d cohort.
+        args = self._args_at_defaults()
+        args.extreme_edge_max = 0.30
+        drift = se._check_gate_threshold_drift(args)
+        self.assertIn("extreme_edge_max", drift)
+        self.assertEqual(drift["extreme_edge_max"]["runtime"], 0.30)
+        self.assertEqual(
+            drift["extreme_edge_max"]["default"], sc.DEFAULT_EXTREME_EDGE_MAX,
+        )
+        self.assertEqual(drift["extreme_edge_max"]["direction"], "larger")
+
+    def test_loosening_smaller_direction_gate_is_flagged(self):
+        # edge_threshold gate: smaller value = looser (more bets pass).
+        args = self._args_at_defaults()
+        args.edge_threshold = sc.DEFAULT_EDGE_THRESHOLD - 0.05
+        drift = se._check_gate_threshold_drift(args)
+        self.assertIn("edge_threshold", drift)
+        self.assertEqual(drift["edge_threshold"]["direction"], "smaller")
+
+    def test_tighter_than_default_produces_no_drift(self):
+        # A tightening (e.g. extreme_edge_max=0.15) is operator's call
+        # and should NOT trigger the WARN; only loosening does.
+        args = self._args_at_defaults()
+        args.extreme_edge_max = 0.15
+        drift = se._check_gate_threshold_drift(args)
+        self.assertEqual(drift, {})
+
+    def test_drift_check_survives_missing_attrs(self):
+        # If a future arg refactor renames or drops a field, the drift
+        # check must not crash the engine boot.
+        empty = SimpleNamespace()
+        # Should return {} cleanly.
+        self.assertEqual(se._check_gate_threshold_drift(empty), {})
+
+    def test_logging_path_handles_empty_and_populated(self):
+        # Sanity: logger calls don't raise. (Output goes through
+        # logging; we don't assert on the message body here.)
+        se._log_gate_threshold_drift({})
+        se._log_gate_threshold_drift(
+            se._check_gate_threshold_drift(
+                SimpleNamespace(extreme_edge_max=0.30)
+            )
+        )
+
 
 class PaperCorrelatedLineCapTests(unittest.TestCase):
     """2026-05-21 (P1c) -- correlated-line cap was previously live-only.

@@ -204,6 +204,13 @@ DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW = 0.90
 DEFAULT_MAX_CORRELATED_OVER_LINES_PER_GAME = 2
 DEFAULT_MIN_CORRELATED_LINE_GAP = 1.5
 
+# 2026-05-22 (audit followup): boot-time refresh-freshness heartbeat
+# threshold. Mirrors human_review.constants.REFRESH_STALENESS_HOURS_ALERT
+# so the boot log and the daily-review block agree on what "stale" means.
+# 60h = 2.5 days; below the warn threshold (36h) the heartbeat logs INFO,
+# 36-60h is WARNING, >=60h is ERROR (and aborts if --require-fresh-refresh).
+DEFAULT_MAX_REFRESH_AGE_HOURS = 60.0
+
 # 2026-05-21 (P2a): Scoped Alt-A enforce. Per-candidate cohort
 # decision: should the FV chain use Poisson (default) or the cell's
 # own empirical rate (Alt-A)? Driven by the shadow-override report's
@@ -534,6 +541,30 @@ def parse_trade_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace]
             "Default is fail-open (log + proceed)."
         ),
     )
+    # 2026-05-22 (audit followup): boot-time refresh-freshness heartbeat.
+    # --startup-refresh-strict only handles execution failures; if the
+    # operator passes --no-startup-refresh, or the refresh fails open,
+    # the engine still booted in 2026-05-19..20 with 36+ hour stale
+    # artifacts. --require-fresh-refresh hard-aborts when the post-boot
+    # refresh artifact is still older than --max-refresh-age-hours.
+    p.add_argument(
+        "--require-fresh-refresh", dest="require_fresh_refresh",
+        action="store_true", default=False,
+        help=(
+            "Abort paper startup if the most recent startup_refresh "
+            "artifact is older than --max-refresh-age-hours after the "
+            "in-process refresh attempt. Default off (warn-only)."
+        ),
+    )
+    p.add_argument(
+        "--max-refresh-age-hours", dest="max_refresh_age_hours",
+        type=float, default=DEFAULT_MAX_REFRESH_AGE_HOURS,
+        help=(
+            "Hours threshold for --require-fresh-refresh and for the "
+            "ERROR-vs-WARN level of the boot heartbeat log. "
+            f"(default: {DEFAULT_MAX_REFRESH_AGE_HOURS})"
+        ),
+    )
     p.add_argument(
         "--max-correlated-over-lines-per-game",
         type=int,
@@ -575,6 +606,21 @@ def parse_trade_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace]
     # the live CLI bridges its `--stage1-shadow-empirical-override` to
     # the same attribute, so live + paper now share one runtime
     # contract. Default `off`: no math, no logging change.
+    # 2026-05-23: --quote-engine-mode was previously live-only via
+    # live_engine_cli.py; the runtime hook lives in SignalEngine so
+    # paper can use it too, but the CLI surface was missing. Adding
+    # here lets paper trader opt into shadow quote-engine logging
+    # alongside under-emission shadow, etc.
+    p.add_argument("--quote-engine-mode",
+                   dest="quote_engine_mode",
+                   choices=["off", "shadow"], default="off",
+                   help=(
+                       "Two-sided quote engine mode. off = disabled "
+                       "(default). shadow = compute would-have bid + "
+                       "ask + hedge per tick and log to "
+                       "paper_trading/quote_engine_shadow/<date>_quotes.jsonl; "
+                       "NO order is placed. (default: off)"
+                   ))
     p.add_argument("--stage1-shadow-empirical-mode",
                    dest="stage1_shadow_empirical_mode",
                    choices=["off", "shadow"], default="off",
@@ -756,9 +802,16 @@ def parse_trade_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace]
     return trade_args, monitor_args
 
 
+# Export every module-level UPPER_SNAKE_CASE constant plus the
+# parse function. Prior rule was prefix-based (DEFAULT_*) + a hardcoded
+# allowlist; any new non-DEFAULT_* constant added downstream (e.g. the
+# 2026-05-21 STAGE1_ALT_A_SCOPE_* policy tables) silently failed
+# `from signal_config import *` at engine boot. The auto-rule makes
+# new constants importable without touching this block.
 __all__ = [
     name
     for name in globals()
-    if name.startswith('DEFAULT_') or name in {'CONFIRM_RETAIN_FRACTION', 'INACTIVE_INNING_STATES', 'parse_trade_args'}
+    if (name and name[0].isalpha() and name.isupper())
+    or name == 'parse_trade_args'
 ]
 

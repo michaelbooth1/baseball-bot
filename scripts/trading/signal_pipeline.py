@@ -268,6 +268,14 @@ def _maybe_emit_under_candidate(
         # UNDER.
         under_payload = dict(over_candidate_payload)
         under_payload["side"] = "under"
+        # 2026-05-23 (audit followup): mark every UNDER candidate row
+        # as calibration-unreliable until the UNDER calibrator is
+        # refit. The 5/22 DET@BAL O7.5 debut showed model P(under)=
+        # 0.73 vs actual final=11 runs -- 17 emitted rows would have
+        # been a -$170 day if live. Downstream cohort/calibration
+        # health blocks should filter on this field until a refit
+        # changes the status to "verified" or similar.
+        under_payload["shadow_under_calibration_status"] = "unreliable_pre_refit"
         # bet_id mirrors OVER's with a `_under_shadow` suffix so any
         # cross-side joins (downstream training table merge logic)
         # can pair them.
