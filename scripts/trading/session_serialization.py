@@ -98,6 +98,8 @@ def build_paper_session_payload(engine: "SignalEngine") -> Dict[str, Any]:
         "mode": "paper",
         "generated_at": _now_iso(),
         "params": {
+            "config_label": str(getattr(trade_args, "config_label", "default") or "default"),
+            "market_data_mode": str(getattr(engine, "_market_data_mode", "per_engine") or "per_engine"),
             "edge_threshold": trade_args.edge_threshold,
             "edge_threshold_high_line": trade_args.edge_threshold_high_line,
             "jump_threshold": trade_args.jump_threshold,
@@ -354,6 +356,11 @@ def build_paper_session_payload(engine: "SignalEngine") -> Dict[str, Any]:
             "prob_calibration_disabled_or_missing": int(engine._prob_calibration_stats.get("disabled_or_missing", 0)),
             "prob_calibration_family_missing": int(engine._prob_calibration_stats.get("family_missing", 0)),
             "prob_calibration_family_missing_fail_closed": int(engine._prob_calibration_stats.get("family_missing_fail_closed", 0)),
+            "market_data_health": dict(getattr(engine, "_market_data_health", {}) or {}),
+            "market_data_gap_count": int((getattr(engine, "_market_data_health", {}) or {}).get("market_data_gap_count") or 0),
+            "last_market_data_sequence": int((getattr(engine, "_market_data_health", {}) or {}).get("last_market_data_sequence") or 0),
+            "max_market_data_lag_ms": float((getattr(engine, "_market_data_health", {}) or {}).get("max_market_data_lag_ms") or 0.0),
+            "consumer_disconnects": int((getattr(engine, "_market_data_health", {}) or {}).get("consumer_disconnects") or 0),
         },
         "bets": [asdict(b) for b in engine._bets],
     }
@@ -412,6 +419,7 @@ def build_live_session_payload(
         "generated_at": _now_iso(),
         "mode": "dry_run" if engine._dry_run else "live",
         "params": {
+            "config_label": str(getattr(trade_args, "config_label", "default") or "default"),
             "edge_threshold": trade_args.edge_threshold,
             "edge_threshold_high_line": trade_args.edge_threshold_high_line,
             "jump_threshold": trade_args.jump_threshold,

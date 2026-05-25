@@ -213,6 +213,22 @@ def load_captures_for_mode(
             warnings.append(f"[{mode}] capture header missing bet_id: {path}")
             continue
 
+        if len(rows) >= 2 and isinstance(rows[1], dict) and rows[1].get("type") == "shared_capture_pointer":
+            pointer_path = rows[1].get("shared_capture_path") or header.get("shared_capture_path")
+            if pointer_path:
+                try:
+                    shared_path = Path(str(pointer_path))
+                    shared_rows = _read_jsonl(shared_path)
+                    if shared_rows and isinstance(shared_rows[0], dict):
+                        rows = [header] + [
+                            r for r in shared_rows[1:]
+                            if isinstance(r, dict) and r.get("type") == "snapshot"
+                        ]
+                    else:
+                        warnings.append(f"[{mode}] empty shared capture pointer target: {shared_path}")
+                except Exception as exc:
+                    warnings.append(f"[{mode}] failed to read shared capture pointer {pointer_path}: {exc}")
+
         snapshots = [r for r in rows[1:] if isinstance(r, dict) and r.get("type") == "snapshot"]
         seqs = [s.get("seq") for s in snapshots if isinstance(s.get("seq"), int)]
         if len(seqs) != len(snapshots):

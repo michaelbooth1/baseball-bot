@@ -1348,6 +1348,7 @@ class SignalEngineCandidateLoggingCharacterizationTests(unittest.TestCase):
                         "runners_count": 1,
                     },
                     "outcome_join_key": "2026-04-26|1|8.5",
+                    "config_label": "default",
                     "ask_bucket": "0.65-0.75",
                     "edge_bucket": "0.00-0.10",
                     "runs_needed_bucket": "<=1.5",

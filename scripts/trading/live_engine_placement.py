@@ -515,6 +515,7 @@ def place_bet(
         runners_on=runners_on,
         venue_name=game.venue_name,
         ltp_at_signal=ltp,
+        config_label=str(getattr(engine.trade_args, "config_label", "default") or "default"),
         inferred_state_base_poisson=_diag_float("inferred_state_base_poisson"),
         inferred_state_base_empirical=_diag_float("inferred_state_base_empirical"),
         inferred_state_poisson_minus_empirical=_diag_float("inferred_state_poisson_minus_empirical"),

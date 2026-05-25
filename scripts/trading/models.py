@@ -56,6 +56,7 @@ class BetRecord:
     runners_on: int         # bitmask: 1=1st, 2=2nd, 4=3rd
     venue_name: str = ""    # stadium (from ScheduledGame.venue_name, park analytics)
     ltp_at_signal: Optional[float] = None  # last traded price at signal time; gap vs entry_ask measures adversarial selection risk
+    config_label: str = "default"  # parallel paper/live config identifier for A/B analysis
 
     # Inferred Stage-1 audit fields -- non-enforcing research fields.
     inferred_state_base_poisson: Optional[float] = None

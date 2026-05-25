@@ -113,6 +113,7 @@ PARAM_KEYS_LIVE = [
 BASE_MASTER_COLUMNS = [
     "schema_version",
     "mode",
+    "config_label",
     "bet_id",
     "session_date",
     "session_path",

@@ -683,6 +683,11 @@ def build_master_rows_for_mode(
             {
                 "schema_version": SCHEMA_VERSION,
                 "mode": mode,
+                "config_label": _coalesce([
+                    _state_value_value("config_label", candidate_row, session_bet, events, cap_header),
+                    (session_params or {}).get("config_label"),
+                    "default",
+                ]),
                 "bet_id": bet_id,
                 "session_date": session_date,
                 "session_path": srow["session_path"] if srow else None,

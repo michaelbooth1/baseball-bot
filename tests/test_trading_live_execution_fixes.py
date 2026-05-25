@@ -1679,6 +1679,68 @@ class ScopedAltAEnforceTests(unittest.TestCase):
         self.assertEqual(result, 0.98)
         self.assertEqual(payload["stage1_alt_a_scope_decision"], "alt_fv_unavailable")
 
+    def test_inning_6_7_high_fallback_apply_rule_fires_with_explicit_tag(self):
+        # 2026-05-24 (audit followup): the inning 6-7 + fallback_level
+        # >= 2 cohort gets an explicit apply-rule so candidate rows
+        # carry stage1_alt_a_scope_rule_matched=
+        # `inning_6_7_high_fallback_apply`. Action is `apply` (same as
+        # default), but the explicit name lets later cohort WR/ROI
+        # reports break this population out for evidence-gathering.
+        engine = self._engine(scope_mode="enforce")
+        payload = {
+            "fair_value_alt_empirical": 0.88,
+            "fair_value_alt_empirical_used_empirical": True,
+            # fallback_level >= 2 triggers the rule (read from
+            # inferred_state_fallback_level on candidate_payload).
+            "inferred_state_fallback_level": 2,
+        }
+        result = self._call_scope(
+            engine, payload=payload, best_fv=0.98, inning=6,
+        )
+        # Swap happens (apply action).
+        self.assertAlmostEqual(result, 0.88, places=6)
+        self.assertEqual(payload["fair_value"], 0.88)
+        self.assertEqual(payload["stage1_alt_a_scope_decision"], "applied")
+        self.assertEqual(payload["stage1_alt_a_scope_action"], "apply")
+        # The new explicit rule tags the row, not the default fallback.
+        self.assertEqual(
+            payload["stage1_alt_a_scope_rule_matched"],
+            "inning_6_7_high_fallback_apply",
+        )
+
+    def test_inning_6_7_fallback_lt_2_falls_back_to_default_apply(self):
+        # Inning 6-7 but fallback_level < 2: predicate misses, default
+        # action `apply` still wins, and rule_matched stays None (no
+        # named rule tagged the row).
+        engine = self._engine(scope_mode="enforce")
+        payload = {
+            "fair_value_alt_empirical": 0.88,
+            "fair_value_alt_empirical_used_empirical": True,
+            "inferred_state_fallback_level": 1,  # below threshold
+        }
+        result = self._call_scope(
+            engine, payload=payload, best_fv=0.98, inning=7,
+        )
+        self.assertAlmostEqual(result, 0.88, places=6)
+        self.assertEqual(payload["stage1_alt_a_scope_decision"], "applied")
+        # Action is apply (from default), but no named rule matched.
+        self.assertIsNone(payload["stage1_alt_a_scope_rule_matched"])
+
+    def test_inning_5_with_high_fallback_does_not_match_new_rule(self):
+        # Inning 5 (outside 6-7) + fallback_level=2: predicate misses
+        # because inning check fails. Default apply still wins.
+        engine = self._engine(scope_mode="enforce")
+        payload = {
+            "fair_value_alt_empirical": 0.88,
+            "fair_value_alt_empirical_used_empirical": True,
+            "inferred_state_fallback_level": 2,
+        }
+        result = self._call_scope(
+            engine, payload=payload, best_fv=0.98, inning=5,
+        )
+        self.assertEqual(payload["stage1_alt_a_scope_decision"], "applied")
+        self.assertIsNone(payload["stage1_alt_a_scope_rule_matched"])
+
     def test_scope_fields_survive_candidate_serialization_pipeline(self):
         # 2026-05-22 audit followup: the audit observed 0 scope-field rows
         # in 5/20 and 5/21 candidate JSONLs. Root cause was operational

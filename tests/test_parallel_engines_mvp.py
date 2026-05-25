@@ -1,0 +1,597 @@
+import io
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from contextlib import redirect_stdout
+from dataclasses import asdict
+from pathlib import Path
+from types import SimpleNamespace
+
+
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+TRADING_DIR = PROJECT_DIR / "scripts" / "trading"
+ANALYSIS_DIR = PROJECT_DIR / "scripts" / "analysis"
+for path in (TRADING_DIR, ANALYSIS_DIR, PROJECT_DIR):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
+
+import aggregate_parallel_engines as ape  # noqa: E402
+import build_walk_forward_certification as bwfc  # noqa: E402
+import candidate_schema_enrichment as cse  # noqa: E402
+import capture_helpers as ch  # noqa: E402
+import launch_parallel_engines as lpe  # noqa: E402
+import paper_engine_consumer as pec  # noqa: E402
+import signal_config as sc  # noqa: E402
+import shared_capture as scp  # noqa: E402
+import shared_market_data as smd  # noqa: E402
+import walk_forward_runner as wfr  # noqa: E402
+from models import BetRecord  # noqa: E402
+from monitor_models import GameMarketMatch, OUMarket, ScheduledGame, ScheduleScore  # noqa: E402
+from scripts.analysis.unified_signal_table.loaders import load_captures_for_mode  # noqa: E402
+
+
+def _base_bet(**overrides):
+    payload = {
+        "bet_id": "bet_1",
+        "placed_at": "2026-05-24T12:00:00Z",
+        "game_pk": 1,
+        "away_abbrev": "AWY",
+        "home_abbrev": "HOM",
+        "line": "8.5",
+        "side": "over",
+        "entry_ask": 0.75,
+        "fair_value": 0.86,
+        "base_fair_value": 0.84,
+        "stage2_run_env_delta": 0.0,
+        "team_offense_delta": 0.0,
+        "edge": 0.11,
+        "inferred_runs": 1,
+        "inning": 6,
+        "inning_state": "Top",
+        "outs": 1,
+        "away_score_before": 3,
+        "home_score_before": 3,
+        "inferred_away_after": 4,
+        "inferred_home_after": 3,
+        "stake": 10.0,
+        "runners_on": 0,
+    }
+    payload.update(overrides)
+    return payload
+
+
+class ParallelEnginesMvpTests(unittest.TestCase):
+    def test_config_label_parses_and_reaches_candidate_rows_and_bet_json(self):
+        trade_args, _ = sc.parse_trade_args(["--config-label", "A_current"])
+        self.assertEqual(trade_args.config_label, "A_current")
+
+        row = {
+            "session_date": "2026-05-24",
+            "game_pk": 1,
+            "line": "8.5",
+            "decision_ask": 0.74,
+            "edge": 0.12,
+        }
+        engine = SimpleNamespace(
+            date_str="2026-05-24",
+            trade_args=SimpleNamespace(config_label="A_current", extreme_edge_max=0.22),
+        )
+        cse.attach_modeling_observability_fields(engine, row)
+        self.assertEqual(row["config_label"], "A_current")
+
+        bet = BetRecord(**_base_bet(config_label="B_cal_only"))
+        self.assertEqual(asdict(bet)["config_label"], "B_cal_only")
+
+    def test_launcher_builds_isolated_commands_from_presets(self):
+        with tempfile.TemporaryDirectory() as td:
+            args = lpe.parse_args(
+                [
+                    "--config", "A_current",
+                    "--config", "B:enforce_shadow",
+                    "--paper-root-prefix", str(Path(td) / "paper_"),
+                    "--stake", "10",
+                    "--dry-launch",
+                ]
+            )
+            configs = [lpe._resolve_config(raw, Path(args.paper_root_prefix)) for raw in args.config]
+            cmds = [lpe.build_engine_command(args, cfg) for cfg in configs]
+
+        self.assertIn("--config-label", cmds[0])
+        self.assertIn("A_current", cmds[0])
+        self.assertIn("--paper-root", cmds[1])
+        self.assertIn("B", cmds[1])
+        self.assertIn("--stage1-alt-a-scope-mode", cmds[0])
+        self.assertIn("enforce", cmds[0])
+        self.assertIn("shadow", cmds[1])
+        self.assertIn("--no-startup-refresh", cmds[0])
+
+    def test_launcher_builds_shared_watcher_and_consumer_commands(self):
+        with tempfile.TemporaryDirectory() as td:
+            args = lpe.parse_args(
+                [
+                    "--config", "A_current",
+                    "--paper-root-prefix", str(Path(td) / "paper_"),
+                    "--stake", "10",
+                    "--dry-launch",
+                ]
+            )
+            cfg = lpe._resolve_config("A_current", Path(args.paper_root_prefix))
+            watcher = lpe.build_watcher_command(
+                args,
+                bus_host="127.0.0.1",
+                bus_port=12345,
+                bus_authkey="secret",
+                ready_file=Path(td) / "ready.json",
+                expected_consumers=1,
+                capture_bus_host="127.0.0.1",
+                capture_bus_port=12346,
+                capture_bus_authkey="capture_secret",
+            )
+            consumer = lpe.build_consumer_command(
+                args,
+                cfg,
+                bus_host="127.0.0.1",
+                bus_port=12345,
+                bus_authkey="secret",
+                capture_bus_host="127.0.0.1",
+                capture_bus_port=12346,
+                capture_bus_authkey="capture_secret",
+                watcher_pid=111,
+            )
+        self.assertIn("shared_market_watcher.py", " ".join(watcher))
+        self.assertIn("--output-root", watcher)
+        self.assertIn("--expected-consumers", watcher)
+        self.assertIn("--capture-bus-port", watcher)
+        self.assertIn("paper_engine_consumer.py", " ".join(consumer))
+        self.assertIn("--bus-port", consumer)
+        self.assertIn("--capture-bus-port", consumer)
+        self.assertIn("--config-label", consumer)
+
+    def test_shared_capture_depth_cache_reuses_bucket(self):
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "last_trade_price": "0.71",
+                    "bids": [{"price": "0.69", "size": "12"}],
+                    "asks": [{"price": "0.72", "size": "8"}],
+                }
+
+        class FakeSession:
+            def __init__(self):
+                self.calls = 0
+
+            def get(self, *_args, **_kwargs):
+                self.calls += 1
+                return FakeResponse()
+
+        class FakeBookClient:
+            timeout = 1.0
+
+            def __init__(self):
+                self.session = FakeSession()
+
+            def _session(self):
+                return self.session
+
+        with tempfile.TemporaryDirectory() as td:
+            book_client = FakeBookClient()
+            port = lpe._pick_free_port()
+            server = scp.SharedCaptureServer(
+                host="127.0.0.1",
+                port=port,
+                authkey="secret",
+                book_client=book_client,
+                output_root=Path(td),
+                date_str="2026-05-24",
+            )
+            server.start()
+            client = scp.SharedCaptureClient(
+                host="127.0.0.1",
+                port=port,
+                authkey="secret",
+                timeout_secs=2.0,
+            )
+            try:
+                first_snapshot = client.fetch_depth_snapshot(token_id="tok", depth=5, bucket_ms=10000)
+                second_snapshot = client.fetch_depth_snapshot(token_id="tok", depth=5, bucket_ms=10000)
+                stats = client.stats()
+            finally:
+                server.close()
+        self.assertIsNotNone(first_snapshot)
+        self.assertIsNotNone(second_snapshot)
+        self.assertEqual(stats["responses_ok"], 2)
+        self.assertEqual(stats["cache_hits"], 1)
+        self.assertEqual(book_client.session.calls, 1)
+        self.assertEqual(second_snapshot["best_ask"], 0.72)
+
+    def test_capture_helpers_use_shared_depth_and_write_book_pointer(self):
+        class FakeSharedClient:
+            def __init__(self, shared_path: Path):
+                self.shared_path = shared_path
+                self.depth_calls = 0
+                self.book_calls = 0
+
+            def stats(self):
+                return {"requests": self.depth_calls + self.book_calls}
+
+            def fetch_depth_snapshot(self, **_kwargs):
+                self.depth_calls += 1
+                return {"ok": True, "best_bid": 0.68, "best_ask": 0.71, "top_bids": [], "top_asks": []}
+
+            def start_book_capture(self, **_kwargs):
+                self.book_calls += 1
+                return {
+                    "ok": True,
+                    "cache_hit": self.book_calls > 1,
+                    "shared_capture_id": "shared_abc",
+                    "shared_capture_path": str(self.shared_path),
+                }
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            shared_path = root / "shared.jsonl"
+            engine = SimpleNamespace(
+                date_str="2026-05-24",
+                trade_args=SimpleNamespace(
+                    paper_root=root / "paper",
+                    capture_duration=2.0,
+                    capture_interval=1.0,
+                    capture_depth=5,
+                ),
+                _shared_capture_client=FakeSharedClient(shared_path),
+                _market_data_health={},
+            )
+            depth = ch.fetch_depth_snapshot(engine, "tok", 5)
+            self.assertEqual(depth["best_ask"], 0.71)
+            self.assertEqual(depth["shared_capture_source"], "watcher")
+
+            bet = SimpleNamespace(
+                bet_id="bet1",
+                placed_at="2026-05-24T12:00:00Z",
+                game_pk=1,
+                away_abbrev="AWY",
+                home_abbrev="HOM",
+                line="8.5",
+                inning=6,
+                inning_state="Top",
+                outs=1,
+                away_score_before=3,
+                home_score_before=3,
+                entry_ask=0.72,
+                fair_value=0.82,
+                base_fair_value=0.80,
+                stage2_run_env_delta=0.0,
+                team_offense_delta=0.0,
+                edge=0.10,
+            )
+            ch.start_book_capture(
+                engine,
+                bet=bet,
+                token_id="tok",
+                initial_book={"ok": True, "best_bid": 0.68, "best_ask": 0.72},
+                signal_ts=1000.0,
+            )
+            pointer = root / "paper" / "book_captures" / "2026-05-24" / "bet1.jsonl"
+            rows = [json.loads(line) for line in pointer.read_text(encoding="utf-8").splitlines()]
+        self.assertTrue(rows[0]["shared_capture_pointer"])
+        self.assertEqual(rows[1]["type"], "shared_capture_pointer")
+        self.assertEqual(rows[1]["shared_capture_id"], "shared_abc")
+
+    def test_unified_loader_follows_shared_capture_pointer(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            shared = root / "shared_book_captures" / "2026-05-24"
+            shared.mkdir(parents=True)
+            shared_file = shared / "cap1.jsonl"
+            shared_file.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"type": "signal", "bet_id": "shared_cap1"}),
+                        json.dumps({
+                            "type": "snapshot",
+                            "seq": 0,
+                            "elapsed_s": 0.0,
+                            "ts": "2026-05-24T12:00:00Z",
+                            "book": {"ok": True, "best_bid": 0.68, "best_ask": 0.72},
+                        }),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            local = root / "paper" / "book_captures" / "2026-05-24"
+            local.mkdir(parents=True)
+            (local / "bet1.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps({
+                            "type": "signal",
+                            "bet_id": "bet1",
+                            "shared_capture_pointer": True,
+                            "shared_capture_path": str(shared_file),
+                        }),
+                        json.dumps({
+                            "type": "shared_capture_pointer",
+                            "bet_id": "bet1",
+                            "shared_capture_path": str(shared_file),
+                        }),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            warnings = []
+            hard_errors = []
+            captures = load_captures_for_mode(
+                "paper",
+                root / "paper" / "book_captures",
+                "2026-05-24",
+                "2026-05-24",
+                warnings,
+                hard_errors,
+            )
+        self.assertEqual(warnings, [])
+        self.assertEqual(hard_errors, [])
+        self.assertIn("bet1", captures)
+        self.assertEqual(len(captures["bet1"].snapshots), 1)
+        self.assertEqual(captures["bet1"].t0_book["best_ask"], 0.72)
+
+    def test_launcher_rejects_live_only_flags(self):
+        with self.assertRaises(SystemExit) as ctx:
+            lpe.parse_args(["--config", "A_current", "--daily-budget", "80"])
+        self.assertIn("live-execution-only", str(ctx.exception))
+
+    def test_shared_market_data_round_trip_and_gap_stats(self):
+        game = ScheduledGame(
+            game_pk=123,
+            game_date="2026-05-24T19:00:00Z",
+            start_time_utc="2026-05-24T19:00:00Z",
+            away_abbrev="AWY",
+            home_abbrev="HOM",
+            away_name="Away",
+            home_name="Home",
+            status_abstract="Live",
+            status_detailed="In Progress",
+            score=ScheduleScore(
+                away=2,
+                home=1,
+                inning=5,
+                inning_state="Top",
+                outs=1,
+                balls=0,
+                strikes=0,
+                runners_on=1,
+                away_inning_runs=[1, 0, 1],
+                home_inning_runs=[0, 1],
+            ),
+        )
+        market = OUMarket(
+            market_id="m1",
+            question="Over 8.5",
+            line="8.5",
+            over_token_id="over",
+            under_token_id="under",
+        )
+        match = GameMarketMatch(
+            game_pk=123,
+            event_slug="awy-hom",
+            event_title="AWY at HOM",
+            markets=[market],
+        )
+        payload = smd.encode_batch(
+            sequence=3,
+            date_str="2026-05-24",
+            games={123: game},
+            matches={123: match},
+            active_games={123: True},
+            tick_batch=[(game, market, "over_yes", {"book": {"ok": True, "best_ask": 0.71}})],
+            health={"watcher_pid": 111},
+        )
+        games, matches, active = smd.decode_state(payload)
+        ticks = smd.decode_tick_batch(payload)
+        self.assertEqual(games[123].score.away, 2)
+        self.assertEqual(matches[123].markets[0].line, "8.5")
+        self.assertTrue(active[123])
+        self.assertEqual(ticks[0][2], "over_yes")
+        self.assertEqual(ticks[0][3]["book"]["best_ask"], 0.71)
+
+        engine = SimpleNamespace(_market_data_health={"last_market_data_sequence": 1})
+        pec._update_market_data_stats(engine, payload)
+        self.assertEqual(engine._market_data_health["market_data_gap_count"], 1)
+        self.assertEqual(engine._market_data_health["last_market_data_sequence"], 3)
+
+    def test_aggregator_groups_roots_and_detects_split_decision(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            roots = []
+            for label, decision, won, profit in [
+                ("A_current", "trade", True, 3.33),
+                ("B_cal_only", "skip", False, 0.0),
+            ]:
+                paper_root = root / f"paper_{label}"
+                roots.append(paper_root)
+                (paper_root / "sessions").mkdir(parents=True)
+                (paper_root / "candidate_universe").mkdir(parents=True)
+                session = {
+                    "date": "2026-05-24",
+                    "mode": "paper",
+                    "params": {"config_label": label},
+                    "summary": {
+                        "market_data_health": {
+                            "shutdown_received": True,
+                            "last_market_data_sequence": 12,
+                            "market_data_gap_count": 0,
+                        }
+                    },
+                    "bets": [
+                        _base_bet(
+                            bet_id=f"{label}_bet",
+                            settled=True,
+                            won=won,
+                            profit=profit,
+                            config_label=label,
+                        )
+                    ] if decision == "trade" else [],
+                }
+                (paper_root / "sessions" / "2026-05-24_session.json").write_text(
+                    json.dumps(session),
+                    encoding="utf-8",
+                )
+                candidate = {
+                    "session_date": "2026-05-24",
+                    "game_pk": 1,
+                    "line": "8.5",
+                    "config_label": label,
+                    "decision": decision,
+                    "decision_reason": "placed" if decision == "trade" else "gate_min_edge",
+                    "outcome_join_key": "2026-05-24|1|8.5",
+                }
+                with (paper_root / "candidate_universe" / "2026-05-24_candidates.jsonl").open("w", encoding="utf-8") as f:
+                    f.write(json.dumps(candidate) + "\n")
+
+            report = ape.build_report(roots, "2026-05-24", "2026-05-24")
+            self.assertEqual(report["configs"]["A_current"]["headline"]["n_bets"], 1)
+            self.assertIn("daily_read", report)
+            self.assertEqual(report["daily_read"]["best_roi_config"], "A_current")
+            self.assertTrue(report["configs"]["A_current"]["completeness"]["complete"])
+            self.assertAlmostEqual(
+                report["configs"]["A_current"]["headline"]["edge_over_market_stake_weighted_actual_minus_ask"],
+                0.25,
+            )
+            self.assertEqual(
+                report["shared_candidate_disagreement"]["game_line"]["counts"]["split"],
+                1,
+            )
+
+    def test_aggregator_marks_shared_consumer_gaps_incomplete(self):
+        with tempfile.TemporaryDirectory() as td:
+            paper_root = Path(td) / "paper_A_current"
+            (paper_root / "sessions").mkdir(parents=True)
+            session = {
+                "date": "2026-05-24",
+                "mode": "paper",
+                "params": {"config_label": "A_current", "market_data_mode": "shared_consumer"},
+                "summary": {
+                    "market_data_gap_count": 2,
+                    "consumer_disconnects": 0,
+                    "max_market_data_lag_ms": 100.0,
+                    "last_market_data_sequence": 9,
+                    "market_data_health": {"shutdown_received": True},
+                },
+                "bets": [],
+            }
+            (paper_root / "sessions" / "2026-05-24_session.json").write_text(json.dumps(session), encoding="utf-8")
+            report = ape.build_report([paper_root], "2026-05-24", "2026-05-24")
+            completeness = report["configs"]["A_current"]["completeness"]
+            self.assertFalse(completeness["complete"])
+            self.assertIn("market_data_sequence_gaps", completeness["reasons"])
+
+    def test_launcher_reports_early_startup_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            log_path = Path(td) / "launch_log.txt"
+            log_path.write_text("startup boom\n", encoding="utf-8")
+            proc = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(7)"])
+            cfg = lpe.EngineConfig(
+                label="A_current",
+                flags=[],
+                source="test",
+                paper_root=Path(td),
+            )
+            running = [
+                lpe.RunningEngine(
+                    config=cfg,
+                    process=proc,
+                    log_path=log_path,
+                    start_time=0.0,
+                )
+            ]
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                rc = lpe._wait_for_engines(running, startup_health_secs=9999999999.0)
+            self.assertEqual(rc, 7)
+            self.assertIn("Early startup failure detected", stdout.getvalue())
+            self.assertIn("startup boom", stdout.getvalue())
+
+    def test_walk_forward_config_label_filter_changes_plan_dates(self):
+        with tempfile.TemporaryDirectory() as td:
+            input_path = Path(td) / "signals_master.jsonl"
+            with input_path.open("w", encoding="utf-8") as f:
+                for idx, d in enumerate(["2026-05-01", "2026-05-02", "2026-05-03"], start=1):
+                    f.write(json.dumps({"mode": "paper", "config_label": "A", "session_date": d, "bet_id": f"a{idx}"}) + "\n")
+                f.write(json.dumps({"mode": "paper", "config_label": "B", "session_date": "2026-05-04", "bet_id": "b1"}) + "\n")
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                wfr.main(
+                    [
+                        "--input-path", str(input_path),
+                        "--mode", "paper",
+                        "--config-label-filter", "A",
+                        "--train-days", "1",
+                        "--val-days", "1",
+                        "--test-days", "1",
+                        "--min-train-dates", "1",
+                        "--plan-only",
+                    ]
+                )
+            plans = [json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()]
+            self.assertEqual(plans[-1]["test_start"], "2026-05-03")
+
+    def test_certification_config_label_filter_limits_rows(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            table = root / "training.jsonl"
+            rows = [
+                {
+                    "config_label": "A",
+                    "session_date": "2026-05-24",
+                    "decision_ask": 0.70,
+                    "edge_at_ask": 0.12,
+                    "target_filled": 1,
+                    "target_win": 1,
+                    "target_profit": 4.29,
+                    "line": "8.5",
+                    "inning": 6,
+                    "runs_needed": 2.5,
+                    "fair_value": 0.82,
+                    "limit_price": 0.70,
+                },
+                {
+                    "config_label": "B",
+                    "session_date": "2026-05-24",
+                    "decision_ask": 0.70,
+                    "edge_at_ask": 0.12,
+                    "target_filled": 1,
+                    "target_win": 0,
+                    "target_profit": -10.0,
+                    "line": "8.5",
+                    "inning": 6,
+                    "runs_needed": 2.5,
+                    "fair_value": 0.82,
+                    "limit_price": 0.70,
+                },
+            ]
+            with table.open("w", encoding="utf-8") as f:
+                for row in rows:
+                    f.write(json.dumps(row) + "\n")
+
+            out = root / "out"
+            rc = bwfc.main([
+                "--training-table", str(table),
+                "--output-dir", str(out),
+                "--config-label-filter", "A",
+            ])
+            payload = json.loads((out / "walk_forward_certification.json").read_text(encoding="utf-8"))
+            self.assertEqual(rc, 0)
+            self.assertEqual(payload["config_label_filter"], "A")
+            self.assertEqual(payload["overall"]["n_bets"], 1)
+            self.assertEqual(payload["overall"]["n_filled_wins"], 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

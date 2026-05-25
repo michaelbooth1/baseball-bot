@@ -215,6 +215,7 @@ def attach_modeling_observability_fields(
     if extreme_edge_max is not None:
         row.setdefault("extreme_edge_max", extreme_edge_max)
         row.setdefault("gate_policy_version", f"TR19_extreme_edge_max_{extreme_edge_max:.2f}")
+    row.setdefault("config_label", str(getattr(trade_args, "config_label", "default") or "default"))
 
     row.setdefault(
         "outcome_join_key",

@@ -106,6 +106,7 @@ INFERENCE_PANEL_COLUMNS = [
 
 IDENTITY_COLUMNS = [
     "mode",
+    "config_label",
     "bet_id",
     "session_date",
     "session_path",

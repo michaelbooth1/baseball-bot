@@ -113,6 +113,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                    help=f"Output directory (default: {DEFAULT_OUTPUT_ROOT}).")
     p.add_argument("--mode", choices=["live", "paper", "both"], default="live",
                    help="Filter rows by mode (default: live).")
+    p.add_argument("--config-label-filter", type=str, default="",
+                   help="Optional config_label filter for parallel engine comparisons.")
     p.add_argument("--start-date", type=str, default="",
                    help="First test date (YYYY-MM-DD). Default: earliest date with enough train history.")
     p.add_argument("--end-date", type=str, default="",
@@ -724,7 +726,17 @@ def main(argv: Optional[List[str]] = None) -> None:
         min_date=None,  # --start-date is the first test date; keep earlier train/val history.
         max_date=args.end_date or None,
     )
-    LOGGER.info("After mode/end-date filter (%s): %d rows", args.mode, len(rows))
+    if args.config_label_filter:
+        rows = [
+            r for r in rows
+            if str(r.get("config_label") or "default") == str(args.config_label_filter)
+        ]
+    LOGGER.info(
+        "After mode/end-date/config-label filter (%s/%s): %d rows",
+        args.mode,
+        args.config_label_filter or "all",
+        len(rows),
+    )
 
     available_dates = sorted({_row_date(r) for r in rows if _row_date(r)})
     if not available_dates:
@@ -805,6 +817,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         results.append(result)
 
     summary = aggregate(results)
+    summary["config_label_filter"] = args.config_label_filter or None
     write_outputs(args.output_root, summary, results)
     LOGGER.info(
         "Walk-forward complete: %d/%d windows completed, baseline_cumulative_profit=%s, baseline_max_dd=%s",

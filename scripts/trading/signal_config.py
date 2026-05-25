@@ -228,21 +228,57 @@ DEFAULT_MAX_REFRESH_AGE_HOURS = 60.0
 STAGE1_ALT_A_SCOPE_MODES = ("off", "shadow", "enforce")
 DEFAULT_STAGE1_ALT_A_SCOPE_MODE = "shadow"
 # Cohort rules: ordered list, first match wins. Each rule:
-#   dimension: 'inning' (more dims can be added later: edge_bucket,
-#       line, current_state_edge, etc.)
-#   predicate: callable evaluating the candidate's cohort value
-#   action: 'apply' (use Alt-A) | 'hold_poisson' (keep Poisson)
+#   name:      unique tag, lands on candidate row as
+#              stage1_alt_a_scope_rule_matched
+#   predicate: callable(cohort_dict) -> bool. cohort_dict carries
+#              every available cohort dimension; predicates pull
+#              what they need. Schema 2026-05-24: was single-value
+#              (dimension + scalar predicate), now multi-dim dict.
+#              Available keys today: 'inning', 'fallback_level'.
+#              Add more from candidate_payload as new rules need them.
+#   action:    'apply' (use Alt-A empirical FV) |
+#              'hold_poisson' (keep production Poisson FV)
+#   reason:    human-readable citation for audit log
+#
 # Default fallback (no rule matches) is `apply`. Conservative: add
-# explicit `hold_poisson` rules for known-regression cohorts.
+# explicit `hold_poisson` rules for known-regression cohorts; add
+# explicit `apply` rules for high-value cohorts you want to audit
+# separately (the explicit rule tags the row so future per-cohort
+# WR/ROI reports can break it out).
 STAGE1_ALT_A_SCOPE_RULES: Tuple[Dict[str, Any], ...] = (
     {
         "name": "inning_gte_8_regression",
-        "dimension": "inning",
-        "predicate": lambda v: v is not None and int(v) >= 8,
+        "predicate": lambda c: (c.get("inning") or 0) >= 8,
         "action": "hold_poisson",
         "reason": (
             "shadow-override report 2026-05-19: Alt-A regresses by "
             "-23.8pp on inning>=8 cohort (n=7)"
+        ),
+    },
+    # 2026-05-24 (audit followup): explicit apply-rule for the
+    # inning 6-7 + fallback_level >= 2 cohort. Default action is
+    # already `apply` so this does not change behavior, but the
+    # explicit rule tags candidate rows with
+    # stage1_alt_a_scope_rule_matched=`inning_6_7_high_fallback_apply`
+    # so future cohort WR/ROI reports can isolate this population.
+    # Evidence: stage1_cell_loss_attribution shows
+    # `stage1_fallback_level_bucket=level_2plus_fallback` is the top
+    # culprit (+40.2pp bias on n=6, 1.4x aggregate); inning 6 alone
+    # cost -$102 trailing-30d (+44pp bias) with Alt-A reducing by
+    # 4.5pp on 36% coverage. Tagging this cohort sets up a later
+    # behavioral change (block / stake-down) once we have 30+ days
+    # of post-tag evidence.
+    {
+        "name": "inning_6_7_high_fallback_apply",
+        "predicate": lambda c: (
+            (c.get("inning") in (6, 7))
+            and ((c.get("fallback_level") or 0) >= 2)
+        ),
+        "action": "apply",
+        "reason": (
+            "inning 6-7 + Stage-1 fallback level >= 2: highest-value "
+            "Alt-A cohort per shadow-override + cell-loss-attribution "
+            "reports. Explicit rule for audit cohort tracking."
         ),
     },
 )
@@ -717,6 +753,17 @@ def parse_trade_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace]
     p.add_argument("--shadow-no-score-drift-min-emp-edge", type=float,
                    default=DEFAULT_SHADOW_NO_SCORE_DRIFT_MIN_EMP_EDGE,
                    help=f"Minimum empirical/current-state edge for no-score drift shadow rows (default: {DEFAULT_SHADOW_NO_SCORE_DRIFT_MIN_EMP_EDGE}).")
+    p.add_argument(
+        "--config-label",
+        dest="config_label",
+        type=str,
+        default="default",
+        help=(
+            "Free-text label identifying this engine configuration. "
+            "Used by parallel paper runs and written to sessions, bets, "
+            "candidate rows, and downstream analysis tables."
+        ),
+    )
     p.add_argument("--paper-root", type=Path, default=DEFAULT_PAPER_ROOT,
                    help=f"Root directory for paper trading output (default: {DEFAULT_PAPER_ROOT}).")
     # Book capture args (limit order calibration data)

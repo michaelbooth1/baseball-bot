@@ -400,20 +400,24 @@ def _apply_stage1_alt_a_scope(
         return current_best_fv
 
     # Resolve the action from the rule list.
-    cohort_values = {
+    # 2026-05-24 (audit followup): cohort_values now carries every
+    # available dimension as a dict; predicates pull what they need.
+    # Was single-value before (per-rule `dimension` field + scalar
+    # predicate); the new shape supports multi-dim rules like
+    # `inning in (6,7) AND fallback_level >= 2`.
+    cohort_values: Dict[str, Any] = {
         "inning": inning,
-        # Add more dimensions here as the rule list grows.
+        "fallback_level": candidate_payload.get("inferred_state_fallback_level"),
     }
     action = STAGE1_ALT_A_SCOPE_DEFAULT_ACTION
     matched_rule_name = None
     matched_rule_reason = None
     try:
         for rule in STAGE1_ALT_A_SCOPE_RULES:
-            dim = str(rule.get("dimension") or "")
             pred = rule.get("predicate")
-            if dim not in cohort_values or not callable(pred):
+            if not callable(pred):
                 continue
-            if pred(cohort_values[dim]):
+            if pred(cohort_values):
                 action = str(rule.get("action") or action)
                 matched_rule_name = str(rule.get("name") or "")
                 matched_rule_reason = str(rule.get("reason") or "")

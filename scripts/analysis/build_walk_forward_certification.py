@@ -93,6 +93,7 @@ class BetRow:
     target_filled: int
     target_win: Optional[int]
     target_profit: float
+    config_label: str = "default"
     # Fields added 2026-05-17 for the expanded per-gate scorecard so
     # composite + applicability-gated gates (e.g. gate_fv_ask_gap_max
     # applies only inning>=7; gate_min_current_total looks at the
@@ -174,6 +175,7 @@ def _to_bet_row(r: Dict[str, Any]) -> Optional[BetRow]:
         target_filled=int(target_filled),
         target_win=target_win,
         target_profit=float(target_profit),
+        config_label=str(r.get("config_label") or "default"),
         current_total=_safe_int(r.get("current_total")),
         lead_abs=_safe_int(r.get("lead_abs")),
         base_fair_value=_safe_float(r.get("base_fair_value")),
@@ -867,7 +869,11 @@ def _now_iso() -> str:
     )
 
 
-def build_certification_payload(rows: Sequence[BetRow]) -> Dict[str, Any]:
+def build_certification_payload(
+    rows: Sequence[BetRow],
+    *,
+    config_label_filter: Optional[str] = None,
+) -> Dict[str, Any]:
     overall = aggregate_overall(rows)
     n_dates = len({b.session_date for b in rows if b.session_date})
     readiness = readiness_verdict(overall.n_filled, n_dates)
@@ -900,6 +906,7 @@ def build_certification_payload(rows: Sequence[BetRow]) -> Dict[str, Any]:
         "active_priority": "Active #1 (post-TR20+TR21 walk-forward certification)",
         "readiness": readiness,
         "date_span": date_span,
+        "config_label_filter": config_label_filter,
         "overall": overall.to_dict(),
         "cohorts": cohorts,
         "gates": gates,
@@ -1021,6 +1028,8 @@ def render_markdown(payload: Dict[str, Any]) -> str:
     parts: List[str] = []
     parts.append("# Walk-forward certification report (Active #1)\n")
     parts.append(f"_Generated {payload['generated_at_utc']}._\n")
+    if payload.get("config_label_filter"):
+        parts.append(f"**Config label filter:** `{payload['config_label_filter']}`\n")
     parts.append(
         f"**Sample readiness:** {badge} **`{r['label']}`** "
         f"({r['n_filled']} filled bets across {r['n_dates']} session dates; "
@@ -1096,13 +1105,23 @@ def parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--training-table", type=Path, default=DEFAULT_TRAINING_TABLE)
     p.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    p.add_argument("--config-label-filter", type=str, default="",
+                   help="Optional config_label filter for parallel engine certification.")
     return p.parse_args(argv)
 
 
 def main(argv=None) -> int:
     args = parse_args(argv)
     rows = load_bet_rows(Path(args.training_table))
-    payload = build_certification_payload(rows)
+    if args.config_label_filter:
+        rows = [
+            r for r in rows
+            if str(getattr(r, "config_label", "default") or "default") == str(args.config_label_filter)
+        ]
+    payload = build_certification_payload(
+        rows,
+        config_label_filter=args.config_label_filter or None,
+    )
 
     # Active #16 v2 (2026-05-17): stamp lineage on the certification
     # report. When the operator acts on a per-gate verdict (RETUNE,
@@ -1126,6 +1145,7 @@ def main(argv=None) -> int:
                     "cli_args_summary": {
                         "training_table": str(args.training_table),
                         "output_dir": str(args.output_dir),
+                        "config_label_filter": args.config_label_filter or None,
                         "readiness_label": (
                             payload.get("readiness") or {}
                         ).get("label"),

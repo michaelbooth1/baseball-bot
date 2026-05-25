@@ -52,6 +52,22 @@ if TYPE_CHECKING:  # avoid runtime circular import with signal_engine
 LOGGER = logging.getLogger("signal_engine")  # match the engine logger name
 
 
+def _shared_capture_client(engine: "SignalEngine"):
+    return getattr(engine, "_shared_capture_client", None)
+
+
+def _refresh_shared_capture_stats(engine: "SignalEngine") -> None:
+    client = _shared_capture_client(engine)
+    if client is None or not hasattr(client, "stats"):
+        return
+    try:
+        health = getattr(engine, "_market_data_health", None)
+        if isinstance(health, dict):
+            health["shared_capture_stats"] = client.stats()
+    except Exception:
+        return
+
+
 # ---------------------------------------------------------------------------
 # Family B / book capture helpers
 # ---------------------------------------------------------------------------
@@ -69,7 +85,17 @@ def fetch_depth_snapshot(engine: "SignalEngine", token_id: str, depth: int) -> d
       mid                                            -- (best_bid + best_ask) / 2
       total_bid_depth / total_ask_depth              -- sum of size within top depth
     """
-    import requests as _req  # local import to keep startup time clean
+    client = _shared_capture_client(engine)
+    if client is not None and token_id:
+        try:
+            shared = client.fetch_depth_snapshot(token_id=token_id, depth=int(depth))
+            _refresh_shared_capture_stats(engine)
+            if isinstance(shared, dict):
+                shared.setdefault("shared_capture_source", "watcher")
+                return shared
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.debug("Shared depth snapshot unavailable; falling back direct: %s", exc)
+
     out: dict = {
         "ok": False,
         "latency_ms": 0.0,
@@ -207,6 +233,58 @@ def start_book_capture(
             "top_asks": [],
         },
     }
+
+    client = _shared_capture_client(engine)
+    if client is not None and token_id:
+        try:
+            shared_signal_ts = float(getattr(engine, "_shared_market_data_emitted_ts", signal_ts) or signal_ts)
+            shared = client.start_book_capture(
+                token_id=token_id,
+                date_str=engine.date_str,
+                signal_ts=shared_signal_ts,
+                duration=float(duration),
+                interval=float(interval),
+                depth=int(depth),
+                initial_book=initial_book,
+                header=header,
+            )
+            _refresh_shared_capture_stats(engine)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.debug("Shared book capture unavailable; falling back direct: %s", exc)
+            shared = None
+        if isinstance(shared, dict) and shared.get("ok"):
+            try:
+                pointer_header = dict(header)
+                pointer_header.update(
+                    {
+                        "shared_capture_pointer": True,
+                        "shared_capture_id": shared.get("shared_capture_id"),
+                        "shared_capture_path": shared.get("shared_capture_path"),
+                        "shared_capture_cache_hit": bool(shared.get("cache_hit")),
+                    }
+                )
+                pointer_row = {
+                    "type": "shared_capture_pointer",
+                    "bet_id": bet_id,
+                    "shared_capture_id": shared.get("shared_capture_id"),
+                    "shared_capture_path": shared.get("shared_capture_path"),
+                    "cache_hit": bool(shared.get("cache_hit")),
+                    "created_at": _now_iso(),
+                }
+                with open(capture_path, "w", encoding="utf-8") as fh:
+                    fh.write(json.dumps(pointer_header) + "\n")
+                    fh.write(json.dumps(pointer_row) + "\n")
+                LOGGER.debug(
+                    "Shared book capture pointer written: %s -> %s cache_hit=%s",
+                    bet_id,
+                    shared.get("shared_capture_id"),
+                    bool(shared.get("cache_hit")),
+                )
+                return None
+            except Exception as exc:
+                LOGGER.warning("Shared book capture pointer write failed for %s: %s", bet_id, exc)
+                return None
+
     try:
         with open(capture_path, "w", encoding="utf-8") as fh:
             fh.write(json.dumps(header) + "\n")
@@ -296,17 +374,31 @@ def start_tape_capture(
     if not token_id:
         return empty_features
 
-    try:
-        result = capture_tape_and_features(
-            token_id=token_id,
-            signal_ts=signal_ts,
-            current_ask=current_ask,
-        )
-    except Exception as exc:
-        LOGGER.warning("Tape capture failed for %s: %s", bet_id, exc)
-        features = dict(empty_features)
-        features["fetch_error"] = f"exception:{exc}"
-        return features
+    client = _shared_capture_client(engine)
+    result = None
+    if client is not None:
+        try:
+            result = client.capture_tape(
+                token_id=token_id,
+                signal_ts=signal_ts,
+                current_ask=current_ask,
+            )
+            _refresh_shared_capture_stats(engine)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.debug("Shared tape capture unavailable; falling back direct: %s", exc)
+
+    if result is None:
+        try:
+            result = capture_tape_and_features(
+                token_id=token_id,
+                signal_ts=signal_ts,
+                current_ask=current_ask,
+            )
+        except Exception as exc:
+            LOGGER.warning("Tape capture failed for %s: %s", bet_id, exc)
+            features = dict(empty_features)
+            features["fetch_error"] = f"exception:{exc}"
+            return features
 
     features = result.get("features", empty_features)
 
