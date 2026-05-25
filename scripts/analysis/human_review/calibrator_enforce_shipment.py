@@ -1,0 +1,389 @@
+"""The `_calibrator_enforce_shipment_health` block.
+
+Extracted from calibration_health.py on 2026-05-25 — at 370 lines
+it's the single largest function in that module and is the most
+isolated (reads only the per-date candidate JSONL + outcomes JSONL;
+no shared helpers with the rest of calibration_health).
+
+Public surface (also re-exported by calibration_health for back-compat):
+  - _calibrator_enforce_shipment_health
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+from .constants import (
+    CALIBRATOR_ENFORCE_BAND_GATE_THRESHOLD,
+    CALIBRATOR_ENFORCE_BASELINE_MIN_DAYS,
+    CALIBRATOR_ENFORCE_BASELINE_WINDOW_DAYS,
+    CALIBRATOR_ENFORCE_BLOCKED_NEGATIVE_SAVE_ALERT,
+    CALIBRATOR_ENFORCE_BLOCKED_OUTCOMES_DEFAULT_STAKE,
+    CALIBRATOR_ENFORCE_BLOCKED_OUTCOMES_MIN_FOR_ALERT,
+    CALIBRATOR_ENFORCE_BLOCKED_WR_MUTING_WINNERS,
+    CALIBRATOR_ENFORCE_HIGH_BLOCK_RATE_ALERT,
+    CALIBRATOR_ENFORCE_HIGH_LINE_CUTOFF,
+    CALIBRATOR_ENFORCE_MIN_BAND_GATED_CANDIDATES_FOR_ZERO_ALERT,
+    CALIBRATOR_ENFORCE_MIN_EDGE_HIGH_LINE,
+    CALIBRATOR_ENFORCE_MIN_EDGE_LOW_LINE,
+    CALIBRATOR_ENFORCE_VOLUME_DROP_ALERT_PP,
+)
+from .helpers import _load_jsonl
+
+
+def _calibrator_enforce_shipment_health(
+    *,
+    session_date: str,
+    candidate_dir: Path,
+    trailing_reviews: List[Dict[str, Any]],
+    band_gate_threshold: float = CALIBRATOR_ENFORCE_BAND_GATE_THRESHOLD,
+    min_edge_low: float = CALIBRATOR_ENFORCE_MIN_EDGE_LOW_LINE,
+    min_edge_high: float = CALIBRATOR_ENFORCE_MIN_EDGE_HIGH_LINE,
+    high_line_cutoff: float = CALIBRATOR_ENFORCE_HIGH_LINE_CUTOFF,
+) -> Dict[str, Any]:
+    """Surface the shipment effect of band-gated calibrator-enforce
+    (shipped 2026-05-19, takes effect on next engine boot).
+
+    Two read modes:
+
+    1. Pre-enforce / shadow: session was decided under
+       `fair_value_calibration_mode = shadow` so the candidate log
+       carries `fair_value_calibrated` alongside raw FV but the
+       decision used raw. We REPLAY each `trade` decision against the
+       enforce rule (calibrated FV >= ask + min_edge when raw_fv >=
+       band_gate_threshold) and count counterfactual blocks.
+
+    2. Post-enforce: attribute today's `skip:gate_min_edge` rows to
+       calibrator-enforce by checking which would have passed under
+       raw FV.
+
+    Both modes also produce today vs trailing-7d baseline trade
+    volume ratio, calibrator applied-share metrics, and a per-raw-fv
+    bucket breakdown so the operator can see whether the gate is
+    biting at the right tail.
+    """
+    payload: Dict[str, Any] = {
+        "alerts": [],
+        "notes": [],
+        "thresholds": {
+            "band_gate_threshold": band_gate_threshold,
+            "min_edge_low_line": min_edge_low,
+            "min_edge_high_line": min_edge_high,
+            "high_line_cutoff": high_line_cutoff,
+            "high_block_rate_alert": CALIBRATOR_ENFORCE_HIGH_BLOCK_RATE_ALERT,
+            "volume_drop_alert_pp": CALIBRATOR_ENFORCE_VOLUME_DROP_ALERT_PP,
+        },
+        "session_date": session_date,
+    }
+
+    candidate_path = candidate_dir / f"{session_date}_candidates.jsonl"
+    if not candidate_path.exists():
+        payload["status"] = "check_error"
+        payload["error"] = "candidate log not found"
+        payload["candidate_path"] = str(candidate_path)
+        return payload
+    payload["candidate_path"] = str(candidate_path)
+
+    try:
+        rows = _load_jsonl(candidate_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        payload["status"] = "check_error"
+        payload["error"] = repr(exc)
+        return payload
+
+    modes_seen = sorted({
+        str(r.get("fair_value_calibration_mode") or "")
+        for r in rows
+        if r.get("fair_value_calibration_mode") is not None
+    })
+    decision_mode = "/".join(m for m in modes_seen if m) or "unknown"
+    payload["session_mode_at_decision_time"] = decision_mode
+    payload["read_mode"] = (
+        "counterfactual" if decision_mode == "shadow" else "attribution"
+    )
+
+    trade_rows = [r for r in rows if r.get("decision") == "trade"]
+    skip_min_edge_rows = [
+        r for r in rows
+        if (r.get("decision") in ("skip", "skip_with_features"))
+        and r.get("decision_reason") == "gate_min_edge"
+    ]
+
+    rows_with_calibrated = [
+        r for r in rows
+        if r.get("fair_value_calibrated") is not None
+        and r.get("fair_value_raw") is not None
+    ]
+    applied_rows = [
+        r for r in rows_with_calibrated
+        if bool(r.get("fair_value_calibration_applied"))
+    ]
+    in_band_rows = [
+        r for r in rows_with_calibrated
+        if float(r.get("fair_value_raw", 0.0) or 0.0) >= band_gate_threshold
+    ]
+
+    def _abs_delta(row: Dict[str, Any]) -> Optional[float]:
+        raw = row.get("fair_value_raw")
+        cal = row.get("fair_value_calibrated")
+        if raw is None or cal is None:
+            return None
+        try:
+            return abs(float(cal) - float(raw))
+        except (TypeError, ValueError):
+            return None
+
+    in_band_deltas = [
+        d for d in (_abs_delta(r) for r in in_band_rows) if d is not None
+    ]
+    mean_in_band_abs_delta = (
+        sum(in_band_deltas) / len(in_band_deltas)
+        if in_band_deltas else None
+    )
+
+    payload["today"] = {
+        "total_candidates_evaluated": len(rows),
+        "trade_decisions": len(trade_rows),
+        "skip_due_to_gate_min_edge": len(skip_min_edge_rows),
+        "calibrator_metrics": {
+            "rows_with_calibrated_fv": len(rows_with_calibrated),
+            "rows_with_calibration_applied": len(applied_rows),
+            "applied_share": (
+                len(applied_rows) / len(rows_with_calibrated)
+                if rows_with_calibrated else None
+            ),
+            "in_band_gate_range_count": len(in_band_rows),
+            "mean_abs_delta_in_band": mean_in_band_abs_delta,
+        },
+    }
+
+    if decision_mode == "shadow":
+        candidate_pool = trade_rows
+        attribution_label = "would_block"
+    else:
+        candidate_pool = skip_min_edge_rows
+        attribution_label = "attributed_to_enforce"
+
+    blocked = 0
+    blocked_bucket: Dict[str, int] = {">=0.95": 0, "0.90-0.95": 0, "<0.90": 0}
+    preserved_trades_cal_applied = 0
+    blocked_rows: List[Dict[str, Any]] = []
+    for row in candidate_pool:
+        raw_fv = row.get("fair_value_raw")
+        cal_fv = row.get("fair_value_calibrated")
+        ask = row.get("decision_ask")
+        line_raw = row.get("line")
+        if (
+            raw_fv is None or cal_fv is None
+            or ask is None or line_raw is None
+        ):
+            continue
+        try:
+            raw_fv = float(raw_fv)
+            cal_fv = float(cal_fv)
+            ask = float(ask)
+            line = float(line_raw)
+        except (TypeError, ValueError):
+            continue
+        if raw_fv < band_gate_threshold:
+            continue
+        min_edge = (
+            min_edge_high if line >= high_line_cutoff else min_edge_low
+        )
+        post_cal_edge = cal_fv - ask
+        if post_cal_edge < min_edge:
+            blocked += 1
+            if raw_fv >= 0.95:
+                blocked_bucket[">=0.95"] += 1
+            else:
+                blocked_bucket["0.90-0.95"] += 1
+            blocked_rows.append({
+                "game_pk": row.get("game_pk"),
+                "line": line_raw,
+                "side": row.get("side"),
+                "decision_ask": ask,
+                "raw_fv": raw_fv,
+                "cal_fv": cal_fv,
+            })
+        else:
+            if decision_mode == "shadow":
+                preserved_trades_cal_applied += 1
+
+    pool_size = len(candidate_pool)
+    block_rate = (blocked / pool_size) if pool_size else None
+
+    outcomes_path = candidate_dir / f"{session_date}_outcomes.jsonl"
+    outcome_lookup: Dict[Tuple[Any, str, str], bool] = {}
+    outcomes_status = "loaded"
+    if outcomes_path.exists():
+        try:
+            outcome_rows = _load_jsonl(outcomes_path)
+            for o in outcome_rows:
+                key = (
+                    o.get("game_pk"),
+                    str(o.get("line") or ""),
+                    str(o.get("side") or "over").lower(),
+                )
+                ov = o.get("over_hit")
+                if ov is not None:
+                    outcome_lookup[key] = bool(ov)
+                    under_key = (
+                        o.get("game_pk"),
+                        str(o.get("line") or ""),
+                        "under",
+                    )
+                    if under_key not in outcome_lookup:
+                        outcome_lookup[under_key] = (not bool(ov))
+        except (OSError, json.JSONDecodeError):
+            outcomes_status = "unreadable"
+    else:
+        outcomes_status = "missing"
+
+    settled = 0
+    would_win = 0
+    would_lose = 0
+    undecided = 0
+    saved_dollars = 0.0
+    stake = CALIBRATOR_ENFORCE_BLOCKED_OUTCOMES_DEFAULT_STAKE
+    for br in blocked_rows:
+        side = str(br.get("side") or "over").lower()
+        key = (br.get("game_pk"), str(br.get("line") or ""), side)
+        ov = outcome_lookup.get(key)
+        if ov is None:
+            undecided += 1
+            continue
+        won_if_placed = bool(ov)
+        settled += 1
+        if won_if_placed:
+            would_win += 1
+            ask_d = float(br.get("decision_ask") or 0.0)
+            if ask_d > 0:
+                lost_profit = (stake / ask_d) - stake
+                saved_dollars -= lost_profit
+        else:
+            would_lose += 1
+            saved_dollars += stake
+    wr_settled = (would_win / settled) if settled else None
+
+    payload["today"]["enforce_effect"] = {
+        "attribution_label": attribution_label,
+        "candidate_pool_size": pool_size,
+        "blocked_count": blocked,
+        "blocked_rate": block_rate,
+        "blocked_by_raw_fv_bucket": blocked_bucket,
+        "preserved_trades_with_calibrator_applied": (
+            preserved_trades_cal_applied
+        ),
+        "blocked_outcomes": {
+            "outcomes_source_status": outcomes_status,
+            "outcomes_path": str(outcomes_path),
+            "settled_count": settled,
+            "would_have_won": would_win,
+            "would_have_lost": would_lose,
+            "undecided_count": undecided,
+            "win_rate_among_settled": wr_settled,
+            "counterfactual_pnl": {
+                "saved_dollars": round(saved_dollars, 2),
+                "default_stake": stake,
+            },
+        },
+    }
+
+    trade_counts: List[int] = []
+    for r in trailing_reviews:
+        bt = r.get("bet_totals") or {}
+        n = bt.get("count")
+        if isinstance(n, (int, float)) and n > 0:
+            trade_counts.append(int(n))
+    baseline_days = len(trade_counts)
+    mean_daily_trades = (
+        sum(trade_counts) / baseline_days if baseline_days else None
+    )
+    volume_ratio = None
+    if mean_daily_trades and mean_daily_trades > 0:
+        volume_ratio = len(trade_rows) / mean_daily_trades
+    payload["trailing_baseline"] = {
+        "window_days": CALIBRATOR_ENFORCE_BASELINE_WINDOW_DAYS,
+        "baseline_days_used": baseline_days,
+        "mean_daily_trades": mean_daily_trades,
+        "today_trades": len(trade_rows),
+        "today_volume_ratio_vs_baseline": volume_ratio,
+    }
+
+    if pool_size == 0:
+        payload["status"] = "no_candidate_pool"
+    elif blocked == 0 and len(in_band_rows) >= (
+        CALIBRATOR_ENFORCE_MIN_BAND_GATED_CANDIDATES_FOR_ZERO_ALERT
+    ):
+        payload["status"] = "alert"
+        payload["alerts"].append(
+            f"calibrator-enforce blocked 0 bets despite "
+            f"{len(in_band_rows)} candidates in the band-gated range "
+            f"(raw_fv >= {band_gate_threshold:.2f}); calibrator may be "
+            "returning identity, OR every in-band candidate had "
+            "calibrated edge still above min_edge -- cross-check "
+            "calibration_health.artifact_methods_by_family."
+        )
+    elif (
+        block_rate is not None
+        and block_rate >= CALIBRATOR_ENFORCE_HIGH_BLOCK_RATE_ALERT
+        and pool_size >= 5
+    ):
+        payload["status"] = "alert"
+        label = "would_block" if decision_mode == "shadow" else "blocked"
+        payload["alerts"].append(
+            f"calibrator-enforce {label} {blocked}/{pool_size} "
+            f"({block_rate:.0%}) of candidates today (>= "
+            f"{CALIBRATOR_ENFORCE_HIGH_BLOCK_RATE_ALERT:.0%} alert "
+            "threshold); gate may be too aggressive for the current "
+            "regime. Cross-check concept_drift_health -- if PSI is "
+            "major on stage2/team_offense, the calibrator was trained "
+            "on a distribution that's no longer current."
+        )
+    else:
+        payload["status"] = "ok"
+
+    if (
+        volume_ratio is not None
+        and baseline_days >= CALIBRATOR_ENFORCE_BASELINE_MIN_DAYS
+        and (1.0 - volume_ratio) >= CALIBRATOR_ENFORCE_VOLUME_DROP_ALERT_PP
+        and decision_mode != "shadow"
+    ):
+        payload["alerts"].append(
+            f"trade volume dropped "
+            f"{(1.0 - volume_ratio) * 100:.0f}pp: today {len(trade_rows)} "
+            f"vs trailing-{baseline_days}d mean "
+            f"{mean_daily_trades:.1f}/day. If this is the first "
+            "post-enforce day, expect a step-down; check the "
+            "blocked-rate above to confirm the drop is "
+            "calibrator-attributable."
+        )
+
+    if (
+        settled >= CALIBRATOR_ENFORCE_BLOCKED_OUTCOMES_MIN_FOR_ALERT
+        and wr_settled is not None
+        and wr_settled >= CALIBRATOR_ENFORCE_BLOCKED_WR_MUTING_WINNERS
+    ):
+        payload["alerts"].append(
+            f"calibrator-enforce may be muting winners: "
+            f"would-block WR is {would_win}/{settled} ({wr_settled:.0%}) "
+            f">= {CALIBRATOR_ENFORCE_BLOCKED_WR_MUTING_WINNERS:.0%} "
+            "alert threshold. The gate is blocking bets that win at a "
+            "rate close to the post-calibrated break-even, suggesting "
+            "the Platt fit is too aggressive at the current regime "
+            "(consider band-gate raise or per-line refit)."
+        )
+    if (
+        settled >= CALIBRATOR_ENFORCE_BLOCKED_OUTCOMES_MIN_FOR_ALERT
+        and saved_dollars < CALIBRATOR_ENFORCE_BLOCKED_NEGATIVE_SAVE_ALERT
+    ):
+        payload["alerts"].append(
+            f"calibrator-enforce blocking is net-NEGATIVE on outcomes: "
+            f"counterfactual saved=${saved_dollars:+.2f} over "
+            f"{settled} settled blocks (would-win={would_win}, "
+            f"would-lose={would_lose}). The blocked set was profitable "
+            "in expectation; the gate's blocking the wrong tail."
+        )
+
+    return payload
