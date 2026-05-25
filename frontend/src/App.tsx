@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { BetRow, DailyReview, SessionFile } from "./types";
+import type {
+  BetRow,
+  DailyReview,
+  SessionFile,
+  SessionIndexEntry,
+} from "./types";
 import {
   fetchReview,
   fetchReviewIndex,
@@ -13,6 +18,11 @@ import { ProgressMilestones } from "./components/ProgressMilestones";
 import { WeeklyTable } from "./components/WeeklyTable";
 import { BetsTable } from "./components/BetsTable";
 import { HealthStatusGrid } from "./components/HealthStatusGrid";
+import { CompareView } from "./components/CompareView";
+
+/** Top-level view selector. "sessions" = legacy per-day panel;
+ *  "compare" = new multi-engine comparison page (2026-05-25). */
+type TopLevelView = "sessions" | "compare";
 
 /**
  * Top-level page. Pulls from two backing artifacts:
@@ -38,7 +48,18 @@ const TRAILING_DAYS_FOR_HISTORY = 30;
 export default function App() {
   const [reviewDates, setReviewDates] = useState<string[]>([]);
   const [sessions, setSessions] = useState<SessionFile[]>([]);
+  // 2026-05-25: keep the index entries (modeFolder + configLabel)
+  // alongside the parsed session JSONs so the sidebar can render
+  // per-config sub-rows for multi-engine runs.
+  const [sessionIndex, setSessionIndex] = useState<SessionIndexEntry[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  // When set, the per-day view renders THIS specific session instead
+  // of the date-level default (live > paper > rest). Cleared when
+  // the operator clicks a bare date row.
+  const [selectedSession, setSelectedSession] = useState<
+    { date: string; modeFolder: string } | null
+  >(null);
+  const [topView, setTopView] = useState<TopLevelView>("sessions");
   const [review, setReview] = useState<DailyReview | null>(null);
   const [trailingReviews, setTrailingReviews] = useState<DailyReview[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -65,10 +86,11 @@ export default function App() {
     });
   }, [reviewDates]);
 
-  // All sessions (both modes). Feeds the sidebar + WeeklyTable.
+  // All sessions (every discovered modeFolder). Feeds sidebar + WeeklyTable.
   useEffect(() => {
     fetchSessionIndex()
       .then(async ({ sessions: entries }) => {
+        setSessionIndex(entries);
         const results = await Promise.allSettled(
           entries.map((e) => fetchSession(e.modeFolder, e.date)),
         );
@@ -83,28 +105,35 @@ export default function App() {
       });
   }, []);
 
-  // Sidebar entries: union of review dates + session dates, with a
-  // mode + has-review indicator per row.
+  // Sidebar entries: union of review dates + session index entries.
+  // Uses the INDEX (not the loaded session files) so we get full
+  // (modeFolder, mode, configLabel) tuples for per-config sub-row
+  // rendering, even before all session files have finished loading.
   const sidebarEntries = useMemo<SidebarDateEntry[]>(() => {
     const byDate = new Map<string, SidebarDateEntry>();
     for (const d of reviewDates) {
-      byDate.set(d, { date: d, hasReview: true, modes: [] });
+      byDate.set(d, { date: d, hasReview: true, modes: [], sessions: [] });
     }
-    for (const s of sessions) {
-      if (!s.date) continue;
-      const existing = byDate.get(s.date);
-      const mode = s.mode ?? "unknown";
+    for (const e of sessionIndex) {
+      const existing = byDate.get(e.date);
+      const mode = e.mode || "unknown";
+      const sessionEntry = {
+        modeFolder: e.modeFolder,
+        mode,
+        configLabel: e.configLabel,
+      };
       if (existing) {
         if (!existing.modes.includes(mode)) existing.modes.push(mode);
+        existing.sessions.push(sessionEntry);
       } else {
-        byDate.set(s.date, {
-          date: s.date,
+        byDate.set(e.date, {
+          date: e.date,
           hasReview: false,
           modes: [mode],
+          sessions: [sessionEntry],
         });
       }
     }
-    // Sort modes within each entry: live -> paper -> rest.
     for (const e of byDate.values()) {
       e.modes.sort((a, b) => {
         const rank = (m: string) =>
@@ -116,7 +145,7 @@ export default function App() {
     return Array.from(byDate.values()).sort((a, b) =>
       a.date.localeCompare(b.date),
     );
-  }, [reviewDates, sessions]);
+  }, [reviewDates, sessionIndex]);
 
   // Auto-select the newest available date as soon as we know about
   // any (either from reviews or sessions).
@@ -147,7 +176,31 @@ export default function App() {
 
   const onSelect = useCallback((date: string) => {
     setSelectedDate(date);
+    // Clicking the bare date row clears any per-session pin so the
+    // panel reverts to the date-level default (live > paper > rest).
+    setSelectedSession(null);
   }, []);
+
+  const onSelectSession = useCallback(
+    (date: string, modeFolder: string) => {
+      setSelectedDate(date);
+      setSelectedSession({ date, modeFolder });
+    },
+    [],
+  );
+
+  // Fetch the explicit per-config session JSON when one is pinned.
+  // Falls back silently to the date-level default if the fetch fails.
+  const [pinnedSession, setPinnedSession] = useState<SessionFile | null>(null);
+  useEffect(() => {
+    if (!selectedSession) {
+      setPinnedSession(null);
+      return;
+    }
+    fetchSession(selectedSession.modeFolder, selectedSession.date)
+      .then((s) => setPinnedSession(s))
+      .catch(() => setPinnedSession(null));
+  }, [selectedSession]);
 
   const lastN = useMemo(
     () => trailingReviews.slice(0, TRAILING_DAYS_FOR_HISTORY),
@@ -166,37 +219,108 @@ export default function App() {
     [sessions, selectedDate],
   );
   const sessionOnlyReview = useMemo<DailyReview | null>(() => {
+    // When the operator has pinned a specific per-config session,
+    // use that one directly (overrides date-level defaulting).
+    if (pinnedSession) return sessionToReviewShape(pinnedSession);
     if (sessionsForSelectedDate.length === 0) return null;
-    // Prefer live > paper > rest when multiple sessions exist.
+    // Default: prefer live > paper > rest.
     const chosen = [...sessionsForSelectedDate].sort((a, b) => {
       const rank = (m: string | undefined) =>
         m === "live" ? 0 : m === "paper" ? 1 : 2;
       return rank(a.mode) - rank(b.mode);
     })[0];
     return sessionToReviewShape(chosen);
-  }, [sessionsForSelectedDate]);
+  }, [pinnedSession, sessionsForSelectedDate]);
 
-  const reviewToDisplay: DailyReview | null = review ?? sessionOnlyReview;
-  const isSessionOnly = !review && !!sessionOnlyReview;
+  // When a specific session is pinned, ALWAYS show that one's data
+  // (don't fall back to the full daily-review, which is per-DATE
+  // not per-CONFIG and would mix engines).
+  const reviewToDisplay: DailyReview | null = selectedSession
+    ? sessionOnlyReview
+    : (review ?? sessionOnlyReview);
+  const isSessionOnly = !!selectedSession || (!review && !!sessionOnlyReview);
 
   return (
     <div className="app">
       <DateSidebar
         entries={sidebarEntries}
         selectedDate={selectedDate}
+        selectedSession={selectedSession}
         onSelect={onSelect}
+        onSelectSession={onSelectSession}
       />
       <main className="main">
         <header className="app-header">
           <div>
             <strong>MLB Polymarket Bot</strong> — Daily Review
           </div>
+          <nav className="app-tabs" aria-label="Top-level view">
+            <button
+              type="button"
+              className={
+                "app-tab" + (topView === "sessions" ? " app-tab-active" : "")
+              }
+              onClick={() => setTopView("sessions")}
+            >
+              Sessions
+            </button>
+            <button
+              type="button"
+              className={
+                "app-tab" + (topView === "compare" ? " app-tab-active" : "")
+              }
+              onClick={() => setTopView("compare")}
+            >
+              Compare engines
+            </button>
+          </nav>
           <div className="app-subtitle">
             {sidebarEntries.length > 0
               ? `${sidebarEntries.length} date${sidebarEntries.length === 1 ? "" : "s"} (${reviewDates.length} with full review, ${sidebarEntries.length - reviewDates.length} session-only)`
               : "loading…"}
           </div>
         </header>
+        {topView === "compare" ? (
+          <CompareView />
+        ) : (
+          <SessionsViewBody
+            error={error}
+            loading={loading}
+            selectedDate={selectedDate}
+            lastN={lastN}
+            sessions={sessions}
+            reviewToDisplay={reviewToDisplay}
+            isSessionOnly={isSessionOnly}
+          />
+        )}
+      </main>
+    </div>
+  );
+}
+
+/** Inner body of the "Sessions" tab. Extracted so the tab switch
+ *  doesn't bloat the App component. Pure render of existing panels. */
+type SessionsViewBodyProps = {
+  error: string | null;
+  loading: boolean;
+  selectedDate: string | null;
+  lastN: DailyReview[];
+  sessions: SessionFile[];
+  reviewToDisplay: DailyReview | null;
+  isSessionOnly: boolean;
+};
+
+function SessionsViewBody({
+  error,
+  loading,
+  selectedDate,
+  lastN,
+  sessions,
+  reviewToDisplay,
+  isSessionOnly,
+}: SessionsViewBodyProps) {
+  return (
+    <>
         {error && <div className="error-banner">{error}</div>}
         {loading && <div className="loading-banner">Loading {selectedDate}…</div>}
         {!error && lastN.length > 0 && (
@@ -222,8 +346,7 @@ export default function App() {
             {!isSessionOnly && <HealthStatusGrid review={reviewToDisplay} />}
           </>
         )}
-      </main>
-    </div>
+    </>
   );
 }
 

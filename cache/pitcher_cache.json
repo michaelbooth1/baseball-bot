@@ -1,9 +1,9 @@
 {
-  "built_at": "2026-05-24T18:52:32.202999+00:00",
+  "built_at": "2026-05-25T16:14:49.281703+00:00",
   "season": 2026,
   "min_ip_threshold": 5.0,
   "mlb_avg_era": 4.2,
-  "pitcher_count": 75,
+  "pitcher_count": 71,
   "pitchers": {
     "693645": {
       "name": "Cam Schlittler",
@@ -61,15 +61,9 @@
     },
     "800048": {
       "name": "Parker Messick",
-      "era": 2.27,
-      "ip": 63.3,
+      "era": 2.24,
+      "ip": 64.3,
       "gs": 11
-    },
-    "650633": {
-      "name": "Michael King",
-      "era": 2.31,
-      "ip": 58.3,
-      "gs": 10
     },
     "700241": {
       "name": "Michael McGreevy",
@@ -95,10 +89,16 @@
       "ip": 63.3,
       "gs": 10
     },
+    "650633": {
+      "name": "Michael King",
+      "era": 2.76,
+      "ip": 62.0,
+      "gs": 11
+    },
     "656876": {
       "name": "Drew Rasmussen",
-      "era": 2.89,
-      "ip": 53.0,
+      "era": 2.78,
+      "ip": 55.0,
       "gs": 10
     },
     "677952": {
@@ -149,6 +149,18 @@
       "ip": 55.7,
       "gs": 8
     },
+    "808967": {
+      "name": "Yoshinobu Yamamoto",
+      "era": 3.09,
+      "ip": 64.0,
+      "gs": 10
+    },
+    "677960": {
+      "name": "Ryan Weathers",
+      "era": 3.14,
+      "ip": 57.3,
+      "gs": 10
+    },
     "669372": {
       "name": "J.T. Ginn",
       "era": 3.19,
@@ -159,12 +171,6 @@
       "name": "Max Fried",
       "era": 3.21,
       "ip": 61.7,
-      "gs": 10
-    },
-    "677960": {
-      "name": "Ryan Weathers",
-      "era": 3.23,
-      "ip": 55.7,
       "gs": 10
     },
     "592332": {
@@ -197,24 +203,6 @@
       "ip": 54.0,
       "gs": 10
     },
-    "693433": {
-      "name": "Bryan Woo",
-      "era": 3.34,
-      "ip": 62.0,
-      "gs": 11
-    },
-    "808967": {
-      "name": "Yoshinobu Yamamoto",
-      "era": 3.38,
-      "ip": 58.7,
-      "gs": 10
-    },
-    "684007": {
-      "name": "Shota Imanaga",
-      "era": 3.41,
-      "ip": 60.7,
-      "gs": 11
-    },
     "642547": {
       "name": "Freddy Peralta",
       "era": 3.52,
@@ -233,6 +221,12 @@
       "ip": 58.0,
       "gs": 10
     },
+    "656492": {
+      "name": "Foster Griffin",
+      "era": 3.63,
+      "ip": 62.0,
+      "gs": 11
+    },
     "656605": {
       "name": "Mitch Keller",
       "era": 3.64,
@@ -247,8 +241,8 @@
     },
     "607625": {
       "name": "Seth Lugo",
-      "era": 3.65,
-      "ip": 61.7,
+      "era": 3.74,
+      "ip": 65.0,
       "gs": 11
     },
     "676440": {
@@ -263,17 +257,11 @@
       "ip": 55.0,
       "gs": 10
     },
-    "676917": {
-      "name": "Cade Cavalli",
-      "era": 3.86,
-      "ip": 53.7,
+    "693433": {
+      "name": "Bryan Woo",
+      "era": 3.82,
+      "ip": 63.7,
       "gs": 11
-    },
-    "608372": {
-      "name": "Tomoyuki Sugano",
-      "era": 3.86,
-      "ip": 53.7,
-      "gs": 10
     },
     "594798": {
       "name": "Jacob deGrom",
@@ -283,8 +271,8 @@
     },
     "641927": {
       "name": "Bailey Ober",
-      "era": 3.88,
-      "ip": 60.3,
+      "era": 3.92,
+      "ip": 62.0,
       "gs": 11
     },
     "671096": {
@@ -305,11 +293,11 @@
       "ip": 69.7,
       "gs": 11
     },
-    "656492": {
-      "name": "Foster Griffin",
-      "era": 4.02,
-      "ip": 56.0,
-      "gs": 10
+    "684007": {
+      "name": "Shota Imanaga",
+      "era": 4.04,
+      "ip": 64.7,
+      "gs": 11
     },
     "669302": {
       "name": "Logan Gilbert",
@@ -329,12 +317,6 @@
       "ip": 61.3,
       "gs": 11
     },
-    "680694": {
-      "name": "Kyle Bradish",
-      "era": 4.13,
-      "ip": 52.3,
-      "gs": 10
-    },
     "622663": {
       "name": "Luis Severino",
       "era": 4.23,
@@ -347,11 +329,11 @@
       "ip": 61.0,
       "gs": 11
     },
-    "592662": {
-      "name": "Robbie Ray",
-      "era": 4.28,
-      "ip": 54.7,
-      "gs": 10
+    "669022": {
+      "name": "MacKenzie Gore",
+      "era": 4.42,
+      "ip": 55.0,
+      "gs": 11
     },
     "686799": {
       "name": "Jack Kochanowicz",
@@ -359,11 +341,29 @@
       "ip": 57.3,
       "gs": 10
     },
+    "672282": {
+      "name": "Reid Detmers",
+      "era": 4.57,
+      "ip": 63.0,
+      "gs": 11
+    },
+    "592662": {
+      "name": "Robbie Ray",
+      "era": 4.6,
+      "ip": 58.7,
+      "gs": 11
+    },
     "683004": {
       "name": "Jack Leiter",
       "era": 4.61,
       "ip": 54.7,
       "gs": 10
+    },
+    "669194": {
+      "name": "Ryne Nelson",
+      "era": 4.65,
+      "ip": 60.0,
+      "gs": 11
     },
     "669461": {
       "name": "Matthew Liberatore",
@@ -407,12 +407,6 @@
       "ip": 54.0,
       "gs": 10
     },
-    "672282": {
-      "name": "Reid Detmers",
-      "era": 5.07,
-      "ip": 55.0,
-      "gs": 10
-    },
     "676083": {
       "name": "Janson Junk",
       "era": 5.07,
@@ -425,22 +419,10 @@
       "ip": 57.3,
       "gs": 11
     },
-    "669194": {
-      "name": "Ryne Nelson",
-      "era": 5.19,
-      "ip": 52.0,
-      "gs": 10
-    },
     "592791": {
       "name": "Jameson Taillon",
       "era": 5.2,
       "ip": 55.3,
-      "gs": 10
-    },
-    "605288": {
-      "name": "Adrian Houser",
-      "era": 5.3,
-      "ip": 52.7,
       "gs": 10
     },
     "681347": {
@@ -448,12 +430,6 @@
       "era": 5.75,
       "ip": 56.3,
       "gs": 10
-    },
-    "547179": {
-      "name": "Michael Lorenzen",
-      "era": 7.21,
-      "ip": 53.7,
-      "gs": 11
     }
   }
 }

@@ -67,6 +67,30 @@ PRESETS: Dict[str, List[str]] = {
         "--under-emission-mode", "shadow",
         "--quote-engine-mode", "shadow",
     ],
+    # 2026-05-25: D and E added to complete the scope x calibrator 2x2
+    # factorial design and to test the edge-threshold lever. With A, B,
+    # C, D, the 2x2 cleanly decomposes "scope effect with calibrator"
+    # (A vs B) from "scope effect without calibrator" (D vs C). E tests
+    # whether tightening min_edge by 5pp improves per-bet outcomes.
+    "D_scope_only": [
+        # Calibrator OFF (shadow), scope-enforce ON. Completes the 2x2.
+        "--prob-calibration-mode", "shadow",
+        "--stage1-shadow-empirical-mode", "shadow",
+        "--stage1-alt-a-scope-mode", "enforce",
+        "--under-emission-mode", "shadow",
+        "--quote-engine-mode", "shadow",
+    ],
+    "E_tight_edge": [
+        # Same as A_current but with min_edge raised 5pp on both line
+        # tiers. Tests whether the marginal-edge bets are the loser.
+        "--prob-calibration-mode", "enforce",
+        "--stage1-shadow-empirical-mode", "shadow",
+        "--stage1-alt-a-scope-mode", "enforce",
+        "--under-emission-mode", "shadow",
+        "--quote-engine-mode", "shadow",
+        "--edge-threshold", "0.20",
+        "--edge-threshold-high-line", "0.21",
+    ],
 }
 
 PRESET_ALIASES = {
@@ -214,8 +238,9 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=[],
         help=(
             "Config preset or label:preset. Presets: A_current, "
-            "B_cal_only, C_raw. Aliases: enforce_enforce, "
-            "enforce_shadow, shadow_shadow. May be repeated."
+            "B_cal_only, C_raw, D_scope_only, E_tight_edge. Aliases: "
+            "enforce_enforce, enforce_shadow, shadow_shadow. May be "
+            "repeated. Default (no --config): all 5 presets."
         ),
     )
     p.add_argument(
@@ -881,7 +906,11 @@ def _run_shared_mode(
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
-    raw_configs = args.config or ["A_current", "B_cal_only", "C_raw"]
+    # 2026-05-25: default expanded from 3 to 5 configs (added D and E).
+    # See PRESETS docstring for the 2x2 factorial rationale.
+    raw_configs = args.config or [
+        "A_current", "B_cal_only", "C_raw", "D_scope_only", "E_tight_edge",
+    ]
     configs = [_resolve_config(raw, Path(args.paper_root_prefix)) for raw in raw_configs]
 
     labels = [cfg.label for cfg in configs]

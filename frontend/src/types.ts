@@ -34,12 +34,102 @@ export type SessionFile = {
 
 export type SessionIndexEntry = {
   date: string;
-  /** Folder name (`live` or `paper`) where the session file was found. */
+  /** Folder slug. Legacy: `live`, `paper`. Multi-engine (2026-05-25+):
+   *  `paper_<label>` (e.g., `paper_A_current`). */
   modeFolder: string;
   /** The session JSON's own `.mode` field (engine-authoritative).
    *  May differ from `modeFolder` when e.g. a dry_run session lives
    *  under `live_trading/`. */
   mode: string;
+  /** Parallel-engine config label (e.g., `A_current`). Only present
+   *  for sessions that ran under the multi-engine launcher; absent
+   *  for legacy single-engine paper/live sessions. */
+  configLabel?: string;
+};
+
+/** Top-level shape of `parallel_engine_comparison_<start>_<end>.json`
+ *  produced by `scripts/analysis/aggregate_parallel_engines.py`. Only
+ *  the fields the UI reads are typed; the JSON has many more (per-
+ *  config funnel details, fine-state disagreements) that we treat as
+ *  unknown to avoid type-drift churn. */
+export type ParallelComparison = {
+  generated_at_utc?: string;
+  date_range?: { start?: string | null; end?: string | null };
+  configs?: Record<string, ParallelConfigPayload>;
+  shared_candidate_disagreement?: {
+    game_line?: ParallelDisagreementBlock;
+    fine_state?: ParallelDisagreementBlock;
+  };
+  daily_read?: ParallelDailyRead;
+};
+
+export type ParallelConfigPayload = {
+  headline?: ParallelHeadline;
+  funnel?: {
+    n_candidates?: number;
+    by_decision?: Record<string, number>;
+    top_decision_reasons?: Record<string, number>;
+  };
+  completeness?: {
+    complete?: boolean;
+    reasons?: string[];
+  };
+};
+
+export type ParallelHeadline = {
+  n_bets?: number | null;
+  n_settled?: number | null;
+  n_won?: number | null;
+  win_rate?: number | null;
+  total_staked?: number | null;
+  total_profit?: number | null;
+  roi?: number | null;
+  max_drawdown?: number | null;
+  mean_fair_value?: number | null;
+  mean_entry_ask?: number | null;
+  mean_fair_value_settled?: number | null;
+  mean_entry_ask_settled?: number | null;
+  stake_weighted_fair_value?: number | null;
+  stake_weighted_entry_ask?: number | null;
+  stake_weighted_win_rate?: number | null;
+  edge_over_market_actual_minus_ask?: number | null;
+  edge_over_market_settled_actual_minus_ask?: number | null;
+  edge_over_market_stake_weighted_actual_minus_ask?: number | null;
+};
+
+export type ParallelDisagreementBlock = {
+  counts?: {
+    keys_compared?: number;
+    unanimous_skip?: number;
+    unanimous_trade?: number;
+    split?: number;
+    partial_coverage?: number;
+  };
+  splits?: Array<{
+    key: string;
+    decisions?: Record<string, string>;
+    outcome?: {
+      final_away?: number | null;
+      final_home?: number | null;
+      final_total?: number | null;
+      won?: boolean | null;
+    };
+  }>;
+};
+
+export type ParallelDailyRead = {
+  best_roi_config?: string | null;
+  best_roi?: number | null;
+  lowest_drawdown_config?: string | null;
+  lowest_drawdown?: number | null;
+  game_line_splits?: number;
+  fine_state_splits?: number;
+  sample_flags?: string[];
+};
+
+export type ParallelComparisonIndex = {
+  ranges: string[];
+  parallelDir?: string;
 };
 
 export type SessionIndex = {

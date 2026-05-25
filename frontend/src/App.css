@@ -475,3 +475,115 @@ body {
   margin-bottom: 4px;
   line-height: 1.4;
 }
+
+/* 2026-05-25: multi-engine UI (CompareView + per-config sub-rows
+   in the sidebar + top-level tab nav). */
+
+/* Tab nav at the top of <main>. Buttons look like terminal tabs. */
+.app-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 6px 0 0 0;
+}
+.app-tab {
+  background: transparent;
+  border: 1px solid #d0d4dc;
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.app-tab:hover { background: #f4f6f9; color: inherit; }
+.app-tab-active {
+  background: #fff;
+  color: inherit;
+  font-weight: 600;
+  border-color: #a5acb6;
+}
+
+/* Per-config sub-rows inside each DateSidebar date row. */
+.date-session-list {
+  list-style: none;
+  padding: 2px 0 4px 12px;
+  margin: 0;
+}
+.session-button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  background: transparent;
+  border: none;
+  border-left: 2px solid #e0e3e8;
+  padding: 3px 8px;
+  margin: 1px 0;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: left;
+}
+.session-button:hover {
+  background: #f4f6f9;
+  color: inherit;
+  border-left-color: #98a0aa;
+}
+.session-button-selected {
+  background: #eaf3ff;
+  color: inherit;
+  font-weight: 600;
+  border-left-color: #3b82f6;
+}
+.session-label { font-family: ui-monospace, monospace; }
+.session-mode-tag {
+  font-size: 10px;
+  color: #6b7280;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #f0f2f5;
+  margin-left: 6px;
+}
+
+/* CompareView page. */
+.compare-view { padding: 8px 12px; }
+.compare-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.compare-range-picker { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.compare-range-picker select {
+  font-family: ui-monospace, monospace;
+  padding: 2px 6px;
+}
+.compare-section {
+  margin: 18px 0;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #e0e3e8;
+  border-radius: 4px;
+}
+.compare-section h3 { margin: 0 0 10px 0; font-size: 14px; }
+.compare-daily-read { list-style: none; padding-left: 0; margin: 0; font-size: 13px; }
+.compare-daily-read li { margin: 4px 0; }
+.compare-sample-warning { color: #b45309; }
+.compare-table-scroll { overflow-x: auto; }
+.compare-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+.compare-table th, .compare-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid #eef0f3;
+  text-align: right;
+  white-space: nowrap;
+}
+.compare-table th { text-align: left; background: #f8f9fb; }
+.compare-table td:first-child, .compare-table th:first-child { text-align: left; }
+.compare-table code { font-family: ui-monospace, monospace; font-size: 12px; }
+.compare-disagreement-summary { font-size: 13px; margin: 0 0 8px 0; }
+.compare-empty { color: var(--text-muted); font-style: italic; font-size: 13px; }
+.compare-error { color: var(--negative); font-size: 13px; }

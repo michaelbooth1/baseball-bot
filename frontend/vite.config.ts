@@ -10,34 +10,81 @@ import path from "node:path";
  *
  *   GET /api/reviews                       -> { dates: [...] }
  *   GET /api/reviews/<date>                -> daily_human_review JSON
- *   GET /api/sessions                      -> { sessions: [{date, mode, modeFolder}, ...] }
+ *   GET /api/sessions                      -> { sessions: [{date, mode, modeFolder, configLabel?}, ...] }
  *   GET /api/sessions/<modeFolder>/<date>  -> session JSON
+ *   GET /api/parallel-comparisons          -> { ranges: ["2026-05-24_2026-05-24", ...] }
+ *   GET /api/parallel-comparisons/<range>  -> aggregator JSON for that date range
  *
- * The daily-review artifacts are per-date and tied to ONE mode at
- * refresh time. The session JSONs always exist for BOTH paper and
- * live sessions (in their respective folders) so the WeeklyTable
- * reads sessions directly to cover all dates regardless of which
- * mode's daily review was built.
- *
- * Fail-soft: missing dir / missing file returns 404 with a JSON body.
+ * 2026-05-25: extended to auto-discover any `data/paper_*` directory
+ * (e.g., `paper_A_current`, `paper_B_cal_only`) so multi-engine
+ * runs surface in the sidebar alongside the legacy `paper_trading`
+ * and `live_trading` folders. URL slugs map 1:1 to dir names except:
+ *   - `live` -> data/live_trading/sessions/  (legacy alias)
+ *   - `paper` -> data/paper_trading/sessions/ (legacy alias)
+ *   - `paper_<X>` -> data/paper_<X>/sessions/ (X = launcher label)
  */
 function dailyReviewApiPlugin(): Plugin {
   const projectRoot = path.resolve(__dirname, "..");
+  const dataRoot = path.join(projectRoot, "data");
   const reviewsDir = path.join(
-    projectRoot,
-    "data",
+    dataRoot,
     "analysis_output",
     "daily_human_review",
   );
-  // Mode-folder -> sessions-subdir. The frontend addresses sessions
-  // by `modeFolder` (the folder name we found them in), which is the
-  // authoritative source of truth -- the session JSON's `.mode` field
-  // is what gets DISPLAYED but the folder is how we LOCATE the file.
-  const sessionFolders: Record<string, string> = {
-    live: path.join(projectRoot, "data", "live_trading", "sessions"),
-    paper: path.join(projectRoot, "data", "paper_trading", "sessions"),
-  };
+  const parallelDir = path.join(
+    dataRoot,
+    "analysis_output",
+    "parallel_engine_comparison",
+  );
   const sessionFileRe = /^(\d{4}-\d{2}-\d{2})_session\.json$/;
+  // Mirrors launch_parallel_engines.LABEL_RE: first char letter/digit,
+  // then up to 63 more of letter/digit/dot/dash/underscore.
+  const labelCharRe = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+  const comparisonRangeRe = /^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/;
+
+  /** Map a URL slug to its filesystem directory, or null if invalid/unsafe. */
+  function resolveSessionDir(slug: string): string | null {
+    if (slug === "live") {
+      return path.join(dataRoot, "live_trading", "sessions");
+    }
+    if (slug === "paper") {
+      return path.join(dataRoot, "paper_trading", "sessions");
+    }
+    if (slug.startsWith("paper_")) {
+      const label = slug.slice("paper_".length);
+      if (!labelCharRe.test(label)) return null;
+      return path.join(dataRoot, slug, "sessions");
+    }
+    return null;
+  }
+
+  /** List every session-bearing directory we know about, plus the URL slug
+   *  the client should use for it. Auto-discovers `paper_*` subdirs of `data/`
+   *  so multi-engine runs show up without config changes. */
+  async function discoverSessionFolders(): Promise<
+    Array<{ slug: string; dir: string }>
+  > {
+    const folders: Array<{ slug: string; dir: string }> = [];
+    folders.push({ slug: "live", dir: path.join(dataRoot, "live_trading", "sessions") });
+    folders.push({ slug: "paper", dir: path.join(dataRoot, "paper_trading", "sessions") });
+    try {
+      const entries = await fs.readdir(dataRoot, { withFileTypes: true });
+      for (const e of entries) {
+        if (!e.isDirectory()) continue;
+        if (!e.name.startsWith("paper_")) continue;
+        if (e.name === "paper_trading") continue;
+        const label = e.name.slice("paper_".length);
+        if (!labelCharRe.test(label)) continue;
+        folders.push({
+          slug: e.name,
+          dir: path.join(dataRoot, e.name, "sessions"),
+        });
+      }
+    } catch {
+      // data/ unreadable - fall through with legacy folders only
+    }
+    return folders;
+  }
 
   return {
     name: "mlb-bot-daily-review-api",
@@ -97,44 +144,44 @@ function dailyReviewApiPlugin(): Plugin {
           return;
         }
 
-        // GET /api/sessions -> list of (date, modeFolder, mode)
-        // Walks BOTH live_trading + paper_trading session dirs.
-        // Reads each file's `.mode` to surface the engine's
-        // authoritative mode (some live folders contain dry_run
-        // sessions; the folder is just a discovery hint, the
-        // JSON's mode field is the truth).
+        // GET /api/sessions -> list of (date, modeFolder, mode, configLabel?)
         if (req.url === "/api/sessions") {
           const sessions: Array<{
             date: string;
             mode: string;
             modeFolder: string;
+            configLabel?: string;
           }> = [];
           const errors: Array<{ modeFolder: string; detail: string }> = [];
-          for (const [modeFolder, dir] of Object.entries(sessionFolders)) {
+          const folders = await discoverSessionFolders();
+          for (const { slug, dir } of folders) {
             try {
               const entries = await fs.readdir(dir);
               for (const f of entries) {
                 const m = sessionFileRe.exec(f);
                 if (!m) continue;
                 const date = m[1];
-                let mode = modeFolder; // fallback
+                let mode = slug;
+                let configLabel: string | undefined;
                 try {
                   const body = await fs.readFile(path.join(dir, f), "utf8");
-                  const parsed = JSON.parse(body) as { mode?: string };
+                  const parsed = JSON.parse(body) as {
+                    mode?: string;
+                    params?: { config_label?: string };
+                  };
                   if (typeof parsed.mode === "string") mode = parsed.mode;
+                  if (typeof parsed.params?.config_label === "string") {
+                    configLabel = parsed.params.config_label;
+                  }
                 } catch {
-                  // unreadable -- keep modeFolder as mode fallback
+                  // keep slug as mode fallback
                 }
-                sessions.push({ date, mode, modeFolder });
+                sessions.push({ date, mode, modeFolder: slug, configLabel });
               }
             } catch (err) {
-              // dir doesn't exist (e.g. operator has never run live);
-              // skip silently
-              errors.push({ modeFolder, detail: String(err) });
+              errors.push({ modeFolder: slug, detail: String(err) });
             }
           }
-          // Sort by date then modeFolder so the response is
-          // deterministic (helpful for snapshot comparisons).
           sessions.sort((a, b) => {
             if (a.date !== b.date) return a.date.localeCompare(b.date);
             return a.modeFolder.localeCompare(b.modeFolder);
@@ -145,13 +192,14 @@ function dailyReviewApiPlugin(): Plugin {
         }
 
         // GET /api/sessions/<modeFolder>/<date>
+        // modeFolder slug accepts uppercase + digits for paper_<label> dirs.
         const sessionMatch = req.url.match(
-          /^\/api\/sessions\/([a-z_]+)\/(\d{4}-\d{2}-\d{2})$/,
+          /^\/api\/sessions\/([A-Za-z0-9_.-]+)\/(\d{4}-\d{2}-\d{2})$/,
         );
         if (sessionMatch) {
           const modeFolder = sessionMatch[1];
           const date = sessionMatch[2];
-          const dir = sessionFolders[modeFolder];
+          const dir = resolveSessionDir(modeFolder);
           if (!dir) {
             res.statusCode = 400;
             res.setHeader("Content-Type", "application/json");
@@ -159,7 +207,9 @@ function dailyReviewApiPlugin(): Plugin {
               JSON.stringify({
                 error: "unknown-mode-folder",
                 modeFolder,
-                allowed: Object.keys(sessionFolders),
+                hint:
+                  "Allowed slugs: 'live', 'paper', or 'paper_<label>' " +
+                  "where label matches the launcher LABEL_RE.",
               }),
             );
             return;
@@ -167,11 +217,6 @@ function dailyReviewApiPlugin(): Plugin {
           const filePath = path.join(dir, `${date}_session.json`);
           try {
             const body = await fs.readFile(filePath, "utf8");
-            // Apply the same mode-fallback the index endpoint does
-            // so consumers can rely on a non-null `.mode` field.
-            // Older session JSONs were written without `mode` set
-            // (e.g. 2026-05-18); we fall back to the folder name
-            // since that's the authoritative source of truth.
             let augmentedBody = body;
             try {
               const parsed = JSON.parse(body) as {
@@ -183,8 +228,7 @@ function dailyReviewApiPlugin(): Plugin {
                 augmentedBody = JSON.stringify(parsed);
               }
             } catch {
-              // Fall through with the raw body if the JSON is
-              // unparseable (the client's .json() will surface).
+              // raw body
             }
             res.setHeader("Content-Type", "application/json");
             res.end(augmentedBody);
@@ -196,6 +240,74 @@ function dailyReviewApiPlugin(): Plugin {
                 error: "session-not-found",
                 modeFolder,
                 date,
+                filePath,
+                detail: String(err),
+              }),
+            );
+          }
+          return;
+        }
+
+        // GET /api/parallel-comparisons -> available date ranges
+        if (req.url === "/api/parallel-comparisons") {
+          try {
+            const entries = await fs.readdir(parallelDir);
+            const ranges = entries
+              .filter(
+                (f) =>
+                  f.startsWith("parallel_engine_comparison_") &&
+                  f.endsWith(".json"),
+              )
+              .map((f) =>
+                f
+                  .replace("parallel_engine_comparison_", "")
+                  .replace(".json", ""),
+              )
+              .filter((r) => comparisonRangeRe.test(r))
+              .sort();
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ ranges, parallelDir }));
+          } catch (err) {
+            res.statusCode = 404;
+            res.setHeader("Content-Type", "application/json");
+            res.end(
+              JSON.stringify({
+                error: "parallel-comparisons-dir-unreadable",
+                parallelDir,
+                detail: String(err),
+              }),
+            );
+          }
+          return;
+        }
+
+        // GET /api/parallel-comparisons/<start>_<end>
+        const compMatch = req.url.match(
+          /^\/api\/parallel-comparisons\/(\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2})$/,
+        );
+        if (compMatch) {
+          const range = compMatch[1];
+          if (!comparisonRangeRe.test(range)) {
+            res.statusCode = 400;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "invalid-range-format", range }));
+            return;
+          }
+          const filePath = path.join(
+            parallelDir,
+            `parallel_engine_comparison_${range}.json`,
+          );
+          try {
+            const body = await fs.readFile(filePath, "utf8");
+            res.setHeader("Content-Type", "application/json");
+            res.end(body);
+          } catch (err) {
+            res.statusCode = 404;
+            res.setHeader("Content-Type", "application/json");
+            res.end(
+              JSON.stringify({
+                error: "parallel-comparison-not-found",
+                range,
                 filePath,
                 detail: String(err),
               }),

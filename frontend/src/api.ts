@@ -1,5 +1,7 @@
 import type {
   DailyReview,
+  ParallelComparison,
+  ParallelComparisonIndex,
   ReviewIndex,
   SessionFile,
   SessionIndex,
@@ -54,6 +56,32 @@ export async function fetchSession(
     );
   }
   return (await r.json()) as SessionFile;
+}
+
+/** Fetch the list of available parallel-engine comparison ranges
+ *  (2026-05-25+). Each entry is a `<start>_<end>` date-range slug
+ *  matching a file produced by `aggregate_parallel_engines.py`. */
+export async function fetchParallelComparisonIndex(): Promise<ParallelComparisonIndex> {
+  const r = await fetch("/api/parallel-comparisons");
+  if (!r.ok) {
+    throw new Error(
+      `fetchParallelComparisonIndex failed: ${r.status} ${r.statusText}`,
+    );
+  }
+  return (await r.json()) as ParallelComparisonIndex;
+}
+
+/** Fetch a single parallel-engine comparison report by date range. */
+export async function fetchParallelComparison(
+  range: string,
+): Promise<ParallelComparison> {
+  const r = await fetch(`/api/parallel-comparisons/${range}`);
+  if (!r.ok) {
+    throw new Error(
+      `fetchParallelComparison(${range}) failed: ${r.status} ${r.statusText}`,
+    );
+  }
+  return (await r.json()) as ParallelComparison;
 }
 
 /** Pretty-print a number as USD with sign. */

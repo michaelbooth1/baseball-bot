@@ -84,6 +84,33 @@ class ParallelEnginesMvpTests(unittest.TestCase):
         bet = BetRecord(**_base_bet(config_label="B_cal_only"))
         self.assertEqual(asdict(bet)["config_label"], "B_cal_only")
 
+    def test_five_preset_2x2_factorial_plus_tight_edge(self):
+        # 2026-05-25 expansion: D_scope_only completes the scope x
+        # calibrator 2x2 (A: cal+scope, B: cal only, C: neither,
+        # D: scope only). E_tight_edge tests the edge-threshold lever
+        # at +5pp tighter than A_current.
+        d_flags = lpe.PRESETS["D_scope_only"]
+        self.assertIn("--prob-calibration-mode", d_flags)
+        self.assertIn("--stage1-alt-a-scope-mode", d_flags)
+        # cal=shadow, scope=enforce
+        cal_idx = d_flags.index("--prob-calibration-mode")
+        scope_idx = d_flags.index("--stage1-alt-a-scope-mode")
+        self.assertEqual(d_flags[cal_idx + 1], "shadow")
+        self.assertEqual(d_flags[scope_idx + 1], "enforce")
+
+        e_flags = lpe.PRESETS["E_tight_edge"]
+        self.assertIn("--edge-threshold", e_flags)
+        et_idx = e_flags.index("--edge-threshold")
+        self.assertEqual(e_flags[et_idx + 1], "0.20")
+        eth_idx = e_flags.index("--edge-threshold-high-line")
+        self.assertEqual(e_flags[eth_idx + 1], "0.21")
+        # E should still enforce both cal and scope (it's A_current
+        # plus a tighter edge gate); test that.
+        e_cal_idx = e_flags.index("--prob-calibration-mode")
+        e_scope_idx = e_flags.index("--stage1-alt-a-scope-mode")
+        self.assertEqual(e_flags[e_cal_idx + 1], "enforce")
+        self.assertEqual(e_flags[e_scope_idx + 1], "enforce")
+
     def test_launcher_builds_isolated_commands_from_presets(self):
         with tempfile.TemporaryDirectory() as td:
             args = lpe.parse_args(
