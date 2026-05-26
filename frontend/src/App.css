@@ -587,3 +587,85 @@ body {
 .compare-disagreement-summary { font-size: 13px; margin: 0 0 8px 0; }
 .compare-empty { color: var(--text-muted); font-style: italic; font-size: 13px; }
 .compare-error { color: var(--negative); font-size: 13px; }
+
+/* MultiEngineDayView (2026-05-26) -- all engines for one date on one page. */
+.multi-engine-day { display: flex; flex-direction: column; gap: 12px; }
+.mode-badge-multi {
+  background: #7c3aed;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.multi-engine-headline {
+  display: flex;
+  gap: 24px;
+  padding: 8px 12px;
+  margin: 10px 0;
+  background: #faf5ff;
+  border: 1px solid #e9d5ff;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.multi-engine-headline-item { display: flex; flex-direction: column; gap: 2px; }
+.multi-engine-headline-label {
+  font-size: 11px;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.multi-engine-headline-value { font-weight: 500; }
+.multi-engine-headline-value code {
+  font-family: ui-monospace, monospace;
+  background: #f3f0ff;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.multi-engine-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+.multi-engine-table th,
+.multi-engine-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid #eef0f3;
+  white-space: nowrap;
+}
+.multi-engine-table th {
+  text-align: left;
+  background: #f8f9fb;
+  font-weight: 500;
+}
+.multi-engine-table td.num,
+.multi-engine-table th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.multi-engine-table code {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.multi-engine-anchor {
+  color: #4338ca;
+  text-decoration: none;
+}
+.multi-engine-anchor:hover {
+  text-decoration: underline;
+}
+.multi-engine-detail {
+  scroll-margin-top: 12px;
+}
+.multi-engine-detail-title {
+  display: inline-flex;
+  align-items: center;
+}
+.multi-engine-detail-title code {
+  font-family: ui-monospace, monospace;
+  background: #f3f0ff;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 18px;
+}

@@ -30,6 +30,12 @@ export type SessionFile = {
     settled?: number | null;
     [key: string]: unknown;
   };
+  /** Frontend-only stamp added at load time by App.tsx so consumers
+   *  (e.g., MultiEngineDayView) can map a loaded SessionFile back to
+   *  its (modeFolder, configLabel) without an extra lookup. The
+   *  underlying JSON on disk does NOT carry these fields. */
+  _modeFolder?: string;
+  _configLabel?: string;
 };
 
 export type SessionIndexEntry = {

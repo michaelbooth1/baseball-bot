@@ -19,6 +19,7 @@ import { WeeklyTable } from "./components/WeeklyTable";
 import { BetsTable } from "./components/BetsTable";
 import { HealthStatusGrid } from "./components/HealthStatusGrid";
 import { CompareView } from "./components/CompareView";
+import { MultiEngineDayView } from "./components/MultiEngineDayView";
 
 /** Top-level view selector. "sessions" = legacy per-day panel;
  *  "compare" = new multi-engine comparison page (2026-05-25). */
@@ -95,8 +96,21 @@ export default function App() {
           entries.map((e) => fetchSession(e.modeFolder, e.date)),
         );
         const ok: SessionFile[] = [];
-        for (const r of results) {
-          if (r.status === "fulfilled") ok.push(r.value);
+        for (let i = 0; i < results.length; i++) {
+          const r = results[i];
+          if (r.status === "fulfilled") {
+            // 2026-05-26: stamp the (modeFolder, configLabel) on the
+            // loaded SessionFile so MultiEngineDayView can map a
+            // session back to its config without an extra lookup. The
+            // underlying JSON on disk does NOT carry these fields --
+            // they live on the index entry.
+            const enriched: SessionFile = {
+              ...r.value,
+              _modeFolder: entries[i].modeFolder,
+              _configLabel: entries[i].configLabel,
+            };
+            ok.push(enriched);
+          }
         }
         setSessions(ok);
       })
@@ -240,6 +254,24 @@ export default function App() {
     : (review ?? sessionOnlyReview);
   const isSessionOnly = !!selectedSession || (!review && !!sessionOnlyReview);
 
+  // 2026-05-26: when the selected date is a multi-engine date AND no
+  // specific config is pinned in the sidebar, render the all-engines
+  // overview instead of a single engine's panel. The operator can
+  // still click a sidebar sub-row to pin one config and drop back to
+  // the single-engine detail. Multi-engine = ≥2 loaded sessions
+  // that carry a configLabel from the index (a single live + paper
+  // pair counts as legacy, not multi-engine).
+  const multiEngineSessions = useMemo<SessionFile[]>(() => {
+    if (!selectedDate) return [];
+    const dateSessions = sessions.filter(
+      (s) => s.date === selectedDate && !!s._configLabel,
+    );
+    return dateSessions.length >= 2 ? dateSessions : [];
+  }, [selectedDate, sessions]);
+
+  const showMultiEngineDayView =
+    !selectedSession && multiEngineSessions.length >= 2;
+
   return (
     <div className="app">
       <DateSidebar
@@ -282,6 +314,15 @@ export default function App() {
         </header>
         {topView === "compare" ? (
           <CompareView />
+        ) : showMultiEngineDayView ? (
+          <MultiEngineDayViewBody
+            error={error}
+            loading={loading}
+            selectedDate={selectedDate!}
+            sessions={multiEngineSessions}
+            lastN={lastN}
+            allSessions={sessions}
+          />
         ) : (
           <SessionsViewBody
             error={error}
@@ -346,6 +387,62 @@ function SessionsViewBody({
             {!isSessionOnly && <HealthStatusGrid review={reviewToDisplay} />}
           </>
         )}
+    </>
+  );
+}
+
+/** Inner body of the "Sessions" tab when the selected date is a
+ *  multi-engine date. Keeps the ProgressMilestones + WeeklyTable on
+ *  top (so the operator still sees the trailing-30d context) and then
+ *  renders the all-engines comparison + per-engine details below.
+ *  2026-05-26: added so multi-engine dates show all models at once
+ *  instead of forcing the operator to click each per-config sub-row. */
+type MultiEngineDayViewBodyProps = {
+  error: string | null;
+  loading: boolean;
+  selectedDate: string;
+  sessions: SessionFile[];
+  lastN: DailyReview[];
+  allSessions: SessionFile[];
+};
+
+function MultiEngineDayViewBody({
+  error,
+  loading,
+  selectedDate,
+  sessions,
+  lastN,
+  allSessions,
+}: MultiEngineDayViewBodyProps) {
+  // Build (modeFolder -> configLabel) and (session -> modeFolder)
+  // lookups for MultiEngineDayView. The stamps were applied at load
+  // time in App's useEffect so this is just a projection.
+  const configLabelByModeFolder = useMemo(() => {
+    const out: Record<string, string | undefined> = {};
+    for (const s of sessions) {
+      if (s._modeFolder) out[s._modeFolder] = s._configLabel;
+    }
+    return out;
+  }, [sessions]);
+  const modeFolderBySession = useMemo(() => {
+    const out = new Map<SessionFile, string>();
+    for (const s of sessions) {
+      if (s._modeFolder) out.set(s, s._modeFolder);
+    }
+    return out;
+  }, [sessions]);
+  return (
+    <>
+      {error && <div className="error-banner">{error}</div>}
+      {loading && <div className="loading-banner">Loading {selectedDate}…</div>}
+      {!error && lastN.length > 0 && <ProgressMilestones reviews={lastN} />}
+      {!error && allSessions.length > 0 && <WeeklyTable sessions={allSessions} />}
+      <MultiEngineDayView
+        date={selectedDate}
+        sessions={sessions}
+        configLabelByModeFolder={configLabelByModeFolder}
+        modeFolderBySession={modeFolderBySession}
+      />
     </>
   );
 }

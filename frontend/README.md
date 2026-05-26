@@ -26,6 +26,34 @@ For each day's session:
 The progress milestones panel aggregates the trailing 14 dates
 (configurable in `App.tsx`); everything else is per-selected-day.
 
+### Multi-engine days (2026-05-26)
+
+When the selected date has ≥2 sessions with `config_label` set
+(multi-engine parallel runs, default since the 2026-05-25 5-engine
+debut and 2026-05-26 10-engine expansion), the per-day panel auto-
+switches to the **MultiEngineDayView**:
+
+1. Top: per-engine comparison table — one row per config with
+   bets / settled / W-L / WR / staked / P&L / ROI / mean ask / mean FV,
+   plus "Best ROI" + "Best P&L" headline chips. Each row links to
+   the engine's detail card below via anchor-scroll.
+2. Below: a per-engine detail card for every config (summary
+   metrics + full bets table), stacked top-to-bottom in config-label
+   order.
+
+The operator still has the per-config sidebar sub-rows: clicking
+one pins the panel to that single engine and falls back to the
+classic single-engine SessionsViewBody (so the full health-blocks
+grid + notes panel can be reviewed for any one config). Single-
+engine dates (legacy live OR single paper session) keep the
+existing single-engine flow unchanged.
+
+The **Compare engines** top-tab is unchanged — it still shows the
+aggregated `parallel_engine_comparison.{json,md}` report across
+date ranges. The per-day multi-engine view is the
+operationally-fastest path to "what did each config decide today";
+the Compare tab is the path to "how do configs stack up over weeks."
+
 ## How to run
 
 Prereqs: Node 18+ and npm (or pnpm / yarn).

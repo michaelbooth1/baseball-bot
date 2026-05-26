@@ -111,6 +111,83 @@ class ParallelEnginesMvpTests(unittest.TestCase):
         self.assertEqual(e_flags[e_cal_idx + 1], "enforce")
         self.assertEqual(e_flags[e_scope_idx + 1], "enforce")
 
+    def test_ten_preset_default_includes_f_through_j(self):
+        """2026-05-26: default config list expanded to 10 (A-J)."""
+        self.assertEqual(
+            set(lpe.PRESETS.keys()),
+            {
+                "A_current", "B_cal_only", "C_raw", "D_scope_only", "E_tight_edge",
+                "F_no_dedup", "G_loose_edge", "H_late_innings",
+                "I_extreme_018", "J_no_phantom_filter",
+            },
+        )
+
+    def test_f_no_dedup_strips_every_dedup_knob(self):
+        """F_no_dedup: zero per-event cooldown, zero inning gap,
+        correlated-line cap effectively off. Edge/ask floors remain."""
+        flags = lpe.PRESETS["F_no_dedup"]
+        # Dedup knobs all zero/off.
+        self.assertEqual(flags[flags.index("--event-dedup-secs") + 1], "0")
+        self.assertEqual(flags[flags.index("--inning-dedup-gap") + 1], "0")
+        self.assertEqual(
+            flags[flags.index("--max-correlated-over-lines-per-game") + 1],
+            "999",
+        )
+        self.assertEqual(
+            flags[flags.index("--min-correlated-line-gap") + 1], "0.0"
+        )
+        # Calibrator + scope still enforce (operator wants only dedup loosened).
+        self.assertEqual(flags[flags.index("--prob-calibration-mode") + 1], "enforce")
+        self.assertEqual(flags[flags.index("--stage1-alt-a-scope-mode") + 1], "enforce")
+        # No edge override -> default floor stays in play.
+        self.assertNotIn("--edge-threshold", flags)
+
+    def test_g_loose_edge_lowers_both_edge_floors_5pp(self):
+        flags = lpe.PRESETS["G_loose_edge"]
+        self.assertEqual(flags[flags.index("--edge-threshold") + 1], "0.10")
+        self.assertEqual(
+            flags[flags.index("--edge-threshold-high-line") + 1], "0.11"
+        )
+
+    def test_h_late_innings_sets_min_inning_6_on_both_tiers(self):
+        flags = lpe.PRESETS["H_late_innings"]
+        self.assertEqual(flags[flags.index("--min-inning") + 1], "6")
+        self.assertEqual(flags[flags.index("--min-inning-high-line") + 1], "6")
+
+    def test_i_and_j_form_extreme_edge_sweep(self):
+        """I (0.18 tightened) and J (1.0 = off) pair with A's 0.22 to
+        form a clean 3-point sweep of the TR19 extreme-edge knob.
+        Phase 6 prep for the 2026-06-07 recalibration deadline."""
+        i_flags = lpe.PRESETS["I_extreme_018"]
+        j_flags = lpe.PRESETS["J_no_phantom_filter"]
+        self.assertEqual(
+            i_flags[i_flags.index("--extreme-edge-max") + 1], "0.18"
+        )
+        self.assertEqual(
+            j_flags[j_flags.index("--extreme-edge-max") + 1], "1.0"
+        )
+        # Both inherit A's enforce/enforce baseline so the only varying
+        # dimension is the extreme_edge_max knob.
+        for flags in (i_flags, j_flags):
+            self.assertEqual(flags[flags.index("--prob-calibration-mode") + 1], "enforce")
+            self.assertEqual(flags[flags.index("--stage1-alt-a-scope-mode") + 1], "enforce")
+
+    def test_no_f_through_j_uses_live_only_flag(self):
+        """F-J must only use paper-safe flags (none in LIVE_ONLY_ENGINE_FLAGS).
+        Catches regressions where someone adds a Kelly / daily-budget /
+        stake-mode flag to a preset thinking paper supports it."""
+        for label in ("F_no_dedup", "G_loose_edge", "H_late_innings",
+                      "I_extreme_018", "J_no_phantom_filter"):
+            flags = lpe.PRESETS[label]
+            for f in flags:
+                if not f.startswith("--"):
+                    continue
+                self.assertNotIn(
+                    f, lpe.LIVE_ONLY_ENGINE_FLAGS,
+                    f"Preset {label} contains LIVE_ONLY flag {f}; "
+                    "paper_trader.py will reject the run.",
+                )
+
     def test_launcher_builds_isolated_commands_from_presets(self):
         with tempfile.TemporaryDirectory() as td:
             args = lpe.parse_args(
@@ -372,6 +449,64 @@ class ParallelEnginesMvpTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as ctx:
             lpe.parse_args(["--config", "A_current", "--daily-budget", "80"])
         self.assertIn("live-execution-only", str(ctx.exception))
+
+    def test_post_session_aggregate_flag_defaults_on(self):
+        """Default is on so post-session reports never go stale."""
+        args = lpe.parse_args(["--config", "A_current"])
+        self.assertTrue(args.post_session_aggregate)
+
+    def test_post_session_aggregate_flag_opts_out(self):
+        """Explicit --no-post-session-aggregate flips the flag for debug runs."""
+        args = lpe.parse_args(
+            ["--config", "A_current", "--no-post-session-aggregate"]
+        )
+        self.assertFalse(args.post_session_aggregate)
+
+    def test_post_session_aggregator_skips_when_disabled(self):
+        """Helper is a no-op when post_session_aggregate=False (or dry_launch)."""
+        import argparse as _argparse
+
+        # The real helper writes to stdout; capture and assert it returned
+        # without spawning the aggregator subprocess.
+        from io import StringIO
+        import contextlib
+
+        # Disabled: no run, no print.
+        args = _argparse.Namespace(
+            post_session_aggregate=False,
+            dry_launch=False,
+            post_session_aggregate_script=Path("nonexistent.py"),
+        )
+        buf = StringIO()
+        with contextlib.redirect_stdout(buf):
+            lpe._run_post_session_aggregator(args, [], "2026-05-25")
+        self.assertEqual(buf.getvalue(), "")
+
+        # Dry-launch: same -- no run, no print.
+        args.post_session_aggregate = True
+        args.dry_launch = True
+        buf = StringIO()
+        with contextlib.redirect_stdout(buf):
+            lpe._run_post_session_aggregator(args, [], "2026-05-25")
+        self.assertEqual(buf.getvalue(), "")
+
+    def test_post_session_aggregator_handles_missing_script(self):
+        """Fail-open when the aggregator script path doesn't exist."""
+        import argparse as _argparse
+        from io import StringIO
+        import contextlib
+
+        args = _argparse.Namespace(
+            post_session_aggregate=True,
+            dry_launch=False,
+            post_session_aggregate_script=Path("definitely_does_not_exist.py"),
+        )
+        buf = StringIO()
+        with contextlib.redirect_stdout(buf):
+            lpe._run_post_session_aggregator(args, [], "2026-05-25")
+        output = buf.getvalue()
+        self.assertIn("script not found", output)
+        # Crucially: did NOT raise. Launcher exit code stays unchanged.
 
     def test_shared_market_data_round_trip_and_gap_stats(self):
         game = ScheduledGame(

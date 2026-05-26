@@ -91,6 +91,87 @@ PRESETS: Dict[str, List[str]] = {
         "--edge-threshold", "0.20",
         "--edge-threshold-high-line", "0.21",
     ],
+    # 2026-05-26: F-J added to expand the per-question coverage of the
+    # parallel-engine fleet. Each maps to one open Active or Hygiene
+    # roadmap item so the daily aggregate becomes the decision evidence.
+    # Multi-engine has been the data-acceleration pivot since the 5-engine
+    # debut on 2026-05-25; doubling to 10 ~doubles per-day candidates
+    # without adding API or polling cost (shared market watcher).
+    "F_no_dedup": [
+        # Operator-proposed permissive config (2026-05-26): strip every
+        # bet-suppression knob that's safe to strip in paper mode -- no
+        # per-game cooldown, no inning gap, no correlated-line cap. Edge
+        # and ask floors REMAIN; this isn't "anything goes," it's
+        # "anything that passes the FV gates." Question: do dedup rules
+        # leave money on the table by suppressing re-fires we'd want?
+        "--prob-calibration-mode", "enforce",
+        "--stage1-shadow-empirical-mode", "shadow",
+        "--stage1-alt-a-scope-mode", "enforce",
+        "--under-emission-mode", "shadow",
+        "--quote-engine-mode", "shadow",
+        "--event-dedup-secs", "0",
+        "--inning-dedup-gap", "0",
+        "--max-correlated-over-lines-per-game", "999",
+        "--min-correlated-line-gap", "0.0",
+    ],
+    "G_loose_edge": [
+        # A_current minus 5pp on both edge floors (0.10 / 0.11). E_tight
+        # tests "are we under-filtering" by going +5pp; G tests the
+        # mirror: "are we over-filtering by 5pp?". The 2026-05-25 audit's
+        # edge-band cohort showed 0.10-0.15 was -28% ROI on n=14 but the
+        # 0.15-0.22 band was +20.7% on n=92 -- need more 0.10-0.15 data
+        # to know if that's variance or signal.
+        "--prob-calibration-mode", "enforce",
+        "--stage1-shadow-empirical-mode", "shadow",
+        "--stage1-alt-a-scope-mode", "enforce",
+        "--under-emission-mode", "shadow",
+        "--quote-engine-mode", "shadow",
+        "--edge-threshold", "0.10",
+        "--edge-threshold-high-line", "0.11",
+    ],
+    "H_late_innings": [
+        # A_current but ban early-inning bets entirely. The 2026-05-25
+        # walk-forward cohort breakdown showed inn_4-5 = -22.1% ROI vs
+        # inn_6-7 = +53.2% and inn_8-9 = +133.7%. If H_late confirms,
+        # this is roadmap'd as a candidate gate-tightening for Active
+        # #1's READY-day shipping decisions.
+        "--prob-calibration-mode", "enforce",
+        "--stage1-shadow-empirical-mode", "shadow",
+        "--stage1-alt-a-scope-mode", "enforce",
+        "--under-emission-mode", "shadow",
+        "--quote-engine-mode", "shadow",
+        "--min-inning", "6",
+        "--min-inning-high-line", "6",
+    ],
+    "I_extreme_018": [
+        # A_current but with extreme_edge_max tightened from 0.22 to
+        # 0.18. Phase 6 prep for the 2026-06-07 TR19 re-calibration
+        # deadline; TR19's 0.22 cap was tuned around v1 Stage-3's edge
+        # distribution and the post-TR20 (v2) distribution likely needs
+        # a fresh threshold. Pairs with J_no_phantom_filter (cap at 1.0)
+        # to give a clean {off, current, tightened} sweep on one knob.
+        "--prob-calibration-mode", "enforce",
+        "--stage1-shadow-empirical-mode", "shadow",
+        "--stage1-alt-a-scope-mode", "enforce",
+        "--under-emission-mode", "shadow",
+        "--quote-engine-mode", "shadow",
+        "--extreme-edge-max", "0.18",
+    ],
+    "J_no_phantom_filter": [
+        # A_current but extreme_edge_max effectively disabled (1.0). The
+        # other side of the I_extreme_018 / TR19-tightening sweep. The
+        # 2026-04-28 -> 2026-05-03 window analysis that motivated TR19
+        # showed edge>0.20 cohort was 4W/8L at -$79.57 on 12 bets, but
+        # that was pre-TR20. Need fresh evidence to confirm extreme-edge
+        # is STILL the loser cohort under v2 Stage-3. If J flips
+        # profitable in 30 days, TR19 itself is up for re-evaluation.
+        "--prob-calibration-mode", "enforce",
+        "--stage1-shadow-empirical-mode", "shadow",
+        "--stage1-alt-a-scope-mode", "enforce",
+        "--under-emission-mode", "shadow",
+        "--quote-engine-mode", "shadow",
+        "--extreme-edge-max", "1.0",
+    ],
 }
 
 PRESET_ALIASES = {
@@ -354,6 +435,35 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
             "Seconds after launch to treat a non-zero child exit as an "
             "early startup failure and print that engine's log tail."
         ),
+    )
+    # Post-session aggregator hook (2026-05-26): when the launcher exits
+    # after all engines stop, run aggregate_parallel_engines.py for the
+    # active date so the canonical
+    # data/analysis_output/parallel_engine_comparison/ report reflects
+    # what just happened. Fail-open: aggregator errors do not change the
+    # launcher's exit code. Disable for debugging / dry runs with
+    # --no-post-session-aggregate.
+    p.add_argument(
+        "--post-session-aggregate",
+        dest="post_session_aggregate",
+        action="store_true",
+        default=True,
+        help=(
+            "After all engines exit, run aggregate_parallel_engines.py "
+            "for the active date (default: on)."
+        ),
+    )
+    p.add_argument(
+        "--no-post-session-aggregate",
+        dest="post_session_aggregate",
+        action="store_false",
+        help="Skip the end-of-session aggregator run.",
+    )
+    p.add_argument(
+        "--post-session-aggregate-script",
+        type=Path,
+        default=PROJECT_DIR / "scripts" / "analysis" / "aggregate_parallel_engines.py",
+        help="Path to aggregate_parallel_engines.py.",
     )
     args, unknown = p.parse_known_args(argv)
     reserved = _has_reserved_unknown_flags(unknown)
@@ -904,12 +1014,111 @@ def _run_shared_mode(
                 pass
 
 
+def _run_post_session_aggregator(
+    args: argparse.Namespace,
+    configs: Sequence[EngineConfig],
+    active_date: str,
+) -> None:
+    """Run aggregate_parallel_engines.py for `active_date` once all engines
+    have exited. Fail-open: any error is printed and swallowed so the
+    launcher's exit code is unchanged.
+
+    Audit motivation (2026-05-26): yesterday's 2026-05-25 multi-engine run
+    finished cleanly but the canonical
+    `data/analysis_output/parallel_engine_comparison/` report kept showing
+    2026-05-24 data because nobody re-ran the aggregator after the session.
+    The fix lives in the launcher (rather than run_daily_refresh) so the
+    aggregator runs RIGHT WHEN the data lands, not at next-morning refresh
+    time."""
+    if not args.post_session_aggregate or args.dry_launch:
+        return
+    script = Path(args.post_session_aggregate_script)
+    if not script.exists():
+        print(
+            f"[post-session-aggregator] skipped: script not found at {script}"
+        )
+        return
+
+    paper_roots = ",".join(str(cfg.paper_root) for cfg in configs)
+    cmd = [
+        sys.executable or "python",
+        str(script),
+        "--paper-roots", paper_roots,
+        "--date-range", f"{active_date}:{active_date}",
+    ]
+    print(f"[post-session-aggregator] running for {active_date}: {' '.join(cmd)}")
+    try:
+        completed = subprocess.run(
+            cmd,
+            cwd=str(PROJECT_DIR),
+            check=False,
+            timeout=300,
+        )
+        if completed.returncode != 0:
+            print(
+                f"[post-session-aggregator] aggregator exited with "
+                f"code {completed.returncode}; canonical report may be stale."
+            )
+            return
+    except subprocess.TimeoutExpired:
+        print(
+            "[post-session-aggregator] aggregator timed out after 300s; "
+            "canonical report may be stale."
+        )
+        return
+    except Exception as exc:  # pragma: no cover - best-effort path
+        print(f"[post-session-aggregator] aggregator raised: {exc!r}")
+        return
+
+    # Echo the freshly-written daily-read so the operator sees today's
+    # ranking right after the session ends without having to open the file.
+    canonical_md = (
+        PROJECT_DIR
+        / "data"
+        / "analysis_output"
+        / "parallel_engine_comparison"
+        / "parallel_engine_comparison.md"
+    )
+    try:
+        text = canonical_md.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        print(
+            "[post-session-aggregator] aggregator ran but canonical report "
+            f"not readable at {canonical_md}."
+        )
+        return
+
+    # Extract just the "Daily read" + "Per-config headline" sections.
+    # Anything past the first "## Gate/candidate funnel" header is detail.
+    sections: List[str] = []
+    seen_daily = False
+    for line in text.splitlines():
+        if line.startswith("## Daily read") or line.startswith("## Per-config headline"):
+            seen_daily = True
+        elif line.startswith("## Gate/candidate funnel"):
+            break
+        if seen_daily:
+            sections.append(line)
+    if sections:
+        print(f"[post-session-aggregator] daily read for {active_date}:")
+        for line in sections:
+            print(f"  {line}")
+    else:
+        print(
+            f"[post-session-aggregator] aggregator ran; full report at {canonical_md}."
+        )
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     # 2026-05-25: default expanded from 3 to 5 configs (added D and E).
-    # See PRESETS docstring for the 2x2 factorial rationale.
+    # 2026-05-26: default expanded from 5 to 10 configs (added F-J), each
+    # mapped to one open Active or Hygiene roadmap question. See PRESETS
+    # docstring for the per-config rationale.
     raw_configs = args.config or [
         "A_current", "B_cal_only", "C_raw", "D_scope_only", "E_tight_edge",
+        "F_no_dedup", "G_loose_edge", "H_late_innings",
+        "I_extreme_018", "J_no_phantom_filter",
     ]
     configs = [_resolve_config(raw, Path(args.paper_root_prefix)) for raw in raw_configs]
 
@@ -920,8 +1129,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     active_date = args.date or _default_date(args.timezone)
     if args.market_data_mode == "per-engine":
         commands = [(cfg, build_engine_command(args, cfg)) for cfg in configs]
-        return _run_per_engine_mode(args, configs, commands, active_date)
-    return _run_shared_mode(args, configs, active_date)
+        exit_code = _run_per_engine_mode(args, configs, commands, active_date)
+    else:
+        exit_code = _run_shared_mode(args, configs, active_date)
+
+    # Post-session aggregator hook. Runs whether engines exited normally
+    # or via signal; fail-open so an aggregator error does not change
+    # the launcher's exit code.
+    try:
+        _run_post_session_aggregator(args, configs, active_date)
+    except Exception as exc:  # pragma: no cover - last-line safety net
+        print(f"[post-session-aggregator] unexpected error: {exc!r}")
+
+    return exit_code
 
 
 if __name__ == "__main__":

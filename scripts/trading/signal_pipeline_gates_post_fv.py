@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections import Counter
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from analyze_polymarket_overreactions import _inning_state_to_half
@@ -364,6 +365,54 @@ def _attach_stage1_shadow_empirical_fields(
         # Already initialized to None above; leave them as-is.
 
 
+def flush_scoped_alt_a_rollup(
+    engine: Any,
+    *,
+    force: bool = False,
+    interval_secs: float = 1800.0,
+) -> Dict[str, int]:
+    """Emit a single INFO-level rollup summary for the Scoped Alt-A
+    apply-event counts that have been accumulating since the last flush
+    (or since startup). Returns a {dedup_key_str: count} summary the
+    caller can include in session JSON; clears engine state on exit.
+
+    Called periodically from `_on_tick_batch` (30-min cadence, matches
+    the runtime_log_rollups pattern) and force=True on shutdown so the
+    operator can audit the suppressed fire count without scrolling
+    through 2,000+ duplicate INFO lines.
+
+    No-op when no rollup state exists or counts are empty.
+    """
+    import time
+
+    now = time.time()
+    last_ts = float(getattr(engine, "_last_scoped_alt_a_rollup_log_ts", 0.0) or 0.0)
+    if not force and (now - last_ts) < interval_secs:
+        return {}
+
+    counts: Counter = getattr(engine, "_scoped_alt_a_rollup_counts", Counter())
+    if not counts:
+        engine._last_scoped_alt_a_rollup_log_ts = now
+        return {}
+    total = sum(counts.values())
+    unique_keys = len(counts)
+    LOGGER.info(
+        "scoped_alt_a rollup: %d suppressed apply ticks across %d unique "
+        "(game,line,inning,state,rule) cohorts (after first INFO per cohort).",
+        total, unique_keys,
+    )
+    # Detail at DEBUG: per-cohort count, top 25 by frequency.
+    summary: Dict[str, int] = {}
+    for key, n in counts.most_common(25):
+        label = "|".join(key)
+        summary[label] = int(n)
+        LOGGER.debug("scoped_alt_a rollup detail: %s -> %d ticks", label, n)
+    # Clear state so the next window starts fresh.
+    engine._scoped_alt_a_rollup_counts = Counter()
+    engine._last_scoped_alt_a_rollup_log_ts = now
+    return summary
+
+
 def _apply_stage1_alt_a_scope(
     self: "SignalEngine",
     *,
@@ -464,11 +513,35 @@ def _apply_stage1_alt_a_scope(
     candidate_payload["stage1_alt_a_scope_decision"] = "applied"
     if matched_rule_reason:
         candidate_payload["stage1_alt_a_scope_reason"] = matched_rule_reason
-    LOGGER.info(
-        "Scoped Alt-A applied: poisson_fv=%.4f -> empirical_fv=%.4f "
-        "(inning=%s, matched_rule=%s)",
-        current_best_fv, new_fv, inning, matched_rule_name or "default",
+
+    # 2026-05-26 (F2 fix): emit INFO once per (game, line, inning, state, rule)
+    # then roll up subsequent ticks. Before this, the same swap fired every
+    # ~3s for every active line, accounting for ~85% of the launch log
+    # (A_current 2026-05-25: 2,270 of 2,678 lines were repeated Scoped Alt-A
+    # INFOs). The dedup key is the cohort that meaningfully changes the
+    # decision; same state -> same swap, no operator-actionable signal in
+    # repeating it.
+    rule_label = matched_rule_name or "default"
+    dedup_key = (
+        str(candidate_payload.get("game_pk", "?")),
+        str(candidate_payload.get("line", "?")),
+        str(inning),
+        str(candidate_payload.get("inning_state", "?")),
+        rule_label,
     )
+    if not hasattr(self, "_scoped_alt_a_applied_keys"):
+        self._scoped_alt_a_applied_keys = set()
+        self._scoped_alt_a_rollup_counts: Counter = Counter()
+
+    if dedup_key not in self._scoped_alt_a_applied_keys:
+        self._scoped_alt_a_applied_keys.add(dedup_key)
+        LOGGER.info(
+            "Scoped Alt-A applied: poisson_fv=%.4f -> empirical_fv=%.4f "
+            "(inning=%s, matched_rule=%s)",
+            current_best_fv, new_fv, inning, rule_label,
+        )
+    else:
+        self._scoped_alt_a_rollup_counts[dedup_key] += 1
     return new_fv
 
 

@@ -16,7 +16,55 @@ lives where and how the pieces fit.
   from 2026-05-17 and earlier (~80 entries). Carved out of ROADMAP on
   2026-05-25 to keep the active document scannable.
 
-Last checked against the linked files: 2026-05-25. Recent major shifts:
+Last checked against the linked files: 2026-05-26. Recent major shifts:
+
+- **2026-05-26: frontend multi-engine day view.** New
+  `frontend/src/components/MultiEngineDayView.tsx` (~360 lines).
+  When the operator clicks a date in the sidebar that has ≥2 sessions
+  with `config_label` set, the per-day panel now auto-switches to a
+  single page that shows ALL engines' results side-by-side: top
+  comparison table (per-config bets / W-L / P&L / ROI / mean ask &
+  FV) + per-engine detail cards (summary + bets table). Anchor-scroll
+  links jump from the comparison row to the engine detail.
+  Single-engine days and the per-config sidebar pin behavior are
+  unchanged. App.tsx loader now stamps `_modeFolder` + `_configLabel`
+  on each loaded SessionFile so the view can map sessions back to
+  configs without an extra lookup. Build clean (TS + Vite, 11.17 KB CSS,
+  178.69 KB JS bundles).
+
+- **2026-05-26: parallel-engine fleet doubled from 5 → 10 presets.**
+  Added F_no_dedup (operator-requested: strip event-dedup +
+  inning-dedup + correlated-line cap; keep edge/ask floors),
+  G_loose_edge (-5pp edge floors), H_late_innings (`--min-inning 6`),
+  I_extreme_018 (`--extreme-edge-max 0.18`, Phase 6 prep),
+  J_no_phantom_filter (`--extreme-edge-max 1.0`). Each maps to one
+  open Active or Hygiene roadmap question; I+J pair to form a
+  clean {off, current, tightened} sweep on the TR19 knob. Default
+  `--config` list expanded so `python scripts/trading/launch_parallel_engines.py`
+  now launches all 10. 6 new pytest cases lock in the per-preset
+  flag shapes and assert paper-safety.
+
+- **2026-05-26: Scoped Alt-A apply log dedup'd.** The per-tick "Scoped
+  Alt-A applied" INFO in `signal_pipeline_gates_post_fv._apply_stage1_alt_a_scope`
+  now emits ONCE per `(game_pk, line, inning, inning_state, matched_rule)`
+  cohort. Subsequent ticks increment `_scoped_alt_a_rollup_counts` and
+  a single summary line fires every 30 min (`flush_scoped_alt_a_rollup`)
+  + force-flushed on shutdown. Closes F2 from the 2026-05-25 multi-engine
+  audit: A_current's launch_log shrinks **2,270 → ~80 lines (96.5%)** for
+  the same workload. 4 new unit tests in `ScopedAltAEnforceTests`.
+
+- **2026-05-26: post-session aggregator hook for parallel engines.**
+  `launch_parallel_engines.py` now calls
+  `aggregate_parallel_engines.py` for the active date when the last
+  engine exits, and echoes the daily read to stdout. Fail-open so
+  aggregator errors don't change the launcher's exit code; opt out with
+  `--no-post-session-aggregate`. Closes the F1 finding from the
+  2026-05-25 multi-engine audit (canonical
+  `data/analysis_output/parallel_engine_comparison/parallel_engine_comparison.md`
+  was silently stuck on 2026-05-24 data overnight because the
+  aggregator was only invoked manually). 4 new pytest cases lock in
+  the default-on, opt-out, dry-launch-skip, and missing-script
+  fail-open behaviors.
 
 - **2026-05-25: multi-engine parallel paper runs.** New
   `scripts/trading/launch_parallel_engines.py` with 5 built-in PRESETS

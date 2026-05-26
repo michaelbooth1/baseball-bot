@@ -867,18 +867,28 @@ tighter edge threshold) under the same baseball/market regime without
 refactoring the engine into a single-process dispatcher.
 
 ```bash
-# Launch the standard 5-config bundle (A_current, B_cal_only, C_raw,
-# D_scope_only, E_tight_edge) for today's slate
+# Default: launches the full 10-config bundle (A-J). The default
+# --config list is now A_current, B_cal_only, C_raw, D_scope_only,
+# E_tight_edge, F_no_dedup, G_loose_edge, H_late_innings,
+# I_extreme_018, J_no_phantom_filter -- so this one-liner is enough.
+python scripts/trading/launch_parallel_engines.py
+
+# Subset (e.g. just the original 5-config 2x2):
 python scripts/trading/launch_parallel_engines.py \
   --config A_current --config B_cal_only --config C_raw \
   --config D_scope_only --config E_tight_edge
 
 # Custom config: label:flag-spec
 python scripts/trading/launch_parallel_engines.py \
-  --config "F_tight_extreme:--extreme-edge-max 0.18 --prob-calibration-mode enforce"
+  --config "K_my_test:--extreme-edge-max 0.15 --prob-calibration-mode enforce"
 ```
 
-Built-in `PRESETS` (see `scripts/trading/launch_parallel_engines.py`):
+Built-in `PRESETS` (see `scripts/trading/launch_parallel_engines.py`),
+default-launched as a 10-preset bundle as of 2026-05-26. Each maps to
+one open Active or Hygiene roadmap question so the daily aggregate
+becomes the decision evidence for that item.
+
+**Core 2x2 factorial + edge tightening (A-E, original 2026-05-25 set):**
 
 | Preset | Calibrator | Scoped Alt-A | Notes |
 |---|---|---|---|
@@ -887,6 +897,23 @@ Built-in `PRESETS` (see `scripts/trading/launch_parallel_engines.py`):
 | `C_raw` | shadow | shadow | Both off (raw FV baseline) |
 | `D_scope_only` | shadow | enforce | Calibrator off, scope on (completes 2x2) |
 | `E_tight_edge` | enforce | enforce | A + edge-threshold raised 5pp |
+
+**Question-mapped expansion (F-J, added 2026-05-26):**
+
+| Preset | What it changes vs A | Question it answers |
+|---|---|---|
+| `F_no_dedup` | `--event-dedup-secs 0 --inning-dedup-gap 0 --max-correlated-over-lines-per-game 999 --min-correlated-line-gap 0.0` | Do dedup rules leave money on the table by suppressing valid re-fires? Expected to place 5-10× more bets than A. |
+| `G_loose_edge` | `--edge-threshold 0.10 --edge-threshold-high-line 0.11` (-5pp vs A) | Are we over-filtering? E_tight tests +5pp; G is the mirror. |
+| `H_late_innings` | `--min-inning 6 --min-inning-high-line 6` | Walk-forward cohort showed inn_4-5 = −22% ROI vs inn_6-7 = +53%. Does enforce confirm? |
+| `I_extreme_018` | `--extreme-edge-max 0.18` (tightened from 0.22) | Phase 6 prep for the 2026-06-07 TR19 recalibration deadline; tightens the cap. |
+| `J_no_phantom_filter` | `--extreme-edge-max 1.0` (effectively off) | Pairs with I to give a clean {off, current, tightened} = {1.0, 0.22, 0.18} 3-point sweep on the TR19 knob. |
+
+All F-J configs inherit A's `prob_calibration_mode=enforce` +
+`stage1_alt_a_scope_mode=enforce` baseline so the only varying
+dimension per config is the one in the table. None of them touch
+live-only flags (Kelly / daily-budget / stake-mode) — paper-safe by
+construction (enforced by
+`tests/test_parallel_engines_mvp.py::test_no_f_through_j_uses_live_only_flag`).
 
 Architecture:
 - The launcher runs the canonical daily refresh once; child engines all get
@@ -897,19 +924,28 @@ Architecture:
 - `LIVE_ONLY_ENGINE_FLAGS` (Kelly, daily-budget, stake-mode, etc.) are
   rejected to prevent live-only flags leaking into paper presets.
 - Per-engine session state lands under `data/paper_<config_label>/`.
+- **Post-session aggregator runs automatically** when the last engine
+  exits. The launcher calls `aggregate_parallel_engines.py` for the
+  active date and echoes the daily-read + per-config headline back to
+  stdout, so the operator sees today's ranking immediately. Fail-open:
+  any aggregator error is printed but does not change the launcher's
+  exit code. Opt out for debugging with `--no-post-session-aggregate`.
 
-After a session, compare results offline:
+The canonical aggregate lives at
+`data/analysis_output/parallel_engine_comparison/parallel_engine_comparison.{json,md}`
+(plus a dated `parallel_engine_comparison_<start>_<end>.md` sibling).
+To re-run manually for a custom date range:
 
 ```bash
 python scripts/analysis/aggregate_parallel_engines.py \
-  --paper-root data/paper_A_current \
-  --paper-root data/paper_B_cal_only \
-  --paper-root data/paper_C_raw
+  --paper-roots data/paper_A_current,data/paper_B_cal_only,data/paper_C_raw,data/paper_D_scope_only,data/paper_E_tight_edge \
+  --date-range 2026-05-25:2026-05-25
 ```
 
-Outputs `data/analysis_output/parallel_engine_comparison/`: a compact
-JSON + Markdown comparison with stake-weighted edge metrics, daily
-fill rate, filled WR, and disagreement table across configs.
+The report carries stake-weighted edge metrics, daily fill rate,
+filled WR, completeness audit (last-seq + gaps + disconnects per
+engine), per-config gate funnel, and a shared-candidate disagreement
+table (configs that traded vs skipped on the exact same game-line tick).
 
 ---
 

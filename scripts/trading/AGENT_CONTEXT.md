@@ -17,6 +17,38 @@ _Append dated bullets here when you change anything in this folder.
 Mirrors `MASTER_CONTEXT.md`'s "Recent major shifts" pattern; bump
 "Last checked" above when you sweep the whole doc._
 
+- **2026-05-26** — multi-engine fleet doubled from 5 → 10 presets.
+  Added F_no_dedup (operator-requested permissive config: strip
+  event-dedup, inning-dedup-gap, correlated-line-cap; keep edge/ask
+  floors), G_loose_edge (-5pp edge floors, mirror of E), H_late_innings
+  (`--min-inning 6` enforced — tests the +75pp inn_4-5 vs inn_6-7 ROI
+  gap from the 2026-05-25 walk-forward cohort), I_extreme_018
+  (`--extreme-edge-max 0.18`, Phase 6 prep), J_no_phantom_filter
+  (`--extreme-edge-max 1.0`, pairs with I for a clean
+  {off, current, tightened} sweep). Each maps to one open roadmap
+  question so the daily aggregate becomes decision evidence. Default
+  `--config` list expanded; 6 new pytest cases lock in the per-preset
+  flag shapes + assert none use LIVE_ONLY flags.
+- **2026-05-26 (F2 fix)** — Scoped Alt-A apply log dedup'd.
+  `_apply_stage1_alt_a_scope` in `signal_pipeline_gates_post_fv.py`
+  was emitting one INFO line per tick per cohort that stayed in the
+  apply state; on the 2026-05-25 audit A_current's launch_log had
+  2,270 such lines (85%+ of the entire log). Now: INFO is emitted
+  ONCE per `(game_pk, line, inning, inning_state, matched_rule)`
+  cohort, and subsequent ticks increment `_scoped_alt_a_rollup_counts`.
+  New `flush_scoped_alt_a_rollup(engine, force=...)` emits a single
+  summary line on the 30-min cadence (alongside
+  `_log_runtime_debug_rollups`) and force-fires on shutdown from
+  `live_engine._shutdown_gracefully` + `paper_engine_consumer.main`.
+  **Measured reduction on yesterday's log: 2,270 INFO lines → ~80
+  (96.5%).** 4 new unit tests in `ScopedAltAEnforceTests`.
+- **2026-05-26** — post-session aggregator hook added to
+  `launch_parallel_engines.py` (`--post-session-aggregate`, default on).
+  When the last engine exits, the launcher shells out to
+  `aggregate_parallel_engines.py` for the active date and echoes the
+  daily read to stdout. Fixes the F1 finding from the 2026-05-25
+  multi-engine audit: canonical `parallel_engine_comparison.md` was
+  silently stuck on 2026-05-24 data overnight.
 - **2026-05-25** — multi-engine parallel paper runs landed:
   `launch_parallel_engines.py`, `paper_engine_consumer.py`,
   `live_quote_engine.py`, `shared_market_data.py`,
@@ -469,6 +501,18 @@ promotion thresholds, or walk-forward conclusions across them.
   `RESERVED_ENGINE_FLAGS` reject paper-only overrides;
   `LIVE_ONLY_ENGINE_FLAGS` reject Kelly/daily-budget/stake-mode so
   live-only flags don't leak into paper presets.
+  **Post-session aggregator hook (2026-05-26)**: `main()` calls
+  `_run_post_session_aggregator` after the run-mode returns, which
+  shells out to `scripts/analysis/aggregate_parallel_engines.py
+  --date-range <active_date>:<active_date>` and echoes the daily-read +
+  per-config headline back to stdout. Runs whether engines exited
+  normally or via SIGINT. Fail-open: aggregator errors are printed but
+  do not change the launcher's exit code. Opt out with
+  `--no-post-session-aggregate`. Motivation: 2026-05-25 audit found
+  the canonical `parallel_engine_comparison.md` was stuck on 2026-05-24
+  data because nobody manually re-ran the aggregator overnight; this
+  hook closes the gap at the data source rather than waiting for
+  next-morning refresh.
 - `paper_engine_consumer.py`: paper engine that consumes shared market
   data instead of owning its own monitor poll loop. Used by the
   parallel launcher so N configs share book/tape polling.

@@ -200,6 +200,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         except Exception:
             pass
         LOGGER.info("Saving final shared-consumer session state.")
+        # 2026-05-26 (F2 fix): force-flush the Scoped Alt-A apply-event
+        # rollup before saving so the per-cohort suppressed counts hit
+        # the launch_log before shutdown. Same call as live_engine's
+        # graceful path.
+        try:
+            from signal_pipeline_gates_post_fv import flush_scoped_alt_a_rollup
+            flush_scoped_alt_a_rollup(engine, force=True)
+        except Exception:  # noqa: BLE001 - observability only
+            pass
         try:
             engine._save_session()
         finally:

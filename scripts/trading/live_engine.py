@@ -581,6 +581,14 @@ class LiveTradingEngine(SignalEngine):
         # See live_reconciliation.py for the 2026-05-10 incident this catches.
         self._reconcile_orphan_fills()
         self._settle_finished_games()
+        # 2026-05-26 (F2 fix): force-flush the Scoped Alt-A apply-event
+        # rollup before saving the session so the final summary is in
+        # both the log AND captured for post-mortem audit. Best-effort.
+        try:
+            from signal_pipeline_gates_post_fv import flush_scoped_alt_a_rollup
+            flush_scoped_alt_a_rollup(self, force=True)
+        except Exception:  # noqa: BLE001 - observability only
+            pass
         self._save_session(force=True)
         self._scrape_active_date_final_games()
         self._write_daily_human_review_report()

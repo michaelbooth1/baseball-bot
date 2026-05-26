@@ -1812,6 +1812,150 @@ class ScopedAltAEnforceTests(unittest.TestCase):
         )
         self.assertEqual(compact2["stage1_alt_a_scope_action"], "hold_poisson")
 
+    # 2026-05-26 (F2 fix) -- log-dedup + rollup behavior.
+    def test_enforce_log_dedups_repeated_same_state(self):
+        """When the same (game, line, inning, state, rule) cohort fires
+        many times in a row, INFO is emitted once and subsequent ticks
+        increment the rollup counter without logging."""
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "trading"))
+        import signal_pipeline_gates_post_fv as gpf
+
+        engine = self._engine(scope_mode="enforce")
+        base_payload = {
+            "game_pk": 999001,
+            "line": "7.5",
+            "inning_state": "Top",
+            "fair_value_alt_empirical": 0.807,
+            "fair_value_alt_empirical_used_empirical": True,
+        }
+
+        with self.assertLogs("signal_engine", level="INFO") as captured:
+            # First call -- emits INFO and seeds the dedup set.
+            self._call_scope(engine, payload=dict(base_payload), best_fv=0.71, inning=7)
+            # Three more calls with identical cohort -- should NOT emit INFO.
+            for _ in range(3):
+                self._call_scope(engine, payload=dict(base_payload), best_fv=0.71, inning=7)
+
+        scoped_infos = [
+            r for r in captured.records
+            if "Scoped Alt-A applied" in r.getMessage()
+        ]
+        self.assertEqual(
+            len(scoped_infos), 1,
+            f"Expected exactly 1 INFO; got {len(scoped_infos)}: "
+            f"{[r.getMessage() for r in scoped_infos]}",
+        )
+        # The other 3 swaps should have been counted in the rollup.
+        from collections import Counter
+        counts: Counter = engine._scoped_alt_a_rollup_counts
+        self.assertEqual(sum(counts.values()), 3)
+        self.assertEqual(len(counts), 1)  # one unique cohort
+
+    def test_enforce_log_emits_new_info_when_state_changes(self):
+        """A real state advance (e.g. inning changes) gets its own INFO."""
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "trading"))
+        import signal_pipeline_gates_post_fv as gpf
+
+        engine = self._engine(scope_mode="enforce")
+        base_payload = {
+            "game_pk": 999002,
+            "line": "8.5",
+            "fair_value_alt_empirical": 0.81,
+            "fair_value_alt_empirical_used_empirical": True,
+        }
+
+        with self.assertLogs("signal_engine", level="INFO") as captured:
+            for inning in (5, 5, 6, 6, 7):
+                p = dict(base_payload)
+                p["inning_state"] = "Bottom"
+                self._call_scope(engine, payload=p, best_fv=0.72, inning=inning)
+
+        scoped_infos = [
+            r for r in captured.records
+            if "Scoped Alt-A applied" in r.getMessage()
+        ]
+        # Inning 5 (first time), inning 6 (first time), inning 7 (first time)
+        # => 3 INFOs; 2 suppressed repeats.
+        self.assertEqual(len(scoped_infos), 3)
+        self.assertEqual(sum(engine._scoped_alt_a_rollup_counts.values()), 2)
+
+    def test_flush_rollup_emits_summary_and_clears_state(self):
+        """flush_scoped_alt_a_rollup(force=True) emits one INFO summary
+        and resets the rollup state."""
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "trading"))
+        import signal_pipeline_gates_post_fv as gpf
+
+        engine = self._engine(scope_mode="enforce")
+        # Seed engine state with two ticks each in two cohorts.
+        for cohort in [("a", 6), ("b", 7)]:
+            for _ in range(3):
+                self._call_scope(
+                    engine,
+                    payload={
+                        "game_pk": 999100,
+                        "line": cohort[0],
+                        "inning_state": "Top",
+                        "fair_value_alt_empirical": 0.81,
+                        "fair_value_alt_empirical_used_empirical": True,
+                    },
+                    best_fv=0.72,
+                    inning=cohort[1],
+                )
+        # After seeding: 2 INFOs already emitted (one per first occurrence),
+        # 4 suppressed ticks in the rollup counter.
+        self.assertEqual(sum(engine._scoped_alt_a_rollup_counts.values()), 4)
+
+        with self.assertLogs("signal_engine", level="INFO") as captured:
+            summary = gpf.flush_scoped_alt_a_rollup(engine, force=True)
+
+        rollup_lines = [
+            r for r in captured.records
+            if "scoped_alt_a rollup:" in r.getMessage()
+        ]
+        self.assertEqual(len(rollup_lines), 1)
+        self.assertIn("4 suppressed apply ticks", rollup_lines[0].getMessage())
+        self.assertIn("2 unique", rollup_lines[0].getMessage())
+        # Summary dict carries the per-cohort counts.
+        self.assertEqual(sum(summary.values()), 4)
+        # State cleared.
+        self.assertEqual(sum(engine._scoped_alt_a_rollup_counts.values()), 0)
+
+    def test_flush_rollup_respects_interval_when_not_forced(self):
+        """Without force=True, flush is a no-op inside the 30-min window."""
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "trading"))
+        import signal_pipeline_gates_post_fv as gpf
+        import time
+
+        engine = self._engine(scope_mode="enforce")
+        # Seed one cohort with two ticks (1 INFO + 1 suppressed).
+        for _ in range(2):
+            self._call_scope(
+                engine,
+                payload={
+                    "game_pk": 999200,
+                    "line": "5.5",
+                    "inning_state": "Top",
+                    "fair_value_alt_empirical": 0.81,
+                    "fair_value_alt_empirical_used_empirical": True,
+                },
+                best_fv=0.72,
+                inning=6,
+            )
+        # Pretend we just flushed -- next call should be a no-op.
+        engine._last_scoped_alt_a_rollup_log_ts = time.time()
+        result = gpf.flush_scoped_alt_a_rollup(engine, interval_secs=1800.0)
+        self.assertEqual(result, {})
+        # Suppressed-tick counter survives (will be flushed on next eligible call).
+        self.assertEqual(sum(engine._scoped_alt_a_rollup_counts.values()), 1)
+
 
 class UnderEmissionCalibrationStampTests(unittest.TestCase):
     """2026-05-23 (audit followup) -- under-side emission audit trail.

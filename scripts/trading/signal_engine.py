@@ -1023,6 +1023,16 @@ class SignalEngine(MLBPolymarketMonitor):
         self._flush_expired_score_confirmations()
         self._maybe_log_tick_buffer_health()
         self._log_runtime_debug_rollups()
+        # 2026-05-26 (F2 fix): also flush the Scoped Alt-A apply-event
+        # rollup on the same 30-min cadence as the runtime debug rollups.
+        # The per-tick INFO was dedup'd to once-per-cohort in
+        # _apply_stage1_alt_a_scope; this periodic flush surfaces the
+        # suppressed count so operators don't lose visibility.
+        try:
+            from signal_pipeline_gates_post_fv import flush_scoped_alt_a_rollup
+            flush_scoped_alt_a_rollup(self)
+        except Exception:  # noqa: BLE001 - observability only
+            pass
 
     def _maybe_log_tick_buffer_health(self, interval_secs: float = 1800.0) -> None:
         now = _now_ts()
