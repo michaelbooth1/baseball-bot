@@ -5,9 +5,93 @@ follow the link for whichever folder you actually need to touch. Each linked
 file is the authoritative per-folder context; this index only summarizes what
 lives where and how the pieces fit.
 
-Last checked against the linked files: 2026-05-14. Recent major shifts:
+**Companion top-level docs:**
+- **[README.md](README.md)** — operator-facing overview, gate stack, evidence
+  snapshot, CLI usage. Read this when you need the *what* and *why* before
+  touching code.
+- **[ROADMAP.md](ROADMAP.md)** — Active Priorities + Hygiene + bidirectional
+  pivot phases. Start with the "Verdict status dashboard" at the top to see
+  what's currently in flight.
+- **[ROADMAP_ARCHIVE_2026_H1.md](ROADMAP_ARCHIVE_2026_H1.md)** — shipped work
+  from 2026-05-17 and earlier (~80 entries). Carved out of ROADMAP on
+  2026-05-25 to keep the active document scannable.
 
-- **2026-05-14 (today): calibration method-stability gate.** New
+Last checked against the linked files: 2026-05-25. Recent major shifts:
+
+- **2026-05-25: multi-engine parallel paper runs.** New
+  `scripts/trading/launch_parallel_engines.py` with 5 built-in PRESETS
+  (`A_current`, `B_cal_only`, `C_raw`, `D_scope_only`, `E_tight_edge`)
+  launches N paper SignalEngine processes against the same live market
+  day, each with its own `paper_root` and `config_label`. Shared
+  book/tape captures via `shared_market_watcher.py` +
+  `shared_market_data.py` so N configs don't poll the CLOB N times.
+  `LIVE_ONLY_ENGINE_FLAGS` rejects Kelly / daily-budget / stake-mode
+  to prevent live-only flags leaking into paper presets. Offline
+  comparison via `scripts/analysis/aggregate_parallel_engines.py` ->
+  `data/analysis_output/parallel_engine_comparison/`.
+- **2026-05-25 (today): calibrate_signal_probabilities split (Tier 2.5
+  refactor).** The 311-line `_fit_calibration_bundle` was decomposed
+  into 4 phase helpers under new `scripts/analysis/calibration/bundle_phases.py`
+  (`_score_methods_on_splits`, `_select_method_with_audits`,
+  `_build_calibration_payload`, `_build_prediction_rows`).
+  `calibrate_signal_probabilities.py` shrunk 1152 -> 991 lines (under
+  1k for the first time); 45 targeted calibration tests + full 1430+
+  pytest run green. Public surface unchanged.
+- **2026-05-21: Scoped Alt-A enforce (cohort-aware empirical override,
+  TR25).** Per-candidate runtime decision in `_apply_stage1_alt_a_scope`:
+  when `--stage1-alt-a-scope-mode enforce` AND the candidate's cohort
+  doesn't match a `hold_poisson` rule AND the upstream shadow path
+  computed an alt empirical FV, swap production `fair_value` to use it.
+  Initial rule list: one explicit `hold_poisson` for `inning>=8` (known
+  -23.8pp regression cohort); everything else `apply` by default.
+  Default mode `shadow` so operators audit per-candidate decisions before
+  flipping enforce.
+- **2026-05-19: band-gated calibrator ENFORCE (TR23).** The 2026-05-19
+  FV-overconfidence audit confirmed raw FV is overconfident by +28pp at
+  raw>=0.95 (487 settled predictions: claimed avg 0.97, realized 0.70).
+  `DEFAULT_PROB_CALIBRATION_MODE` flipped `shadow` -> `enforce`; new
+  `DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW = 0.90`. The Platt calibrator
+  now overwrites raw FV only when raw>=0.90 (captures the dangerous-tail
+  correction) and leaves mid-band [0.80, 0.90) alone (where Platt
+  over-pulls). Per-candidate diag adds `below_min_raw_kept_raw` columns.
+  Runbook: `docs/operational/fv-recalibration-2026-05-19.md`.
+- **2026-05-19: UNDER candidate emission (Phase A5 keystone).** New
+  `--under-emission-mode {off, shadow}` emits an UNDER candidate row
+  alongside every OVER candidate that reaches the FV phase, with its
+  own calibrated UNDER FV (`signal_win_calibration_under.json`), UNDER
+  ask, and gate evaluation (`decision=shadow_under` when UNDER gates
+  pass). **NO UNDER bets placed in either mode** — pure observability
+  so the paper-mode runway accumulates UNDER signal-quality data. New
+  `_under_emission_health` + `_under_outcomes_counterfactual_health` +
+  trailing-7d UNDER outcomes aggregate daily-review blocks.
+- **2026-05-18: Stage-1 Alt-A staging cache (Active #8 prep).** New
+  `--smoothing-mode {poisson, empirical_when_available}` flag on
+  `cache/build_mlb_ou_cache.py` materializes the runtime's on-the-fly
+  Alt-A shadow as a real cache file. New `stage1_ou_cache_alt_a` refresh
+  step writes to `cache/mlb_ou_cache_alt_a.staging.json` (NEVER
+  auto-promoted; operator runs `promote.py stage1 --source ...` after
+  paper-mode validation). First production build: 4,200 of 4,298 cells
+  (97.7%) overridden, mean signed delta -2.74pp.
+- **2026-05-17: Stage-1 owns ~100% of the 27pp bias (Active #10
+  loss-attribution + Active #11 gate counterfactual + Active #16 lineage
+  + Active #13 fast Wilson-UB demote).** Bet-level loss attribution
+  shipped: probability-space decomposition via the logit-additive FV chain.
+  First production run on 87 filled+settled bets reveals Stage-1 owns
+  ~100% of the 27pp over-prediction bias (mean_p0=92.7%, mean_won=65.5%).
+  Stage-2 contributes +0.04pp, Stage-3 actively *helps* by -0.05pp.
+  Re-targeted Active #8 to "rebuild Stage-1" instead of Stage-2/3.
+  Same day: `promote.py stage1` subcommand shipped, model-lineage v1-v4
+  shipped (build-time + promotion-time git_sha / input_hashes;
+  cross-artifact consistency check), fast Wilson-UB demotion shipped
+  (5-6 day reaction vs 14d windowed).
+- **2026-05-15: leading-indicator drift (concept_drift + drift_in_drift,
+  7th and 8th drift dimensions).** `build_concept_drift_report.py`
+  computes PSI/TVD on model inputs (trailing 7d vs prior 30d); fires
+  before calibration / cohort drift materializes. Sister
+  `build_drift_in_drift_report.py` fits OLS slope on 30d of PSI history
+  per feature and projects 30d forward to catch slow-creep drift that
+  never crosses the daily PSI threshold but accumulates past it.
+- **2026-05-14 (preserved): calibration method-stability gate.** New
   `_apply_stability_gate` in `calibrate_signal_probabilities.py` stops
   the platt<->isotonic flip-flop observed 2026-05-11..13 by overriding
   today's pick to the trailing-7-day modal selection when the two
@@ -58,7 +142,7 @@ Last checked against the linked files: 2026-05-14. Recent major shifts:
   warning in shadow / fail closed in enforce), and refreshed the stale
   notes block in the refresh manifest writer.
 - **2026-05-12: self-correcting refresh.** Daily refresh expanded
-  to 32 steps. Stage-2 + Stage-3 + EV-policy models all retrain
+  to 32 steps (now ~63 as of 2026-05-25). Stage-2 + Stage-3 + EV-policy models all retrain
   automatically on the latest data (Stage-2 to a staging path; the
   production cache is never auto-swapped). A `model_freshness_health`
   inline handler diffs staging vs production and surfaces drift alerts;
@@ -129,8 +213,11 @@ can run unattended.
 
 Current strategic frame: **state-value Over trading around market overreaction
 to score and no-score transitions**, with score-event transitions enforced and
-no-score drift / EV policy / probability calibration kept in shadow until
-walk-forward evidence supports promotion.
+no-score drift / EV policy kept in shadow until walk-forward evidence supports
+promotion. **Probability calibration runs in band-gated enforce mode since
+2026-05-19** (overwrites raw FV only when raw>=0.90; see
+`DEFAULT_PROB_CALIBRATION_MODE` / `DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW`
+in [scripts/trading/signal_config.py](scripts/trading/signal_config.py#L177)).
 
 ## Pipeline at a glance
 
@@ -172,7 +259,7 @@ roadmap (walk-forward validation is item #1). Read this when you need the
 
 ### [tests/AGENT_CONTEXT.md](tests/AGENT_CONTEXT.md)
 Pytest suite contract covering both `scripts/trading` and `scripts/analysis`.
-Thirty-one modules split between trading runtime characterization
+Eighty-four modules (as of 2026-05-25) split between trading runtime characterization
 (`test_signal_engine_phase1_characterization.py`,
 `test_trading_live_execution_fixes.py`), analysis builders / report writers
 (`test_build_unified_signal_table.py`,
@@ -218,9 +305,9 @@ legacy `sig_type=2` and deposit-wallet `sig_type=3` paths),
 weather cache enrichment). Lists Live Execution Invariants that the
 test suite mirrors (USDC->shares conversion, decision vs execution prices,
 line-release-after-unfilled, fail-closed EV policy). Extreme-edge gate is
-enforced at 0.22 (TR17 + TR19); no-score drift / EV / calibration stay in
-shadow. Read this when changing gate logic, candidate schema, or live
-execution.
+enforced at 0.22 (TR17 + TR19); probability calibration is in band-gated
+enforce (raw>=0.90) since 2026-05-19; no-score drift / EV stay in shadow.
+Read this when changing gate logic, candidate schema, or live execution.
 
 ### [scripts/analysis/AGENT_CONTEXT.md](scripts/analysis/AGENT_CONTEXT.md)
 Offline research + reporting layer. Read-only with respect to live trading

@@ -13,10 +13,26 @@ wallet-aware paper fallback + stake-scaling promotion analyzer +
 weekly drift rollup HTML + Stage-3 weight externalization +
 run_daily_refresh smoke test).
 
-There are 36 test modules. They split roughly evenly between trading runtime
-behavior, analysis-builder schemas, and observability/rollup characterization.
-Many are golden / characterization tests -- update field-by-field, not by
-loosening matchers.
+There are **84 test modules** (as of 2026-05-25; many added since the
+2026-05-14 line-by-line walk). They split roughly between trading runtime
+behavior, analysis-builder schemas, observability/rollup characterization,
+UNDER-family side-aware tests, lineage/promotion-audit tests, drift
+detection, and parallel-engine smoke. Many are golden / characterization
+tests -- update field-by-field, not by loosening matchers.
+
+## Recent changes
+
+_Append dated bullets here when you add or restructure tests. Mirrors
+`MASTER_CONTEXT.md`'s "Recent major shifts" pattern; bump "Last checked"
+above when you sweep the whole doc. To verify the test count is current
+run `pytest --collect-only -q 2>&1 | tail -5`._
+
+- **2026-05-25** — added 9 new test categories (UNDER family, Stage-1,
+  promote.py + daemon, lineage, drift, settlement/attribution/counterfactual,
+  quote-engine + parallel, weekly rollup + stake scaling, CLV/disagreement/alpha).
+  Test count jumped 36 → 84 modules between 2026-05-14 and 2026-05-25.
+- **Open**: when adding a test, also add its one-line description to the
+  right category section below — the dashboard is most useful when complete.
 
 ## Test Dataflow
 
@@ -193,13 +209,16 @@ loosening matchers.
   attempt denominator, and a safe "no data" page when the input dir
   is empty.
 - `test_run_daily_refresh_smoke.py`: End-to-end smoke test that walks the
-  full 32-step pipeline with `subprocess.run` stubbed out. Asserts every
-  planned step has a result entry, the manifest is written with the
-  expected fields, `refresh_health_rollup` reads alert counts from the
-  daily-review JSON, `StalenessCheck` skips Stage-2 staging when the
-  artifact already exists newer than its inputs, `--force-retrain`
-  bypasses the skip, and a non-zero subprocess exit is non-strict by
-  default. Catches refresh-wiring regressions, not builder correctness.
+  full daily-refresh pipeline (~63 steps as of 2026-05-25; the test was
+  originally written against a 32-step skeleton and asserts on the live
+  count via `result_names` rather than a hardcoded number) with
+  `subprocess.run` stubbed out. Asserts every planned step has a result
+  entry, the manifest is written with the expected fields,
+  `refresh_health_rollup` reads alert counts from the daily-review JSON,
+  `StalenessCheck` skips Stage-2 staging when the artifact already exists
+  newer than its inputs, `--force-retrain` bypasses the skip, and a
+  non-zero subprocess exit is non-strict by default. Catches
+  refresh-wiring regressions, not builder correctness.
 - `test_fair_value_stage_ablation_report.py`: Unit tests for
   `fair_value_stage_ablation_report.py`. Covers the Brier and AUC
   decomposition by FV stage (`current_state_value_base_poisson`,
@@ -310,6 +329,159 @@ loosening matchers.
   rollups, and `candidate_rollup` counter preservation
   (`attempted_rows`, `written_rows`, `dedup_suppressed_rows`,
   `by_decision_reason`). Uses `assertLogs()`.
+- `test_monitor_cli_performance_mode.py`: Unit test for the monitor
+  CLI's `--performance-mode` / `--no-performance-mode` toggle (psutil
+  affinity + HIGH priority pinning).
+
+### UNDER side-aware family (Phase A5 of bidirectional pivot)
+
+- `test_under_calibrator.py`: UNDER-specific Platt calibration
+  artifact (`signal_win_calibration_under.json`); separate from
+  OVER curve.
+- `test_under_book_ingestion.py`: UNDER-side book ingestion + ask
+  derivation from `under_no` ticks.
+- `test_under_candidate_emission.py`: `--under-emission-mode shadow`
+  emits one UNDER candidate row per OVER candidate that reaches FV
+  phase; gate evaluation; `decision=shadow_under` /
+  `gate_no_under_liquidity` / `gate_min_edge` skip reasons.
+- `test_build_under_candidate_universe.py`: UNDER candidate universe
+  table writer (pairs to OVER table).
+- `test_build_under_state_value_transition_report.py`: UNDER-side
+  state-value transition report.
+- `test_under_walk_forward.py`: UNDER walk-forward harness rolling
+  windows + per-window metrics.
+- `test_side_neutral_under_alpha.py`: cross-module tests covering the
+  side-neutral research stack and the UNDER paper ledger.
+
+### Stage-1 family (Alt-A staging + scope + audit)
+
+- `test_stage1_cache_promote.py`: `stage1_cache_promote` inline
+  refresh step — sanity guard (game-count floor + coverage window)
+  before promoting `cache/mlb_ou_cache.staging.json` to
+  `cache/mlb_ou_cache.json`.
+- `test_stage1_shadow_empirical_runtime.py`: runtime Alt-A shadow
+  logging path; both production + Alt-A FVs logged per candidate.
+- `test_stage1_support.py`: Stage-1 support/trust proxy math
+  (`effective_n_proxy`, `stage1_trust_weight`, support buckets,
+  exact-cell flags).
+- `test_stage1_inferred_empirical_audit.py`: daily overconfidence
+  audit (Poisson vs empirical sibling reconstruction).
+- `test_build_stage1_cell_loss_attribution.py`: cell-conditional
+  loss attribution (Active #10).
+- `test_build_stage1_shadow_override_report.py`: Alt-A + Alt-B
+  counterfactual replay; cohort breakdown across 5 dimensions.
+
+### Promote.py + auto-daemon
+
+- `test_promote_cli.py`: `promote.py` 4 levers (stage2, stage3-v2,
+  stake-scaling, gate-threshold); verdict-gate refusal; --force
+  override; audit row append; atomic swap + backup.
+- `test_promote_stage1_subcommand.py`: stage1 promote + demote
+  subcommands (added 2026-05-17, closes the last gap in the
+  promote.py coverage matrix).
+- `test_promote_side_field.py`: `direction: "promote"|"demote"` tag
+  on audit rows; backward-compat read of pre-field rows.
+- `test_auto_promote_demote_daemon.py`: daemon `--mode preview|act|off`;
+  14-day cooldown; per-lever opt-outs; subprocess isolation; audit
+  symmetry with manual promotions.
+- `test_daemon_retrospective.py`: post-daemon outcome audit.
+- `test_fast_wilson_demote.py`: fast Wilson-UB demotion path
+  (Active #13); fires at N>=20 post-promotion fills when Wilson
+  upper bound on WR < mean entry_ask (breakeven) at 95% one-sided
+  confidence; daemon bypasses standard cooldown for `fast_demote`.
+- `test_stage3_v2_promotion_check.py`: Stage-3 v2 promotion-gate
+  verdict (compares phase4_models.json vs production weights).
+- `test_stage2_promotion_stability_gate.py`: Stage-2 staging
+  validation-Brier stability gate before promote.
+
+### Lineage / artifact tracking
+
+- `test_artifact_lineage.py`: build-time + promotion-time lineage
+  block schema (git_sha, builder_path, input_hashes,
+  input_dir_summaries, built_at_utc, python_version).
+- `test_artifact_lineage_freshness_report.py`:
+  `build_artifact_lineage_freshness_report.py` writer (per-artifact
+  generated/max dates, row/family counts, stale-downstream flags).
+- `test_lineage_v2_builder_wiring.py`: V2 lineage stamped on
+  Stage-1, Stage-2, Stage-3 v2, EV-policy, walk-forward cert.
+- `test_lineage_v3_startup_logging.py`: startup-time INFO log per
+  cache load; `cache_lineage_freshness_health` daily-review block.
+- `test_cross_artifact_consistency.py`: V4 cross-artifact
+  consistency check via `compare_input_hash` helper.
+
+### Drift detection (the 7-dimension surface)
+
+- `test_build_concept_drift_report.py`: PSI on continuous features,
+  TVD on categorical; trailing 7d vs prior 30d baseline.
+- `test_build_drift_in_drift_report.py`: OLS slope on
+  `psi_history.jsonl`; project 30d forward; insufficient-history
+  guard.
+- `test_calibration_input_drift_audit.py`: input-drift audit hook
+  in `calibrate_signal_probabilities.py` (Phase 3 select-method
+  audit dict).
+- `test_calibration_stability_gate.py`: method-stability gate
+  preserved from earlier (2026-05-14); 5/14 platt-vs-isotonic
+  modal selection.
+
+### Settlement-truth, loss-attribution, gate counterfactual
+
+- `test_verify_settlement_truth.py`: 7 result codes (`ok`,
+  `resolution_mismatch`, `total_mismatch`, `stale_filled`, etc.,
+  Active #12). Catches scraper-timing snapshots vs real
+  data-refresh gaps.
+- `test_build_loss_attribution_report.py`: per-bet 4-stage
+  probability decomposition; logit-additive FV chain identity
+  verified to 0.001 tolerance.
+- `test_build_gate_counterfactual_report.py`: per-gate threshold
+  sweep + top_recommendations ranking by $/30d saved.
+
+### Quote engine + parallel engines (multi-engine architecture)
+
+- `test_live_quote_engine.py`: two-sided quote engine shadow.
+- `test_quote_engine_shadow_report.py`: shadow report builder.
+- `test_parallel_engines_mvp.py`: 14 tests covering
+  `launch_parallel_engines.py` PRESETS, EngineConfig, RunningEngine,
+  RESERVED + LIVE_ONLY flag rejection, label regex, _wait_for_engines.
+- `test_inventory_tracker.py`: per-game/per-line exposure tracker
+  used by correlated-line exposure cap and (future) quote engine.
+
+### Weekly rollup + stake scaling
+
+- `test_build_weekly_drift_rollup.py`: trailing-7d HTML rollup with
+  KPI bar + alerts feed + sparklines.
+- `test_analyze_stake_scaling_promotion.py`: Active #6 part 2
+  promotion-gate analyzer.
+
+### CLV / FV disagreement / market-anchored alpha
+
+- `test_build_clv_report.py`: CLV diagnostics by family/gate/bucket.
+- `test_build_fv_disagreement_quality_report.py`: market-benchmark
+  diagnostic for raw FV.
+- `test_fv_disagreement_quality_walk_forward.py`: anti-overfit
+  validation lane for FV disagreement.
+- `test_calibration_market_anchored_alpha_walk_forward.py`:
+  rolling family-separated alpha walk-forward.
+- `test_build_fv_trust_shrinkage_experiment.py`: support-weighted
+  logit shrinkage toward market anchors.
+
+### Misc
+
+- `test_evaluate_stage1_prior_candidates.py`: broad Stage-1 prior
+  proxy screen (rolling 3-10y, exponential recency, scoring-env
+  weights, blends).
+- `test_scoring_path_features.py`: linescore-inning-run feature
+  computation (`scoring_inning_rate`, `burst_share`, etc.).
+- `test_runtime_refit_artifact_purpose.py`: `--artifact-purpose
+  evaluation|runtime-refit` split on calibration + EV-policy
+  artifacts.
+- `test_backup_retention_and_psi_history_gc.py`:
+  `.prior_promote_archive/` backup retention (keep 5 most recent)
+  + PSI-history GC (PSI_HISTORY_RETENTION_DAYS=365 on every append).
+- `test_build_analysis_safe_trade_table.py`: canonical session/ledger
+  trade table; excludes order_status=error attempts; labels live vs
+  paper fallback.
+- `test_live_engine_overrides.py`: runtime config overrides layer
+  (Active #15 — daemon-actuated lever changes without engine restart).
 
 ## Cross-Folder Dependencies
 

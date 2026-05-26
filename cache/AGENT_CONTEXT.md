@@ -6,15 +6,40 @@ are byproducts of the Python builders next to them (and a few builders that
 live in `scripts/analysis/`). When a builder changes, regenerate the JSON in
 the same patch -- do not hand-edit the JSON.
 
-Last checked against the active `cache/*.py` files: 2026-05-13
+Last checked against the active `cache/*.py` files: 2026-05-25
 (density_alt + hr_factor families in Stage-2; park_hr_factors.json from
 scripts/analysis/build_park_hr_factors.py; **staging-vs-production split**
-added for both Stage-2 and Stage-3: `mlb_stage2_run_env.staging.json` and
-`team_offense_v2_weights.json` are written daily by the refresh, but
-production reads `mlb_stage2_run_env.json` and the compiled-in defaults in
-`scripts/analysis/team_offense_model.py` until an explicit promotion runs;
-Stage-1 builder now supports explicit date/season windows, dedupes duplicate
-schedule-date files by `gamePk`, and writes history coverage metadata).
+now covers ALL THREE stages: Stage-1 (`mlb_ou_cache.staging.json` plus the
+Alt-A variant `mlb_ou_cache_alt_a.staging.json`, both promoted via
+`promote.py stage1`), Stage-2 (`mlb_stage2_run_env.staging.json` promoted
+via `promote.py stage2`), and Stage-3 v2 (`team_offense_v2_weights.json`
+promoted via `promote_team_offense_v2.py`); all production paths
+auto-backup to `<file>.prior_promote.json` before swap, archive prior
+backups to `<file>.prior_promote_archive/` keeping 5 most-recent, and
+stamp build-time + promotion-time lineage (git_sha, builder_path,
+input_hashes, input_dir_summaries, built_at_utc) -- see Active #16
+v1-v4 history in ROADMAP. Stage-1 builder now supports
+`--smoothing-mode {poisson, empirical_when_available}` for Alt-A; the
+Alt-A staging cache is NEVER auto-promoted, even when the staging-health
+block looks good).
+
+## Recent changes
+
+_Append dated bullets here when you change anything in this folder.
+Mirrors `MASTER_CONTEXT.md`'s "Recent major shifts" pattern; bump
+"Last checked" above when you sweep the whole doc._
+
+- **2026-05-25** — added the Alt-A staging cache row + lineage block
+  doc section (cross-reference to Active #16 v2 lineage stamping
+  shipped 2026-05-17).
+- **2026-05-18** — `--smoothing-mode {poisson, empirical_when_available}`
+  flag shipped on `build_mlb_ou_cache.py`; `mlb_ou_cache_alt_a.staging.json`
+  materializes Alt-A as a real cache file (never auto-promoted).
+- **2026-05-17** — `stage1_cache_promote` inline refresh step + tight
+  sanity guard added; Stage-1 production now follows the staging-vs-prod
+  pattern same as Stage-2 / Stage-3 v2.
+
+## Builder responsibilities
 
 The two builders that live here (`build_mlb_ou_cache.py`,
 `build_mlb_stage2_run_env.py`) are the Stage-1 / Stage-2 fair-value pipeline.
@@ -227,18 +252,50 @@ artifacts.
 
 ### Staging-vs-production pattern
 
-Both Stage-2 and Stage-3 v2 follow the same shape:
+All three stages follow the same shape:
 
-| Stage | Daily fit (research) | Production read |
-| --- | --- | --- |
-| Stage-2 | `cache/mlb_stage2_run_env.staging.json` (auto-rewritten by refresh) | `cache/mlb_stage2_run_env.json` (manual swap) |
-| Stage-3 v2 | `data/analysis_output/team_offense_calibration/phase4_models.json` (auto-rewritten by refresh) | `cache/team_offense_v2_weights.json` (written by `promote_team_offense_v2.py`) |
+| Stage | Daily fit (research) | Production read | Promotion CLI |
+| --- | --- | --- | --- |
+| Stage-1 | `cache/mlb_ou_cache.staging.json` (auto-rewritten by `stage1_ou_cache` refresh step, auto-promoted by `stage1_cache_promote` after sanity guard) | `cache/mlb_ou_cache.json` | `promote.py stage1` (also supports Alt-A) |
+| Stage-1 Alt-A | `cache/mlb_ou_cache_alt_a.staging.json` (auto-rewritten by `stage1_ou_cache_alt_a` refresh step) | (not yet promoted; Active #8) | `promote.py stage1 --source cache/mlb_ou_cache_alt_a.staging.json` (NEVER auto) |
+| Stage-2 | `cache/mlb_stage2_run_env.staging.json` (auto-rewritten by refresh) | `cache/mlb_stage2_run_env.json` (manual swap) | `promote.py stage2` |
+| Stage-3 v2 | `data/analysis_output/team_offense_calibration/phase4_models.json` (auto-rewritten by refresh) | `cache/team_offense_v2_weights.json` (written by `promote_team_offense_v2.py`) | `promote.py stage3-v2` or `promote_team_offense_v2.py` |
 
 The motivation is symmetric: a daily fit that auto-promotes itself
 into the live FV path would mean a noisy day's data could silently
-swap the live model. Keeping the promotion manual gives the operator
-a chance to read the `model_freshness_health` Brier diff and make an
-explicit "yes, swap" call.
+swap the live model. Keeping the promotion manual (with the exception
+of Stage-1 production, which has a tight sanity guard) gives the
+operator a chance to read the `model_freshness_health` Brier diff
+and make an explicit "yes, swap" call. The auto-promote/demote
+daemon (`auto_promote_demote_daemon.py`, ships `--mode preview` by
+default) bridges this: in `--mode act` it auto-invokes `promote.py`
+for file-swap levers when a verdict says go AND 14-day cooldown
+elapsed, but the operator must opt in.
+
+### Lineage block (2026-05-17, Active #16)
+
+All cache JSONs above carry a build-time `lineage:` block:
+
+```json
+"lineage": {
+  "git_sha": "47c58a6b...",
+  "git_branch": "main",
+  "git_dirty": false,
+  "builder_path": "cache/build_mlb_ou_cache.py",
+  "input_hashes": {"data/games/regular/...": "sha256:..."},
+  "input_dir_summaries": {"data/games/regular": {"file_count": 12553, "newest_mtime": "..."}},
+  "built_at_utc": "2026-05-25T17:21:22Z",
+  "python_version": "3.11.x"
+}
+```
+
+`promote.py` audit rows additionally stamp `source_artifact_lineage` +
+`promotion_lineage` so `promote.py status` can answer "which artifact
++ which git_sha was live during session X?" without git archaeology
+when `fast_demote` fires. Cross-artifact consistency check
+(`compare_input_hash` helper) flags `(artifact, input)` pairs as
+match / stale / not_tracked / current_missing; surfaced in
+`_cross_artifact_consistency_health` daily-review block.
 
 ## Cross-Folder Dependencies
 

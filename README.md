@@ -1,5 +1,15 @@
 # Baseball Polymarket O/U Pipeline
 
+> **Operator reminder — Phase 6 deadline: 2026-06-07** (13 days from
+> 2026-05-25). TR19's `extreme_edge_max=0.22` cap was tuned against v1
+> Stage-3's edge distribution; TR20 swapped Stage-3 to v2 on 2026-05-07
+> and TR21 added Stage-2 `density_alt` + `hr_factor` families on
+> 2026-05-08, so the cap needs to be re-calibrated against the v2-era
+> distribution. The startup refresh's `phase6_reminder` field
+> (`data/analysis_output/startup_refresh/<date>_startup_refresh.json`)
+> fires automatically after 2026-06-07. Plan a walk-forward re-tune
+> before that date.
+
 ## Objective
 
 This repo builds and operates a **self-improving** automated betting system for MLB Over/Under totals markets on Polymarket. "Self-improving" is the load-bearing word: every model, calibrator, gate-economics audit, and drift alert that the live runtime depends on is rebuilt and re-evaluated on the latest data by the **startup script** (`scripts/analysis/run_daily_refresh.py`, executed automatically before `LiveTradingEngine` boots). The operator's job is to read the daily refresh's health rollup and apply the small set of decisions the system explicitly flags for human approval (Stage-2 promotion, Stage-3 v2 promotion, gate threshold changes); everything else self-corrects between sessions.
@@ -91,7 +101,7 @@ The trade decision is model-based:
 2. **`p_fill`** from execution/microstructure features
 3. **`EV_realized = p_fill * EV_if_filled`**
 
-The trigger itself is not the thesis. It is only the candidate generator. Current production trading still uses the stable gate stack; EV policy, probability calibration, no-score drift, and phantom-risk diagnostics are kept in shadow unless explicitly promoted after enough data.
+The trigger itself is not the thesis. It is only the candidate generator. Current production trading still uses the stable gate stack; EV policy, no-score drift, and phantom-risk diagnostics are kept in shadow unless explicitly promoted after enough data. **Probability calibration runs in band-gated enforce mode since 2026-05-19**: the Platt calibrator overwrites raw FV only when raw>=0.90 (captures the +28pp dangerous-tail overconfidence) and leaves the mid-band alone (where the calibrator over-pulls). See `DEFAULT_PROB_CALIBRATION_MODE` and `DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW` in [signal_config.py](scripts/trading/signal_config.py#L177), and `docs/operational/fv-recalibration-2026-05-19.md` for the audit that motivated it.
 
 ### State-value transition diagnostics
 
@@ -264,12 +274,88 @@ baseball/
       no_score_drift_walk_forward.py      -- deduped no-score drift training table + walk-forward harness
       session_report.py                   -- live session analytics dashboard (P&L, gate sim, venue breakdown)
 
+      # Daily refresh orchestrator + promotion plumbing
+      run_daily_refresh.py                -- canonical daily refresh (~63-step pipeline; invoked by live_engine on startup)
+      promote.py                          -- unified promote/demote CLI for 5 levers (stage1, stage2, stage3-v2, stake-scaling, gate-threshold)
+      auto_promote_demote_daemon.py       -- auto-promote/demote daemon (--mode preview|act|off; 14-day cooldown)
+      daemon_retrospective.py             -- post-daemon outcome audit
+      promote_team_offense_v2.py          -- manual Stage-3 v2 weights promotion
+
+      # Walk-forward + certification
+      build_walk_forward_certification.py -- per-gate scorecard (KEEP / RETUNE / RETIRE) + cohort breakdowns
+      analyze_stake_scaling_promotion.py  -- Active #6 part 2 promotion-gate analyzer
+      build_weekly_drift_rollup.py        -- trailing-7d HTML rollup (KPI bar, alerts, sparklines)
+
+      # Drift detection (the 7-dimension surface)
+      build_concept_drift_report.py       -- PSI/TVD on model inputs (trailing 7d vs prior 30d); leading indicator
+      build_drift_in_drift_report.py      -- linear-trend on psi_history; catches slow-creep drift
+      build_artifact_lineage_freshness_report.py -- per-artifact generated/max dates, input hashes, stale-downstream flags
+
+      # Stage-1 attribution + Alt-A
+      build_loss_attribution_report.py    -- per-bet 4-stage probability decomposition (logit-additive chain)
+      build_stage1_cell_loss_attribution.py -- Stage-1 cell-conditional loss attribution
+      build_stage1_shadow_override_report.py -- Alt-A empirical-when-available + Alt-B fallback-level block replay
+
+      # Gate counterfactuals + settlement truth
+      build_gate_counterfactual_report.py -- per-gate threshold sweep; top_recommendations ranked by $/30d
+      verify_settlement_truth.py          -- cross-check settled bets against MLB ground truth
+
+      # UNDER side-aware family (Phase A of bidirectional pivot)
+      build_under_state_value_transition_report.py -- UNDER-side state-value transition report
+      build_under_candidate_universe.py   -- UNDER candidate universe table (paired with OVER)
+      under_walk_forward_runner.py / build_under_walk_forward_certification.py
+                                          -- UNDER walk-forward + certification
+      build_under_paper_ledger.py         -- UNDER-only paper replay over side-neutral table
+
+      # Live quote-engine + side-neutral research
+      build_quote_engine_shadow_report.py -- two-sided quote engine shadow analysis
+      build_side_neutral_opportunity_table.py -- side-neutral research table (pairs over_yes + under_no books)
+      aggregate_parallel_engines.py       -- compare parallel paper engine roots (used with launch_parallel_engines.py)
+      learn_execution_policy.py           -- Active #7 execution-policy prototype (LOOCV)
+
+      # Sibling packages
+      human_review/                       -- 12-module daily-review reporter (calibration_health, drift_health, stage1_health, under_health, system_health, ...)
+      calibration/                        -- 5-module calibration internals (methods, scoring, stability_gate, input_drift, bundle_phases)
+      unified_signal_table/               -- 5-module helper library backing build_unified_signal_table.py
+
     trading/
       models.py            -- data models: BetRecord, LiveBetRecord, OrderResult, OrderStatus, TradeRecord
       signal_engine.py     -- core signal detection + gate pipeline + paper simulation (was paper_trader.py)
-      live_engine.py       -- live CLOB execution engine, Kelly sizing, order lifecycle (was real_trader.py)
-      polymarket_client.py -- Polymarket CLOB REST client: auth, orders, fills (was clob_order_client.py)
+      live_engine.py       -- live CLOB execution engine (orchestration core)
+      live_engine_cli.py / _placement.py / _session_io.py / _setup.py -- impl modules carved out of live_engine
+      live_engine_overrides.py -- runtime config overrides layer
+      live_pricing.py / live_order_lifecycle.py / live_ev_policy_runtime.py
+                           -- pricing math, open-order loop, EV-policy artifact runtime
+      live_diagnostics.py / live_session_loading.py / live_reconciliation.py
+                           -- end-of-run diagnostics, session resume, orphan-fill recovery
+      polymarket_client.py -- Polymarket CLOB REST client: auth, orders, fills (legacy sig_type=2 + deposit-wallet sig_type=3)
       ev_policy.py         -- EV policy model scoring runtime (LogisticJsonScorer)
+      probability_calibration.py -- runtime calibration (family-aware, fail-closed in enforce)
+      model_families.py    -- canonical family labels (score_event_transition / no_score_drift)
+      signal_pipeline.py + signal_pipeline_payload.py / _state_value.py /
+        _no_score_drift.py / _capture.py / _gates_pre_fv.py / _gates_post_fv.py
+                           -- per-tick gate pipeline split into 6 phases
+      signal_config.py / signal_gates.py / signal_interaction_features.py -- defaults, CLI, gate relax helpers, Family E features
+      book_features.py / book_velocity.py / pricing_features.py / tape_capture.py
+                           -- Family A-D execution feature builders
+      candidate_logging.py / candidate_paths.py / candidate_rollups.py /
+        candidate_schema_enrichment.py / candidate_score_confirmation.py -- candidate row writers + sidecars
+      capture_helpers.py / shared_capture.py -- book/tape/Family-B/C sidecar capture
+      weather_client.py    -- active-date local stadium weather cache enrichment (Weather v2)
+      scoring_path_features.py -- shadow scoring-timing features from linescore inning runs
+      shadow_diagnostic_features.py / shadow_post_tr20.py -- shadow tags for current-state edge, phantom risk, post-TR20 probes
+      stage1_cache_audit.py / stage1_support.py -- Stage-1 inferred-state diagnostics + support proxies
+      remaining_opportunity.py -- bottom-9-availability flags + expected remaining half-innings
+      line_state.py        -- per-(game,line) LineState dataclass + pure helpers
+      session_serialization.py -- paper/live session JSON builders
+      inventory_tracker.py -- per-game/per-line exposure tracker (correlated-line cap input)
+      runtime_log_rollups.py / order_status.py -- compact DEBUG rollups, canceled<->cancelled normalization
+
+      launch_parallel_engines.py -- launches N paper SignalEngine processes against the same live market day (PRESETS: A_current, B_cal_only, C_raw, D_scope_only, E_tight_edge)
+      paper_engine_consumer.py -- paper engine consumer for shared-market-data architecture
+      live_quote_engine.py -- two-sided quote engine (shadow; bidirectional pivot Phase A scaffolding)
+      shared_market_data.py / shared_market_watcher.py -- shared book-poller infrastructure for parallel engines
+
       paper_trader.py      -- entry-point shim -> signal_engine.main() (backward-compat)
       real_trader.py       -- entry-point shim -> live_engine.main() (backward-compat)
       clob_order_client.py -- re-export shim -> polymarket_client (backward-compat)
@@ -494,7 +580,7 @@ python scripts/trading/signal_engine.py --date 2026-04-09
 | `--blowout-lead-min` | 6 | Full blowout: lead >= this AND inning >= 6 |
 | `--blowout-adj-lead-min` | 4 | Blowout-adjacent: lead >= this AND inning >= 7 |
 | `--max-base-fv` | 0.99 | FV saturation skip threshold |
-| `--fv-ask-gap-max` | 0.28 | Large-gap skip: model edge > this AND inning >= 7 |
+| `--fv-ask-gap-max` | 0.26 | Large-gap skip: model edge > this AND inning >= 7 (lowered TR13 -> TR-current 2026-04 after phantom-run analysis) |
 | `--s2-suppress-max` | -0.20 | Stage-2 extreme suppression logit threshold |
 | `--s2-suppress-min-inning` | 6 | Minimum inning for S2 suppression gate |
 | `--sp-era-threshold` | 3.75 | Pitcher quality gate ERA threshold |
@@ -559,8 +645,14 @@ python scripts/trading/live_engine.py --no-performance-mode
 ### Startup artifact refresh (canonical daily refresh)
 
 Live startup runs the canonical daily refresh before `LiveTradingEngine` loads
-its runtime artifacts. As of 2026-05-16 it is a **45-step base pipeline**
-(plus one `daily_human_review:<date>` step per stale completed session) -- it
+its runtime artifacts. As of 2026-05-25 it is a **63-step base pipeline plus
+one `daily_human_review:<date>` step per stale completed session = 64 steps
+when at least one session is stale** (the canonical step list is generated
+by `build_refresh_steps()` in
+[run_daily_refresh.py](scripts/analysis/run_daily_refresh.py#L1455); to print
+the live list, run `python scripts/analysis/dump_refresh_steps.py` -- this is
+the single source of truth, do not maintain a per-step prose list here that
+will drift) -- it
 scrapes yesterday's completed games, refreshes today's MLB schedule, rebuilds
 Stage-1/2/3 inputs, runs preflight cache checks, retrains every research
 artifact whose inputs have changed (Stage-2 staging, Stage-3 v2 weight fits,
@@ -680,8 +772,9 @@ Differences from the default flags table below:
   typical 7-game slate; replaces the prior --stake 20/--daily-budget 160 pair).
 - `--per-game-budget-fraction 0.40 --max-open-orders 7` (slightly looser than
   defaults to allow more concurrent same-game capacity).
-- `--fv-ask-gap-max 0.26` (tightened from default 0.28 after Apr 21 phantom-run
-  analysis).
+- `--fv-ask-gap-max 0.26` (matches the current compiled default since the
+  Apr 21 phantom-run analysis tightened it from 0.28; explicit on the command
+  line for audit clarity).
 - `--capture-duration 120 --capture-depth 5` (longer window, deeper book than
   defaults, to feed fill-model + execution-replay research).
 - Shadow diagnostics on: `--shadow-relaxed-enabled`, `--ev-policy-mode shadow`.
@@ -719,6 +812,18 @@ Differences from the default flags table below:
 | `--startup-refresh-skip-stage1-cache` | off | Skip daily Stage-1 O/U cache rebuild |
 | `--startup-weather-provider` | open-meteo | Weather v2 provider for startup cache (`none` writes metadata-only rows with unknown temp/wind) |
 | `--startup-weather-timeout` | 8 | Per-request timeout for startup weather refresh |
+| `--prob-calibration-mode` | enforce | `off` / `shadow` / `enforce` — band-gated since 2026-05-19 |
+| `--prob-calibration-enforce-min-raw` | 0.90 | Overwrite raw FV only when raw>=this; mid-band stays raw to avoid Platt over-pull |
+| `--wallet-exhausted-cooldown-secs` | 300 | After CLOB "not enough balance" error, skip CLOB for this many seconds; bets route through paper fallback |
+| `--max-correlated-over-lines-per-game` | 2 | Cap concurrent over-side bets on the same game (counts filled + open) |
+| `--min-correlated-line-gap` | 1.5 | Min runs between over-side lines on the same game (blocks O7.5+O8.5, allows O7.5+O9.5) |
+| `--calibrated-stake-scale-mode` | shadow | `off` / `shadow` / `enforce` — multiplier from calibrated edge (Active #6 part 2) |
+| `--use-deposit-wallet` / `--deposit-wallet 0x...` | off | Switch CLOB signing to ERC-1271 deposit wallet (`sig_type=3`) to avoid the 2026-05 ghost-fills issue |
+| `--stage1-shadow-empirical-override` | off | `off` / `shadow` — log Alt-A FV (`empirical-when-available`) alongside production FV on every candidate; no decision change |
+| `--stage1-alt-a-scope-mode` | shadow | `off` / `shadow` / `enforce` — scoped Alt-A enforce (cohort-aware empirical override; inning>=8 is currently `hold_poisson`, Active #17) |
+| `--under-emission-mode` | off | `off` / `shadow` — emit UNDER candidate row alongside every OVER candidate that reaches the FV phase (Phase A5; no UNDER bets placed) |
+| `--quote-engine-mode` | off | `off` / `shadow` — two-sided quote engine shadow logging (bidirectional pivot Phase A scaffolding) |
+| `--auto-daemon-mode` | preview | `preview` / `act` / `off` — auto-promote/demote daemon mode (forwarded to refresh step) |
 
 ### Order lifecycle
 
@@ -750,6 +855,61 @@ Outputs:
 - `data/live_trading/candidate_universe/` -- trade, skip, and shadow state-value candidates
 - `data/live_trading/sessions/YYYY-MM-DD_session.json` -- full session state
 - `data/live_trading/book_captures/` -- post-signal book snapshots
+
+---
+
+## 5b) Multi-engine parallel paper runs
+
+Run several paper `SignalEngine` processes against the same live market day,
+each with its own `paper_root` and `config_label`. Lets us compare
+configuration choices (calibrator on/off, scoped Alt-A enforce on/off,
+tighter edge threshold) under the same baseball/market regime without
+refactoring the engine into a single-process dispatcher.
+
+```bash
+# Launch the standard 5-config bundle (A_current, B_cal_only, C_raw,
+# D_scope_only, E_tight_edge) for today's slate
+python scripts/trading/launch_parallel_engines.py \
+  --config A_current --config B_cal_only --config C_raw \
+  --config D_scope_only --config E_tight_edge
+
+# Custom config: label:flag-spec
+python scripts/trading/launch_parallel_engines.py \
+  --config "F_tight_extreme:--extreme-edge-max 0.18 --prob-calibration-mode enforce"
+```
+
+Built-in `PRESETS` (see `scripts/trading/launch_parallel_engines.py`):
+
+| Preset | Calibrator | Scoped Alt-A | Notes |
+|---|---|---|---|
+| `A_current` | enforce | enforce | Production-mirror |
+| `B_cal_only` | enforce | shadow | Calibrator on, scope off |
+| `C_raw` | shadow | shadow | Both off (raw FV baseline) |
+| `D_scope_only` | shadow | enforce | Calibrator off, scope on (completes 2x2) |
+| `E_tight_edge` | enforce | enforce | A + edge-threshold raised 5pp |
+
+Architecture:
+- The launcher runs the canonical daily refresh once; child engines all get
+  `--no-startup-refresh` so N configs don't rebuild the same artifacts N times.
+- All engines share book/tape captures via `shared_market_watcher.py` +
+  `shared_market_data.py`; each engine still owns its own decision logic and
+  per-config `paper_root`.
+- `LIVE_ONLY_ENGINE_FLAGS` (Kelly, daily-budget, stake-mode, etc.) are
+  rejected to prevent live-only flags leaking into paper presets.
+- Per-engine session state lands under `data/paper_<config_label>/`.
+
+After a session, compare results offline:
+
+```bash
+python scripts/analysis/aggregate_parallel_engines.py \
+  --paper-root data/paper_A_current \
+  --paper-root data/paper_B_cal_only \
+  --paper-root data/paper_C_raw
+```
+
+Outputs `data/analysis_output/parallel_engine_comparison/`: a compact
+JSON + Markdown comparison with stake-weighted edge metrics, daily
+fill rate, filled WR, and disagreement table across configs.
 
 ---
 
@@ -1332,6 +1492,14 @@ This reduces operator noise without deleting forensic data.
 | **TR19 (extreme-edge threshold tightened, 2026-05-03)** | **`gate_extreme_edge` threshold lowered from 0.30 -> 0.22** (`DEFAULT_EXTREME_EDGE_MAX` in `signal_config.py`). No new gate; tightens the existing TR17 enforcement based on the 2026-04-28 -> 2026-05-03 live window analysis (`scripts/analysis/analyze_window_2026_04_28_to_05_03.py`). Window total: 21 settled, 11W/8L, -$55.19 P&L. The edge > 0.20 cohort was 4W/8L for -$79.57 on 12 bets at avg fill 0.63 (Wilson 95% upper-bound WR ~ 58% vs ~ 62% structural break-even). The edge < 0.20 cohort was 10W/1L for +$24.38 on 11 bets at avg fill 0.745. All 8 unique window losses had `p_score_event_proxy = 0.000` (no ask-jump confirmation of a real run), confirming systematic phantom-run rather than variance. Threshold choice 0.22 (not 0.20) preserves a 2pp buffer above the empirical cohort boundary so signals near the configured `edge_threshold` floors (0.10 / 0.15) still pass. Tunable via `--extreme-edge-max`. The `ltp_ask_gap` shadow tag remains shadow-only. Walk-forward certification on 30 days recommended as a follow-up before further tightening. **NOTE: TR19's empirical calibration is superseded as of 2026-05-07 (TR20) -- the TR19 threshold was tuned around v1 Stage-3's edge distribution; v2 produces a different distribution. Treat the 0.22 cap as a placeholder pending fresh post-TR20 calibration.** |
 | **TR20 (Stage-3 v2 swap + fresh-test marker, 2026-05-07)** | **Stage-3 team-offense model REPLACED.** Deployed Model 3 from the V2 calibration work (`model_improvements/team_offense_v2_phase{1,4,45,5}_findings_2026_05_07.txt`). New Stage-3 blends three EB-shrunk per-team windows: prior_season_rpg (coef -0.1514), season_to_date_rpg (+0.1407), momentum_rpg_10 (+0.1503). Linear inning-weight ramp retained; per-inning weights tested but overfit on holdout. Fit on 1,129,081 leakage-free residual rows from 2021-2024, validated on 2025, holdout-tested on 2026. Replaces v1's 50-game-window + hard-clamp + LOGIT_DELTA_PER_RUN=0.20 model that Phase 1 showed was ~3.2x too aggressive. v1 code deleted in this changeset. **FRESH TESTING WINDOW STARTS 2026-05-07.** All TR1-TR19 evidence (gate thresholds, edge cohorts, win rates, P&L splits) was collected with v1 Stage-3 driving the edge distribution. v2 produces materially different edges, so prior gate calibrations may need re-tuning. Treat post-2026-05-07 data as the canonical source for any future gate-threshold or model-promotion decisions; pre-2026-05-07 data remains forensically useful but is no longer apples-to-apples. |
 | **TR21 (Stage-2 park-HR feature pair, 2026-05-08)** | **Stage-2 model EXTENDED with two new feature families and REBUILT/PROMOTED.** Added `density_alt` (elevation x temperature interaction; standard density-altitude formula `DA = elev + 120*(T_F-59)`, bucketed `<0/0_1k/1k_2_5k/2_5k_5k/5k+`) and `hr_factor` (per-(park, season) HR rate vs league mean, EB-shrunk with prior n=30 games, bucketed `<0.85/0.85_0.95/0.95_1.05/1.05_1.15/1.15+`). Both are non-redundant with the existing static `park` bucket: `density_alt` varies with same-day temperature, `hr_factor` varies year-over-year (juiced ball, fence moves, humidor, etc.). Refit on 12,553 games (train <= 2024, val >= 2025, 148,270 val rows). Validation Brier improvements: O6.5 +0.42%, O7.5 +0.70%, O8.5 +0.58%, O9.5 +0.64%, O10.5 +0.42%, O11.5 +0.33%. Both features selected by the validation tuner on every line; `density_alt` weight 0.5 on 5/6 lines, `hr_factor` weight 0.25-0.5 on every line. New model promoted to `cache/mlb_stage2_run_env.json` (prior model backed up to `*.pre_density_alt_hr_factor_2026_05_08.bak`). New daily-refresh step `park_hr_factors` (in canonical startup) runs `scripts/analysis/build_park_hr_factors.py` to keep `cache/park_hr_factors.json` fresh; preflight_artifacts warns when missing. No gate threshold changes in this transaction; the Stage-2 edge distribution may shift slightly so post-TR20 fresh-test calibration audit (Phase 6, due ~2026-06-07) should account for both TR20 and TR21 together. |
+| **TR22a (correlated-line exposure cap, 2026-05-12)** | **Per-game correlated-line exposure cap promoted to enforce.** New `LiveTradingEngine._evaluate_correlated_line_cap` blocks multiple over-side bets on the same game when they share a correlated trade idea. Two rules, both counting filled + open bets: count cap (default `--max-correlated-over-lines-per-game 2`) and spacing cap (default `--min-correlated-line-gap 1.5` runs — blocks O7.5+O8.5 but allows O7.5+O9.5). Skip reasons: `correlated_line_count_cap`, `correlated_line_gap_cap`. Lifted to shared `signal_config.py` on 2026-05-21 so paper sessions also enforce. |
+| **TR22b (calibrated-edge stake scaling — shadow, 2026-05-12)** | **Stake-scaling multiplier added in shadow.** `--calibrated-stake-scale-mode {off,shadow,enforce}` derives a [min, max] multiplier (default [0.5, 1.5]) from the calibrated edge (`fair_value_calibrated - decision_ask`) and applies it to the base Kelly stake. Default `shadow` records the multiplier on every bet record (`calibrated_stake_*` fields) without changing stake. Promotion analyzer at `analyze_stake_scaling_promotion.py` emits a `need_more_data` / `hold` / `promote` verdict; flip via `promote.py stake-scaling` once verdict says go. |
+| **TR22c (wallet-aware paper fallback, 2026-05-13)** | **Live placement no longer drops bets when the wallet is short.** On CLOB "not enough balance / allowance" error, `_record_paper_fallback_bet` synthesizes a paper-fallback fill (`placement_mode="paper_fallback"`, filled at `limit_price`, settled normally) and a session-level cooldown (`--wallet-exhausted-cooldown-secs`, default 300) skips CLOB for subsequent placements until the wallet frees up. Replaces yesterday's retry-storm pattern. Analysis code that wants real-money-only metrics should filter `placement_mode == "live"`. |
+| **TR23 (band-gated calibrator ENFORCE, 2026-05-19)** | **Probability calibration flipped from `shadow` to `enforce` with a band gate.** `DEFAULT_PROB_CALIBRATION_MODE` is now `enforce`; new `DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW = 0.90` (`signal_config.py:177-187`). The Platt calibrator overwrites raw FV only when raw>=0.90 (captures the +28pp dangerous-tail overconfidence found in the 2026-05-19 audit: 487 settled predictions at raw>=0.95 claimed avg 0.97, realized 0.70) and leaves the mid-band [0.80, 0.90) alone (where the Platt fit over-pulls by 10-16pp under realized). The 2026-05-19 CLE@DET 7.5 LOSS (raw FV=0.979, base poisson=0.982 vs cell empirical=0.893 on n=112 exact-match samples) would now calibrate to ~0.78, below 0.80 ask, skipping the bet. Runbook: `docs/operational/fv-recalibration-2026-05-19.md`. |
+| **TR24a (Stage-1 Alt-A runtime shadow logging, 2026-05-17)** | **Stage-1 Alt-A empirical-when-available now logged on every candidate.** New `--stage1-shadow-empirical-override {off,shadow}` (default `off`). When `shadow`, the post-FV phase computes `fair_value_alt_empirical = sigmoid(logit(empirical) + s2_delta + s3_delta)`, runs it through the production calibrator, and logs both production and Alt-A FVs alongside source breakdown. **No decision change.** This is the last code change before the eventual Alt-A ENFORCE flip; the offline shadow-override report now prefers runtime-logged Alt-A over its own offline fallback. |
+| **TR24b (Stage-1 Alt-A staging cache + promote.py stage1, 2026-05-17/18)** | **Alt-A staging cache ships.** New `--smoothing-mode {poisson,empirical_when_available}` flag on `cache/build_mlb_ou_cache.py` materializes the runtime's on-the-fly Alt-A shadow as a real cache file. New refresh step `stage1_ou_cache_alt_a` writes to `cache/mlb_ou_cache_alt_a.staging.json` (NEVER auto-promoted; operator runs `promote.py stage1 --source cache/mlb_ou_cache_alt_a.staging.json`). First production build: 4,200 of 4,298 cells (97.7%) overridden, mean signed delta -2.74pp (Alt-A is conservative vs production, the direction needed to reduce the +27pp bias), 21,240 (cell, line) overrides across 6 lines. `promote.py stage1` + `demote stage1` subcommands shipped — closes the last gap in the promote.py coverage matrix. |
+| **TR25 (Scoped Alt-A enforce — cohort-aware empirical override, 2026-05-21)** | **Per-candidate runtime decision in `_apply_stage1_alt_a_scope`.** When `--stage1-alt-a-scope-mode enforce` AND the candidate's cohort doesn't match a `hold_poisson` rule AND the upstream shadow path computed an alt empirical FV, swap production `fair_value` to use it. Default mode `shadow` so operators audit per-candidate decisions before flipping enforce. Initial rule list (`STAGE1_ALT_A_SCOPE_RULES`) has one explicit `hold_poisson` for `inning>=8` (the known -23.8pp regression cohort identified by the 2026-05-19 shadow-override report); everything else gets `apply` by default. Adds 5 new fields to candidate log: `stage1_alt_a_scope_mode|decision|action|rule_matched|reason`. Boundary-empirical guard preserved (alt_fv_unavailable when 0/1 boundary fires upstream). |
+| **TR26 (UNDER candidate emission — shadow, 2026-05-19)** | **Phase A5 keystone of the bidirectional pivot.** New `--under-emission-mode {off, shadow}` opts the engine into emitting an UNDER candidate row alongside every OVER candidate that reaches the FV phase, with its own calibrated UNDER FV (via the separately-trained `signal_win_calibration_under.json` artifact), its own UNDER-side ask, and its own gate evaluation (`decision=shadow_under` when UNDER gates pass; `gate_min_edge` / `gate_no_under_liquidity` skip reasons otherwise). **NO UNDER bets placed in either mode** — pure observability so the paper-mode runway accumulates UNDER signal-quality data that the daily-review `by_side` block, training table, loss-attribution, and shadow-override reports all pick up automatically. Unlocks Phase B1 side-aware drift alerts. |
 
 ---
 
@@ -1354,55 +1522,64 @@ The pre-2026-05-07 Evidence Snapshot below remains forensically useful but is no
 
 ## Evidence Snapshot
 
-*As of 2026-05-02. Canonical source: `data/analysis_output/unified_signals/signals_master.jsonl` plus live session/order ledgers and daily human-review reports.*
+*Refreshed 2026-05-25 from `data/analysis_output/walk_forward_certification/walk_forward_certification.md` (generated 2026-05-25T17:21Z). Trailing window 2026-04-06 → 2026-05-16. Canonical sources: walk-forward certification report + `data/analysis_output/unified_signals/signals_master.jsonl` + daily human-review reports.*
 
-*Pre-TR20: see Fresh Testing Window note above.*
+**Sample readiness: 🟡 `PRELIMINARY`** — 137 filled bets across 34 session dates (READY threshold = 150 filled / 30 dates, expected ~2026-06-10 if pace holds). Verdicts below are directional, not actionable; do not flip live thresholds at PRELIMINARY.
 
-The current objective is evidence-driven. Key observations from unified tables, session summaries, and live logs:
+Overall sanity baseline (trailing 2026-04-06 → 2026-05-16):
 
-- Unique placed live orders in unified signals: 54 through 2026-05-02
-- **Fill rate: 57.4%** (31 orders reached `filled` status / 54 placed; 30 filled rows are settled in the rebuilt table)
-- **Settled filled win rate: 60.0%** (18W/12L)
-- **Signal win rate (counterfactual, includes cancelled bets): 75.5%** (40/53 settled signals)
-- **Cancelled-bet counterfactual win rate: 95.5%** (21W/1L on settled cancels) - the Winner's Curse gap remains large
-- **Realized P&L: -$106.74** on $533.08 filled stake in the unified live table through 2026-05-02
-- Current gate economics still require rolling/walk-forward validation before promotion of any new enforced gate
+- N signals: **227** | Filled: **137** (60.4%) | Filled WR: **65.0%** | Signal WR: **39.2%**
+- P&L: **+$124.67** | ROI: **4.3%** | Max DD: **−$541.27**
 
-Edge split (still important, now through 2026-05-02):
-- `edge > 0.25` settled filled bets: **1W/6L, -$127.56** on $150.29 stake. **As of 2026-05-01 (TR17), `gate_extreme_edge` was ENFORCED at 0.30; on 2026-05-03 (TR19) the threshold was tightened to 0.22 -- see Gate Evolution table for justification.** Bets in the 0.22-0.30 band are now blocked.
-- `edge > 0.30` settled filled bets: **0W/2L, -$51.24** on $51.24 stake. Blocked by TR17 since 2026-05-01.
-- `0.25 < edge <= 0.30` settled filled bets: **1W/4L, -$76.32** on $99.05 stake. **Now blocked by TR19 (2026-05-03)** along with the rest of the 0.22-0.30 band.
-- `edge <= 0.25` settled filled bets: **17W/6L, +$20.82** on $358.50 stake. The 2026-04-28 -> 2026-05-03 window further confirmed that edge<0.20 is the profitable cohort (10W/1L, +$24.38).
-- 2026-04-28 -> 2026-05-03 window edge cohort detail: edge>0.20 was 4W/8L, -$79.57 on 12 bets; edge<0.20 was 10W/1L, +$24.38 on 11 bets. All 8 unique losses had `p_score_event_proxy = 0.000` (no ask-jump confirming a real run). Source: `scripts/analysis/analyze_window_2026_04_28_to_05_03.py`.
+Per-gate headline verdicts from the walk-forward cert (15 enforced gates audited):
 
-Interpretation:
-- Directional signal quality is high but fill selection quality is what matters
-- Large model-to-market gaps are information asymmetry, not edge -- `gate_fv_ask_gap` (late-inning, TR12) and `gate_extreme_edge` (any-inning, TR17 + tightened TR19) jointly address this failure mode
-- The TR12/TR13/TR17/TR19 gate additions directly address the worst historical losses; `ltp_ask_gap` remains shadow-only pending more sample
-- `p_score_event_proxy` is a strong winner-vs-loser separator in the 2026-04-28 -> 2026-05-03 window (wins mean 0.065, losses mean 0.000); promoting it from shadow to a soft gate is the next candidate for evidence-driven enforcement after TR19's walk-forward audit
+- All 13 currently-enforced gates: **KEEP (low confidence)** — every blocked cohort is worse than its kept cohort, often dramatically so (`gate_inn5_rn_max` blocked ROI -82.3% vs kept +27.7%; `gate_close_game_rn` blocked -83.3% vs kept +16.5%; `gate_min_entry_ask 0.55` blocked -32.8% vs kept +22.0%; `gate_runs_needed_max 3.5` blocked -35.4% vs kept +20.4%). The current gate stack is doing real work.
+- `gate_high_line_min_edge` (current 0.16): **RETUNE (low confidence)** → recommended 0.10. Blocked cohort ROI +2.2% beats kept cohort -5.0% by 7.2pp; the gate is currently filtering profitable bets.
+- `gate_high_line_min_inning` (current 5): **RETUNE (low confidence)** → recommended 6. Blocked cohort ROI +13.9% beats kept cohort -7.4% by 21.2pp.
+- `shadow_gate_current_state_edge_min`: **EXPLORE (low confidence)** → best sweep at 0.08 (+3.7pp kept-blocked ROI delta). Re-evaluate at READY.
 
-### State-value pivot evidence (through 2026-05-02)
+Edge / ask / inning cohort breakdowns (trailing window):
+
+- **Edge band**: 0.10-0.15 cohort is 14W/14L for **-28.1% ROI** (n=14, all filled); 0.15-0.22 is the workhorse at 73.9% WR / +20.7% ROI (n=92 filled); >0.22 is partly blocked by `gate_extreme_edge` but the 38 signals that slipped through are 45.2% WR / +7.2% ROI.
+- **Inning band**: inn_4-5 is **-22.1% ROI** (n=64 filled, 60.9% WR); inn_6-7 flips to **+53.2% ROI** (n=64, 67.2% WR); inn_8-9 is +133.7% on a tiny n=9. Bets earlier than inning 6 are still the loss center.
+- **Runs-needed band**: rn_>3.0 is **-26.8% ROI** (n=38); rn_<=1.5 is **+30.8% ROI** (n=75); rn_2.0-3.0 is **+57.1% ROI** (n=24). The runs-needed gate is functioning correctly.
+- **Decision-ask band**: <0.65 is +3.0% (n=47); 0.65-0.80 is +6.4% (n=76); >=0.80 is +3.5% on a small n=14 — Winner's Curse mostly mitigated, but still watching.
+
+Headline behavioral findings since 2026-05-19 (band-gated calibrator enforce):
+
+- The 2026-05-19 audit found raw FV at >=0.95 was 28pp overconfident (487 settled predictions claimed avg 0.97, realized 0.70). Band-gated enforce now corrects this band (overwrites raw>=0.90) while leaving the mid-band [0.80, 0.90) alone where Platt over-pulls.
+- Stage-1 loss attribution (Active #10) decomposed 87 filled+settled bets: **Stage-1 owns ~100% of the 27pp over-prediction bias** (mean_p0=92.7%, mean_won=65.5%). Stage-2 contributes +0.04pp; Stage-3 actively helps by -0.05pp; calibration was 0 in shadow mode. This re-targeted Active #8 to Stage-1 Alt-A (now in scoped enforce per TR25).
+- Cell-conditional drill found Stage-1 `fallback_rate=69%` and Poisson smoothing inflates by +16pp vs the cell's own empirical rate when both are available — the smoking gun for the Stage-1 over-prediction.
+- Per-line slice: at raw FV >= 0.90, line=5.5 has realized hit rate 51% on n=92 vs claimed 96% (worst miss in the dataset). Hygiene #18 (per-line FV ceiling) is the cheapest documented win.
+
+### State-value pivot evidence (through 2026-05-25)
 
 The April 29 review refined the strategy rather than replacing the system. The key finding was that score-event candidates can be dominated by phantom post-score state assumptions: the model may infer a scoring event, assign a very high post-event FV, and still be rejected by a market that is correctly pricing the current confirmed score.
 
-Observed 2026-04-29 to 2026-05-02 diagnostics:
-- May 1 was profitable (+$2.59, 3W/1L filled), while May 2 gave back more (-$11.52, 3W/2L filled). The two-day result reinforces that 60-75% hit rates can still lose money at high Over prices.
-- May 2's weakest trade was HOU@BOS O9.5: current-state edge was negative, phantom risk was medium, and the bet lost. Current-state edge below 0.03 remains a warning regime, not an enforced gate.
-- No-score drift remains promising only when empirical current-state support agrees with Poisson support; Poisson-only drift is weaker and should stay paper/shadow.
-- Queue-aware execution replay suggests execution price selection may be a higher-ROI research path than adding more gates, but it remains offline until more data accumulates.
+Status as of 2026-05-25:
+- Stage-1 has been confirmed as the bias owner (Active #10), Alt-A has been scoped to enforce on most cohorts but `hold_poisson` for `inning>=8` (Active #17 / TR25), and the band-gated calibrator now backstops the dangerous-tail (TR23). The three independent corrections target the same finding from different angles.
+- The 2026-04-29 to 2026-05-02 phantom-run thesis remains directionally correct, but `p_score_event_proxy` has not been promoted to an enforced gate — it stays a shadow tag pending Active #1's walk-forward verdict at READY.
+- No-score drift remains shadow-only; UNDER candidate emission (TR26) is now logged but no UNDER bets are placed.
+- Queue-aware execution replay + `learn_execution_policy.py` (Active #7) refresh daily; expected promotion review at ~200+ filled bets (~2026-06-15).
 
 Current interpretation:
 - The system should keep collecting stable-filter live data.
 - Score-event trades need current-state and phantom-risk diagnostics attached to every bet.
 - No-score drift should remain shadow-only until there is enough sample to promote or discard it responsibly.
-- EV policy and probability calibration remain shadow diagnostics, not enforced gates, until out-of-sample evidence improves.
+- EV policy remains a shadow diagnostic. **Probability calibration runs in band-gated enforce mode since 2026-05-19** (overwrites raw FV only when raw>=0.90; see `DEFAULT_PROB_CALIBRATION_MODE` / `DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW` in [signal_config.py](scripts/trading/signal_config.py#L177)).
 
 ---
 
 ## Roadmap
 
-The roadmap (recently completed infrastructure, active priorities in priority
-order, and operational guidance) is maintained in **[ROADMAP.md](ROADMAP.md)**.
+The roadmap is maintained in **[ROADMAP.md](ROADMAP.md)** — start with the
+**Verdict status dashboard** at the top for a one-line status of every Active
+and Hygiene item. Shipped work from 2026-05-17 and earlier lives in
+**[ROADMAP_ARCHIVE_2026_H1.md](ROADMAP_ARCHIVE_2026_H1.md)** (carved out
+2026-05-25 to keep the active document scannable).
+
+Repo map and per-folder agent context links live in
+**[MASTER_CONTEXT.md](MASTER_CONTEXT.md)**.
 
 ---
 

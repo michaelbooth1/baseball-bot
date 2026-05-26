@@ -8,6 +8,14 @@ artifacts, and walk-forward validation results.
 
 Last checked against the active `scripts/analysis/*.py` files: 2026-05-16
 (daily refresh expanded to a 45-step base pipeline with artifact lineage/
+freshness auditing; **as of 2026-05-25 the refresh has grown to ~63 steps**
+with the addition of UNDER-family side-aware coverage, drift detection
+(concept_drift + drift_in_drift + cross_artifact_consistency), Stage-1
+loss attribution + shadow-override + cell-conditional, gate
+counterfactuals, settlement-truth verification, Stage-1 Alt-A staging,
+Stage-3 v2 promotion check, auto-promote/demote daemon + retrospective,
+and the live quote-engine shadow; the original 2026-05-16 step list
+below is preserved but no longer exhaustive)
 freshness auditing, FV gap decomposition,
 FV trust/shrinkage experiment, calibration market-anchored alpha research
 models plus rolling alpha walk-forward validation, CLV/late-price diagnostics,
@@ -28,6 +36,31 @@ trend on psi_history projected 30d forward, catches slow-creep).
 (post TR20 Stage-3 v2 swap; v1 `team_offense_model.py` deleted, v2 contents
 installed under the same filename + class name).
 (post weather-v2 feature propagation).
+
+## Recent changes
+
+_Append dated bullets here when you change anything in this folder.
+Mirrors `MASTER_CONTEXT.md`'s "Recent major shifts" pattern; bump
+"Last checked" above when you sweep the whole doc. The canonical
+daily-refresh step list lives in `build_refresh_steps()` in
+`run_daily_refresh.py` -- run `python scripts/analysis/dump_refresh_steps.py`
+to print the live list rather than maintaining it here by hand._
+
+- **2026-05-25 (Tier 2.5)** — `_fit_calibration_bundle` (311 lines)
+  split into 4 phase helpers under new `calibration/bundle_phases.py`.
+  `calibrate_signal_probabilities.py` shrunk 1152 → 991 lines.
+  Public surface preserved.
+- **2026-05-25** — `dump_refresh_steps.py` helper added: prints the
+  canonical refresh step list from `build_refresh_steps()` as
+  Markdown/names/count. Single source of truth for the step list.
+- **2026-05-21** — Scoped Alt-A enforce (TR25) shipped; runtime
+  decision in `_apply_stage1_alt_a_scope` with `hold_poisson` rule
+  for `inning>=8` cohort.
+- **2026-05-19** — Band-gated calibrator enforce (TR23) shipped:
+  `DEFAULT_PROB_CALIBRATION_MODE=enforce`, `*_MIN_RAW=0.90`.
+- **2026-05-19** — UNDER candidate emission shipped (TR26):
+  `signal_win_calibration_under.json` artifact + new `under_*`
+  refresh steps.
 
 Strategic frame: every script in this folder is read-only with respect to live
 trading state. Analysis writes go under `data/analysis_output/<topic>/` and to
@@ -226,12 +259,16 @@ walk-forward + paper-ledger pipeline; do not pool them.
   `PRELIMINARY` at 75 / 14, else `INSUFFICIENT`); (b) cohort
   breakdowns across edge / ask / inning / runs-needed /
   current-state-edge / phantom-risk / family; (c) per-gate
-  scorecard for `gate_extreme_edge`, `gate_min_edge`,
-  `gate_min_inning`, `gate_min_entry_ask`, `gate_runs_needed_max`
-  -- sweep alternative thresholds and emit
-  `KEEP` / `RETUNE` / `RETIRE` with confidence based on
-  filtered-vs-kept cohort sizes; (d) weekly drift table.
-  Output JSON + Markdown to
+  scorecard for **15 enforced gates** in `GATE_DEFS`:
+  `gate_extreme_edge`, `gate_min_edge`, `gate_min_inning`,
+  `gate_min_entry_ask`, `gate_runs_needed_max`, `gate_max_base_fv`,
+  `gate_fv_ask_gap_max`, `gate_min_current_total`, `gate_inn5_rn_max`,
+  `gate_inn6_rn_max`, `gate_close_game_rn`, `gate_s2_suppress_max`,
+  `gate_high_line_min_edge`, `gate_high_line_min_inning`, plus the
+  shadow-only `shadow_gate_current_state_edge_min`. Each sweeps
+  alternative thresholds and emits `KEEP` / `RETUNE` / `RETIRE`
+  with confidence based on filtered-vs-kept cohort sizes; (d) weekly
+  drift table. Output JSON + Markdown to
   `data/analysis_output/walk_forward_certification/`. Wired as a
   refresh step. Note the limitation: gates with zero blocked bets
   in the training table (e.g. `gate_min_edge` -- the table only
@@ -471,7 +508,11 @@ walk-forward + paper-ledger pipeline; do not pool them.
   tests route the event log under `tmp_path` so the canonical
   promotion_events.jsonl never gets polluted.
 - `run_daily_refresh.py`: **canonical daily refresh** invoked by
-  `live_engine.py` at startup. **45-step base pipeline as of 2026-05-16**
+  `live_engine.py` at startup. **~63-step base pipeline as of 2026-05-25**
+  (was 45 steps on 2026-05-16; new steps include the UNDER-family,
+  drift detection, loss-attribution, gate counterfactual, settlement
+  verification, Alt-A staging, auto-daemon, and quote-engine shadow —
+  see top-of-file freshness note)
   plus one `daily_human_review:YYYY-MM-DD` step per stale completed session. No
   per-day artifact should require a manual rerun; if something seems
   missing from the refresh, add a `RefreshStep` instead of writing a
@@ -685,6 +726,91 @@ without opening the orchestrator.
   master rows by `(mode, session_date, placed_at, bet_id)`; manifest
   includes schema version, arg state, column names, row counts, warnings,
   errors.
+
+## Subpackage: `human_review/`
+
+Tier-1 refactor (2026-05-25): the daily-review reporter
+(`build_daily_human_review_report.py`) was decomposed into a 12-module
+sibling package. The orchestrator file stays the CLI entry point;
+each module below owns one block of the report.
+
+- `human_review/__init__.py`: re-exports the public surface so old
+  `from build_daily_human_review_report import ...` paths still work.
+- `human_review/constants.py`: alert thresholds, Wilson-UB gating
+  constants, dimension labels.
+- `human_review/helpers.py`: shared coercion helpers
+  (`_safe_float(value, default=0.0) -> float` -- note this signature
+  differs from the analysis-side `_safe_float(v) -> Optional[float]`
+  used inside the calibration package; do not unify naively).
+- `human_review/calibration_buckets.py`: cohort bucket labellers
+  (`_cohort_edge_bucket`, `_cohort_inning_bucket`,
+  `_cohort_line_bucket`, `COHORT_DIMENSIONS`).
+- `human_review/calibration_attribution.py`: per-alert attribution
+  to promotions / demotions / concept-drift features
+  (`_recent_promotions`, `_recent_demotions`, `_major_drift_features`,
+  `_attribute_alert_*`). `CONCEPT_DRIFT_ATTRIBUTION_TOP_N = 5`.
+- `human_review/calibration_health.py`: the main `_calibration_health`
+  block + `_cohort_calibration_health` + `_cohort_roi_health` +
+  per-family calibration metrics + window filled-bets aggregator.
+  Largest module in the package (~860 lines).
+- `human_review/calibrator_enforce_shipment.py`: the
+  `_calibrator_enforce_shipment_health` block — surfaces when the
+  band-gated enforce flip (TR23) is actively triggering on the day's
+  bets vs. when it's silent.
+- `human_review/core_health.py`: stable per-day blocks
+  (`_count_log_health`, `_stage2_suppression_dollar_audit`,
+  `_fill_rate_health`, `_signal_quality_health`,
+  `_reconciler_summary`, `_fast_demote_health`,
+  `_gate_counterfactual_health`, `_loss_attribution_health`).
+- `human_review/drift_health.py`: the 7-dimension drift surface
+  (regime mix, concept drift, drift-in-drift, etc.).
+- `human_review/stage1_health.py`: Stage-1-specific health blocks
+  (Alt-A staging health, Alt-A scope decision audit).
+- `human_review/system_health.py`: system-level blocks
+  (`_cross_artifact_consistency_health`, `_promotion_lag_health`,
+  `_cache_lineage_freshness_health`).
+- `human_review/under_health.py`: UNDER-side blocks
+  (`_under_emission_health`, `_under_outcomes_counterfactual_health`,
+  trailing-7d UNDER aggregate).
+- `human_review/render_md.py`: the Markdown renderer +
+  `_markdown_table` helper. Pure render; takes the assembled report
+  dict and returns a string.
+
+## Subpackage: `calibration/`
+
+Tier-2 + Tier-2.5 refactor (2026-05-25): `calibrate_signal_probabilities.py`
+shrunk from 1684 -> 1152 -> 991 lines by extracting reusable internals to
+five sibling modules. Public surface re-exported by the original module for
+back-compat.
+
+- `calibration/__init__.py`: 1-line stub.
+- `calibration/scoring.py`: pure math helpers (`_clip_prob`,
+  `_stable_sigmoid`, `_logit`, `_logloss`, `_brier`, `_ece`,
+  `_reliability_bins`, `_slice_overconfidence`). 128 lines.
+- `calibration/methods.py`: Platt + isotonic fit/predict +
+  `_metrics_bundle` + `_select_best_method` (with identity-rejection
+  guard via `DEFAULT_IDENTITY_REJECTION_TRAIN_ECE_DELTA = 0.05`).
+  242 lines.
+- `calibration/stability_gate.py`: 5/14 platt-vs-isotonic stability
+  gate. Reads/writes `data/analysis_output/calibration/selection_history.jsonl`
+  and overrides today's pick to the trailing-7-day modal selection
+  when they differ (after >= 5 days of history). Constants:
+  `DEFAULT_STABILITY_WINDOW = 7`, `DEFAULT_STABILITY_MIN_HISTORY = 5`.
+  185 lines.
+- `calibration/input_drift.py`: `_load_input_drift_status` with PSI
+  threshold constants (`INPUT_DRIFT_TRIGGER_PSI_THRESHOLD = 0.25`,
+  `INPUT_DRIFT_TRIGGER_MIN_MAJOR_FEATURES = 2`). 77 lines.
+- `calibration/bundle_phases.py` (Tier 2.5, 2026-05-25): the 4 phase
+  helpers extracted from the 311-line `_fit_calibration_bundle`:
+  `_score_methods_on_splits` (Phase 2 — raw/platt/isotonic predictions
+  + metrics across train/val/test splits), `_select_method_with_audits`
+  (Phase 3 — best-method selection + stability gate + input-drift
+  audit), `_build_calibration_payload` (Phase 4 — assembles
+  `calibration_payload` + `report_payload` dicts), `_build_prediction_rows`
+  (Phase 5 — per-bet prediction row list). 364 lines. The 991-line
+  `calibrate_signal_probabilities.py` now keeps Phase 1 (splits +
+  train-fit) inline because of tight coupling with function args; the
+  rest is a ~140-line orchestrator that calls these 4 helpers.
 
 ## Cross-Folder Dependencies
 

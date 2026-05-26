@@ -11,6 +11,16 @@ Last checked against the active `scripts/monitor/*.py` files: 2026-05-09
 (post-monitor-refactor — single 1,861-line file split into 10 focused modules,
 all under 1,000 lines).
 
+## Recent changes
+
+_Append dated bullets here when you change anything in this folder.
+Mirrors `MASTER_CONTEXT.md`'s "Recent major shifts" pattern; bump
+"Last checked" above when you sweep the whole doc._
+
+- **2026-05-25** — added "Recent changes" pattern, no code changes.
+  Monitor package has been stable since the 2026-05-09 10-module split;
+  largest file is the orchestrator at 857 lines (under 1,000 threshold).
+
 ## Runtime Dataflow
 
 `MLBPolymarketMonitor.run()` is a single loop with three independent timers:

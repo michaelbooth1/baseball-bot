@@ -2990,6 +2990,25 @@ def _run_refresh_health_rollup(
                 lines.append(f"  - {art.get('name')}: {', '.join(tags[:4])}")
         else:
             lines.append("Artifact lineage freshness report not present (builder didn't run).")
+
+        # Doc-freshness gauge (Phase 3b, 2026-05-25). Surfaces stale
+        # AGENT_CONTEXT.md files + tests/AGENT_CONTEXT.md test-count
+        # drift via the shared helper. Best-effort, never raises.
+        try:
+            from doc_freshness import render_summary_lines as _doc_freshness_lines  # type: ignore
+        except Exception:
+            try:
+                from scripts.analysis.doc_freshness import (  # type: ignore
+                    render_summary_lines as _doc_freshness_lines,
+                )
+            except Exception as exc:
+                lines.append(f"Doc freshness check unavailable: {exc!r}")
+                _doc_freshness_lines = None  # type: ignore
+        if _doc_freshness_lines is not None:
+            try:
+                lines.extend(_doc_freshness_lines())
+            except Exception as exc:
+                lines.append(f"Doc freshness check raised (non-fatal): {exc!r}")
     except Exception as exc:
         lines.append(f"Health rollup encountered an error (non-fatal): {exc!r}")
 
