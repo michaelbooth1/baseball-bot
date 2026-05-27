@@ -1064,6 +1064,80 @@ def evaluate_post_fv_gates(
         )
         return True
 
+    # --- GATE 8f.5: Per-line high-FV slice guard (Hygiene #1, 2026-05-26) ---
+    # 2026-05-19 FV-overconfidence audit found line=5.5 at base FV >= 0.90
+    # has a realized hit rate of only 51% on n=92 vs the claimed ~96%.
+    # OFF by default in production -- enforced only via the K_line5p5_block
+    # paper preset for A/B-test evidence. After ~30 days of paper-mode
+    # evidence the operator decides whether to promote to live.
+    line_high_fv_block_mode = str(
+        getattr(self.trade_args, "line_high_fv_block_mode", "off")
+    )
+    if line_high_fv_block_mode != "off":
+        line_high_fv_min_raw = float(getattr(
+            self.trade_args, "line_high_fv_block_min_raw_fv", 0.90,
+        ))
+        line_high_fv_blocked_lines_raw = str(getattr(
+            self.trade_args, "line_high_fv_block_lines", "",
+        ))
+        blocked_lines = {
+            s.strip()
+            for s in line_high_fv_blocked_lines_raw.split(",")
+            if s.strip()
+        }
+        base_fv = candidate_payload.get("base_fair_value")
+        line_str = str(market.line)
+        if (
+            base_fv is not None
+            and isinstance(base_fv, (int, float))
+            and float(base_fv) >= line_high_fv_min_raw
+            and line_str in blocked_lines
+        ):
+            candidate_payload["line_high_fv_block_mode"] = line_high_fv_block_mode
+            candidate_payload["line_high_fv_block_decision"] = (
+                "would_block_in_shadow"
+                if line_high_fv_block_mode == "shadow"
+                else "blocked_enforce"
+            )
+            candidate_payload["line_high_fv_block_base_fv"] = float(base_fv)
+            candidate_payload["line_high_fv_block_min_raw_fv"] = line_high_fv_min_raw
+            candidate_payload["line_high_fv_block_line"] = line_str
+            if line_high_fv_block_mode == "enforce":
+                self._log_skip_debug_once(
+                    reason="gate_line_high_fv_block",
+                    game=game,
+                    market=market,
+                    inning=inning,
+                    inning_state=inning_state,
+                    outs=outs,
+                    current_total=current_total,
+                    message=(
+                        "Skip %s@%s line=%s: per-line high-FV slice guard "
+                        "(base_fv=%.3f >= %.3f and line in {%s}) -- 2026-05-19 "
+                        "audit showed this slice hits ~51%% realized vs ~96%% claimed"
+                    ),
+                    args=(
+                        game.away_abbrev, game.home_abbrev, market.line,
+                        float(base_fv), line_high_fv_min_raw,
+                        ",".join(sorted(blocked_lines)),
+                    ),
+                )
+                record_skip(
+                    "gate_line_high_fv_block",
+                    shadow_values={
+                        "base_fair_value": float(base_fv),
+                        "min_raw_fv": line_high_fv_min_raw,
+                        "line": line_str,
+                        "blocked_lines": sorted(blocked_lines),
+                    },
+                )
+                return True
+            # shadow mode: tag and continue
+        else:
+            # Tag whether the guard considered but didn't fire, for audit symmetry.
+            candidate_payload["line_high_fv_block_mode"] = line_high_fv_block_mode
+            candidate_payload["line_high_fv_block_decision"] = "not_applicable"
+
     # --- GATE 8g: Large FV/ask gap in late innings (TR12) ---
     fv_ask_gap_max = self.trade_args.fv_ask_gap_max
     fv_ask_gap_min_inning = self.trade_args.fv_ask_gap_min_inning

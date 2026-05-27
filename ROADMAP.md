@@ -50,17 +50,17 @@ operator should read next. Use this to triage; full text is below.
 
 | # | Item | Cost | Expected impact | Blocked by |
 |---|---|---|---|---|
-| 1 | Line-5.5 high-FV slice guard | One-line gate | Cheapest documented win — line=5.5 at raw_fv>=0.90 is 51% realized vs 96% claimed (n=92) | Nothing |
+| 1 | Line-5.5 high-FV slice guard | One-line gate | **Shipped as `K_line5p5_block` paper preset 2026-05-26.** Gate exists at `gate_line_high_fv_block` (default OFF in production); K vs A_current is the A/B-test for promotion. Cheapest documented win — line=5.5 at raw_fv>=0.90 is 51% realized vs 96% claimed (n=92). | ~30 days of K vs A evidence |
 | 2 | Mid-band [0.80, 0.90) calibrator under-confidence refit | Per-line + per-family Platt fit, or swap to isotonic | Closes the band that the TR23 band gate currently leaves uncorrected | Calibration training data freshness |
 | 3 | Replace Poisson tail with negative-binomial fit | Larger model change | Structural fix for the 4-7pp Poisson > empirical bias at FV>=0.85 across all lines | Active #8 (Stage-1 Alt-A) demonstrates cohort-aware promotion machinery first |
 | 4 | Chain-rebuild stale-input artifacts | Investigate-and-reorder OR auto-chain-rebuild | Removes the 5 cross-artifact consistency alerts firing every refresh | Root-cause investigation of `signal_training_table.jsonl` post-build mutation |
-| 5 | Gate-counterfactual cross-window validation | Add `window_reversal` warning + post-calibrator FV cohort | Prevents `gate_min_current_total 4→5` style reversals (HIGH-conf rec inverted on lifetime data) | Nothing |
+| 5 | Gate-counterfactual cross-window validation | **✅ Shipped 2026-05-26** | New 4th window `lifetime_post_calibrator_enforce`, `window_reversal` flag on recommendations, confidence auto-downgraded to `review_required` when 30d direction inverts on lifetime, daily-review block surfaces reversal alerts and suppresses reversed recs from the actionable Notes feed. First production run: 4 of 9 previously-HIGH-confidence top recommendations flagged as reversed — including the exact 2026-05-20 P2 audit example (`gate_min_current_total 4→5`: 30d=+$44.31 vs lifetime=−$151.97 on n=40). Closed. |
 
 Last dashboard refresh: **2026-05-25**. Refresh after each ship.
 
 ---
 
-Last roadmap review: **2026-05-25** (audit-driven refresh: split ROADMAP archive at 2026-05-17 into ROADMAP_ARCHIVE_2026_H1.md, renumbered Active priorities 1-8 sequentially with shipped items 9-17 consolidated to one line, promoted hygiene items 18-22 into a real ## Hygiene section as #1-#5, added the Verdict status dashboard above, reconciled Active #5 status with the shipped stake-scaling code). Prior review: **2026-05-19** (Band-gated calibrator
+Last roadmap review: **2026-05-26** (Hygiene #5 shipped: gate-counterfactual cross-window validation; 4 of 9 production HIGH-confidence recommendations correctly flagged as window-reversals on first run, including the exact 2026-05-20 P2 audit example. Earlier today: Hygiene #1 shipped as paper preset K_line5p5_block + F-J aggregator normalization added so high-volume configs can be read against A_current on equal per-bet footing). Prior review: **2026-05-25** (audit-driven refresh: split ROADMAP archive at 2026-05-17 into ROADMAP_ARCHIVE_2026_H1.md, renumbered Active priorities 1-8 sequentially with shipped items 9-17 consolidated to one line, promoted hygiene items 18-22 into a real ## Hygiene section as #1-#5, added the Verdict status dashboard above, reconciled Active #5 status with the shipped stake-scaling code). Prior review: **2026-05-19** (Band-gated calibrator
 ENFORCE shipped: 2026-05-19 FV-overconfidence audit confirmed
 **raw model is overconfident by +28pp at FV>=0.95** (487 settled
 predictions: claimed avg 0.97, realized 0.70). Audit drilled into
@@ -1407,7 +1407,21 @@ _For shipped work from 2026-05-17 and earlier, see_ **[ROADMAP_ARCHIVE_2026_H1.m
 
 9-17. **Items 9-17 shipped 2026-05-17 -> 2026-05-21.** Per-cohort calibration drift detection, bet-level loss attribution, counterfactual gate-change logger, settlement-truth verification, fast Wilson-UB demotion, backup retention + PSI-history GC, promotion-lag tracker, model lineage tracking (v1-v4), and Scoped Alt-A enforce. All marked closed; full text in [ROADMAP_ARCHIVE_2026_H1.md](ROADMAP_ARCHIVE_2026_H1.md). The order is non-sequential because #17 (Scoped Alt-A) was inserted out of order during the 2026-05-21 ship and never renumbered.
 
-> ⚠️ **Risk note on shipped item #11 (counterfactual gate-change logger).** The 2026-05-20 P2 audit found the "HIGH-confidence" `gate_min_current_total 4 -> 5` recommendation reverses direction on lifetime data (30d blocked-cohort ROI -20.2% vs lifetime +4.5%, n=29) and would have actively hurt P&L. Until **Hygiene #5 (gate-counterfactual cross-window validation)** ships, treat every HIGH-confidence gate-counterfactual recommendation as "candidate for audit," NOT "ready to ship." The report doesn't yet cross-check against lifetime data or the post-calibrator regime.
+> ✅ **Risk-note resolved 2026-05-26**: Hygiene #5 shipped. The
+> gate-counterfactual report now stamps every top recommendation with
+> a `lifetime_counterfactual_profit_delta_usd` + a
+> `post_calibrator_counterfactual_profit_delta_usd` (4th window
+> filters to bets after the 2026-05-19 calibrator-enforce flip), and
+> flags `window_reversal=True` when the 30d direction inverts on
+> lifetime with enough N/$ to be material. Confidence auto-downgrades
+> to `review_required` and the daily-review notes feed suppresses
+> reversed recommendations as actionable while keeping them visible
+> in the structured payload. First production run on the existing
+> training table found **4 of 9** previously-HIGH-confidence
+> recommendations are window-reversals — including the exact
+> 2026-05-20 P2 audit example (`gate_min_current_total 4 -> 5`:
+> 30d=+$44.31 vs lifetime=−$151.97 on n=40). Operator can now trust
+> any HIGH-confidence rec that survives the check.
 
 
 ## Hygiene
@@ -1415,18 +1429,27 @@ _For shipped work from 2026-05-17 and earlier, see_ **[ROADMAP_ARCHIVE_2026_H1.m
 _Accumulating debt; not blocking, but worth closing on a regular cadence so the loop stays clean. Each item is shipped-ready (audit findings, file paths, expected impact) but waits on either bandwidth or a prerequisite._
 
 1. **Line-5.5 high-FV slice guard.** *2026-05-19 audit
-    follow-up.* Per the audit's per-line slice (1,376 settled
+    follow-up; shadow shipped 2026-05-26 as `K_line5p5_block`
+    paper preset.* Per the audit's per-line slice (1,376 settled
     OVER predictions), at raw FV >= 0.90 the realized hit rate
     for line=5.5 is **51% on n=92** vs claimed 96% -- the worst
     miss in the dataset, and the calibrator only partially
-    rescues it. Even with band-gated enforce the residual EV is
-    poor. Options: (a) a hard per-line FV ceiling at 5.5 (e.g.
-    no bets at line=5.5 when raw_fv >= 0.90), (b) a per-line
-    stake dampener, (c) a separate Stage-1 build pass for the
-    extra-low-lines bucket. (a) is cheapest. Audit input data:
+    rescues it. **Status as of 2026-05-26**: option (a) "hard
+    per-line FV ceiling at 5.5" has shipped as a new gate
+    `gate_line_high_fv_block` in `signal_pipeline_gates_post_fv.py`
+    (default `--line-high-fv-block-mode off`, so production is
+    unchanged). The K_line5p5_block paper preset
+    (`scripts/trading/launch_parallel_engines.py` PRESETS) enforces
+    it against the live market each day for A/B-test evidence vs
+    A_current. **Bar to clear for live promotion**: ~30 days of
+    K vs A evidence where K's per-bet ROI matches or beats A's
+    on the suppressed-bet cohort (i.e., the bets K skips were
+    indeed losers on aggregate). Then promote by flipping
+    `DEFAULT_LINE_HIGH_FV_BLOCK_MODE` from `off` to `enforce` in
+    `signal_config.py` (or set on the live CLI). Audit input data:
     `data/analysis_output/calibration/signal_win_calibration_predictions.jsonl`.
-    Files: `scripts/trading/signal_pipeline_gates_post_fv.py`,
-    `signal_config.py` for the gate threshold.
+    Files (now shipped): `scripts/trading/signal_pipeline_gates_post_fv.py`,
+    `signal_config.py`, `scripts/trading/launch_parallel_engines.py`.
 
 2. **Mid-band [0.80,0.90) calibrator under-confidence
     refit.** *2026-05-19 audit follow-up.* The 2026-05-19
@@ -1491,29 +1514,40 @@ _Accumulating debt; not blocking, but worth closing on a regular cadence so the 
     `scripts/analysis/human_review/system_health.py`
     (`_cross_artifact_consistency_health` re-used).
 
-5. **Gate-counterfactual cross-window validation.**
-    *2026-05-20 audit follow-up.* The daily review's
-    `gate_counterfactual_health` block runs ONE window
-    (trailing-30d) and labels recommendations HIGH /
-    MEDIUM / LOW confidence based on within-window sample
-    size. The 2026-05-20 P2 audit found the
+5. **Gate-counterfactual cross-window validation.** *✅ Shipped
+    2026-05-26.* The 2026-05-20 P2 audit found the
     "HIGH-confidence" `gate_min_current_total 4 -> 5`
     recommendation reverses direction on lifetime data
     (30d blocked-cohort ROI -20.2% vs lifetime +4.5%, n=29)
     and would block 14 post-calibrator-enforce bets that
     are 12-2 with +35.7% ROI -- shipping it would have
-    actively hurt P&L. Root cause: the report doesn't
-    cross-check against lifetime or against the
-    post-calibrator regime. Two fixes for the report:
-    (a) when a within-window recommendation fires, also
-    compute the same cohort over lifetime and flag a
-    `window_reversal` warning if the direction inverts;
-    (b) when the runtime calibrator's `_prob_calibration_mode`
-    is `enforce`, the report should run the counterfactual
-    on POST-calibrator FV (the actual current decision
-    surface), not on raw FV. Until shipped, treat all
-    HIGH-confidence gate-counterfactual recommendations
-    as "candidate for audit," not "ready to ship." Files:
+    actively hurt P&L. Two fixes both shipped today:
+    **(a)** `build_top_recommendations` now augments every
+    recommendation with `lifetime_counterfactual_profit_delta_usd`
+    + `lifetime_blocked_n_filled` (from the existing `all`
+    window) and flags `window_reversal=True` when the
+    30d direction inverts on lifetime with ≥10 lifetime-blocked
+    N and ≥$20 lifetime |delta|. **(b)** New 4th window
+    `lifetime_post_calibrator_enforce` (rows with
+    `session_date >= 2026-05-19`, the calibrator-enforce-flip
+    date) -- separately surfaces the post-calibrator regime
+    so reversal can distinguish "regime change" from "real
+    inversion." Confidence auto-downgrades to `review_required`
+    on reversal, and `_gate_counterfactual_health` suppresses
+    reversed recommendations from the actionable Notes feed
+    while keeping them visible in the structured payload +
+    raising a dedicated `Gate-counterfactual: ... flagged
+    window_reversal` alert per reversed rec. **First
+    production run on the existing training table**: 4 of 9
+    previously-HIGH-confidence top recommendations flagged as
+    reversed, including the exact P2 audit example
+    (`gate_min_current_total 4 -> 5`: 30d +$44.31 vs
+    lifetime -$151.97 on n=40). 6 new pytest cases cover
+    window slicing for the new window, reversal flag firing,
+    no-reversal when 30d/lifetime agree, no-reversal when the
+    lifetime cohort is below the floor, and the daily-review
+    block surfacing the alert + suppressing reversed recs.
+    Files (shipped): 
     `scripts/analysis/build_gate_counterfactual_report.py`,
     `scripts/analysis/human_review/core_health.py`
     (`_gate_counterfactual_health`).

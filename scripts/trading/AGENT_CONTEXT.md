@@ -17,6 +17,24 @@ _Append dated bullets here when you change anything in this folder.
 Mirrors `MASTER_CONTEXT.md`'s "Recent major shifts" pattern; bump
 "Last checked" above when you sweep the whole doc._
 
+- **2026-05-26 (later)** — Hygiene #1 line-5.5 high-FV slice guard
+  shipped as K_line5p5_block paper preset. New CLI flags in
+  `signal_config.py`: `--line-high-fv-block-mode {off,shadow,enforce}`
+  (default `off` -- production unchanged), `--line-high-fv-block-min-raw-fv`
+  (0.90), `--line-high-fv-block-lines` ("5.5"). New gate in
+  `signal_pipeline_gates_post_fv.evaluate_post_fv_gates` (between
+  `gate_extreme_edge` and `gate_fv_ask_gap`, reason
+  `gate_line_high_fv_block`). K_line5p5_block = A_current with the
+  guard in enforce mode -- pure A/B-test fleet expansion (11 total).
+  5 unit tests in `LineHighFvBlockGateTests` + 1 preset shape test
+  cover off / shadow / enforce / non-matching line / sub-threshold FV.
+- **2026-05-26 (earlier)** — F-J aggregator normalization shipped.
+  `aggregate_parallel_engines._bet_metrics` adds `profit_per_settled_bet`,
+  `n_unique_game_lines`, `bets_per_unique_game_line`, plus a
+  `volume_index_vs_baseline` post-pass (baseline = `A_current` when
+  present, else first alpha). Lets F_no_dedup (5-10x A's volume) read
+  against A on equal per-bet footing. Frontend surfaces in both
+  CompareView and MultiEngineDayView; new "Best $/Bet" daily-read chip.
 - **2026-05-26** — multi-engine fleet doubled from 5 → 10 presets.
   Added F_no_dedup (operator-requested permissive config: strip
   event-dedup, inning-dedup-gap, correlated-line-cap; keep edge/ask

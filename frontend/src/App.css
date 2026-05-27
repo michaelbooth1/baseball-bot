@@ -669,3 +669,18 @@ body {
   border-radius: 3px;
   font-size: 18px;
 }
+
+/* 2026-05-26: normalization-table baseline chip. */
+.compare-baseline-chip {
+  margin-left: 12px;
+  font-size: 12px;
+  font-weight: normal;
+  color: #6b7280;
+}
+.compare-baseline-chip code {
+  font-family: ui-monospace, monospace;
+  background: #f3f0ff;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+}

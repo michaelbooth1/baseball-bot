@@ -61,6 +61,9 @@ export type SessionIndexEntry = {
 export type ParallelComparison = {
   generated_at_utc?: string;
   date_range?: { start?: string | null; end?: string | null };
+  /** 2026-05-26: config used as the volume-index baseline.
+   *  Defaults to "A_current" when present, else first alpha. */
+  baseline_config_label?: string | null;
   configs?: Record<string, ParallelConfigPayload>;
   shared_candidate_disagreement?: {
     game_line?: ParallelDisagreementBlock;
@@ -101,6 +104,16 @@ export type ParallelHeadline = {
   edge_over_market_actual_minus_ask?: number | null;
   edge_over_market_settled_actual_minus_ask?: number | null;
   edge_over_market_stake_weighted_actual_minus_ask?: number | null;
+  // 2026-05-26 normalization fields. Lets the UI read F_no_dedup
+  // (high-volume) against A_current (production-mirror) on equal
+  // per-bet footing instead of letting volume distort raw totals.
+  profit_per_settled_bet?: number | null;
+  n_unique_game_lines?: number | null;
+  n_settled_unique_game_lines?: number | null;
+  bets_per_unique_game_line?: number | null;
+  baseline_label?: string | null;
+  volume_index_vs_baseline?: number | null;
+  settled_index_vs_baseline?: number | null;
 };
 
 export type ParallelDisagreementBlock = {
@@ -128,6 +141,10 @@ export type ParallelDailyRead = {
   best_roi?: number | null;
   lowest_drawdown_config?: string | null;
   lowest_drawdown?: number | null;
+  // 2026-05-26 normalization: per-bet leader independent of volume.
+  best_profit_per_settled_bet_config?: string | null;
+  best_profit_per_settled_bet?: number | null;
+  baseline_config_label?: string | null;
   game_line_splits?: number;
   fine_state_splits?: number;
   sample_flags?: string[];

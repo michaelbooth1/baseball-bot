@@ -172,6 +172,24 @@ PRESETS: Dict[str, List[str]] = {
         "--quote-engine-mode", "shadow",
         "--extreme-edge-max", "1.0",
     ],
+    # 2026-05-26: K_line5p5_block ships Hygiene #1 as a paper preset
+    # for A/B evidence vs A_current. The 2026-05-19 FV-overconfidence
+    # audit found line=5.5 at base FV >= 0.90 hits 51% realized vs ~96%
+    # claimed on n=92 -- the worst per-line slice in the dataset. K
+    # enforces a per-line guard that blocks these bets entirely; A
+    # continues to take them. After ~30 days the operator compares
+    # K vs A on (n_settled, profit, profit_per_settled_bet) to decide
+    # whether to promote the guard to live.
+    "K_line5p5_block": [
+        "--prob-calibration-mode", "enforce",
+        "--stage1-shadow-empirical-mode", "shadow",
+        "--stage1-alt-a-scope-mode", "enforce",
+        "--under-emission-mode", "shadow",
+        "--quote-engine-mode", "shadow",
+        "--line-high-fv-block-mode", "enforce",
+        "--line-high-fv-block-min-raw-fv", "0.90",
+        "--line-high-fv-block-lines", "5.5",
+    ],
 }
 
 PRESET_ALIASES = {
@@ -1113,12 +1131,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     # 2026-05-25: default expanded from 3 to 5 configs (added D and E).
     # 2026-05-26: default expanded from 5 to 10 configs (added F-J), each
-    # mapped to one open Active or Hygiene roadmap question. See PRESETS
-    # docstring for the per-config rationale.
+    # mapped to one open Active or Hygiene roadmap question.
+    # 2026-05-26 (later): K_line5p5_block added (11 total) -- ships
+    # Hygiene #1 as a paper preset for A/B-test evidence vs A_current.
     raw_configs = args.config or [
         "A_current", "B_cal_only", "C_raw", "D_scope_only", "E_tight_edge",
         "F_no_dedup", "G_loose_edge", "H_late_innings",
-        "I_extreme_018", "J_no_phantom_filter",
+        "I_extreme_018", "J_no_phantom_filter", "K_line5p5_block",
     ]
     configs = [_resolve_config(raw, Path(args.paper_root_prefix)) for raw in raw_configs]
 

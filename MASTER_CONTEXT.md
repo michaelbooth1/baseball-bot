@@ -32,6 +32,42 @@ Last checked against the linked files: 2026-05-26. Recent major shifts:
   configs without an extra lookup. Build clean (TS + Vite, 11.17 KB CSS,
   178.69 KB JS bundles).
 
+- **2026-05-26 (fourth ship): Hygiene #5 — gate-counterfactual
+  cross-window validation.** Closes the audit-flagged risk that every
+  HIGH-confidence gate-tightening recommendation was "candidate for
+  audit, not ready to ship." `build_gate_counterfactual_report.py`
+  now adds a 4th window `lifetime_post_calibrator_enforce` and
+  stamps every recommendation with lifetime + post-calibrator deltas.
+  When the 30d direction inverts on lifetime (with ≥10 N and ≥$20
+  |delta|), `window_reversal=True` fires and confidence auto-
+  downgrades to `review_required`. The daily-review block raises a
+  dedicated alert per reversed rec AND suppresses them from the
+  actionable Notes feed. **First production run on existing training
+  table**: 4 of 9 HIGH-confidence top recommendations correctly
+  flagged as reversed, including the exact 2026-05-20 P2 audit
+  example (`gate_min_current_total 4 -> 5`: 30d +$44.31 vs lifetime
+  -$151.97 on n=40). 6 new pytest cases.
+
+- **2026-05-26 (third ship): Hygiene #1 + F-J normalization.**
+  Two complementary medium-leverage features shipped on the same
+  pre-game-day slot:
+  1. **F-J aggregator normalization**: `aggregate_parallel_engines.py`
+     gains per-bet quality columns (`profit_per_settled_bet`),
+     cohort breadth (`n_unique_game_lines`, `bets_per_unique_game_line`),
+     and a volume index vs `A_current` baseline. Frontend's CompareView
+     + MultiEngineDayView both surface them; "Best $/Bet" daily-read
+     chip reads quality independently of F_no_dedup's volume.
+  2. **K_line5p5_block preset** (11-config fleet): ships Hygiene #1
+     (per-line high-FV slice guard) as a paper preset for A/B-test
+     evidence vs A_current. New gate `gate_line_high_fv_block` in
+     `signal_pipeline_gates_post_fv` (default OFF; enforced only via
+     the K preset). Blocks line=5.5 + base_fv>=0.90 -- the 2026-05-19
+     audit's worst documented per-line slice (51% realized vs claimed
+     96% on n=92). After ~30 days, K vs A is the promotion evidence.
+  +9 new pytest cases lock in normalization arithmetic + K preset
+  shape + gate behavior across off / shadow / enforce / non-matching
+  line / sub-threshold FV.
+
 - **2026-05-26: parallel-engine fleet doubled from 5 → 10 presets.**
   Added F_no_dedup (operator-requested: strip event-dedup +
   inning-dedup + correlated-line cap; keep edge/ask floors),

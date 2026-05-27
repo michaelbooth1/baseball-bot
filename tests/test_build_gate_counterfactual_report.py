@@ -392,6 +392,211 @@ class TopRecommendationsTests(unittest.TestCase):
         self.assertLessEqual(len(recs), 3)
 
 
+class CrossWindowReversalTests(unittest.TestCase):
+    """Hygiene #5 (2026-05-26) -- recommendations get an extra
+    lifetime + post-calibrator-enforce comparison; when the 30d
+    direction inverts vs. a meaningfully-sized lifetime cohort, the
+    recommendation is flagged `window_reversal=True` and its
+    confidence is downgraded to `review_required`. This is the audit
+    cure for the 2026-05-20 P2 `gate_min_current_total 4 -> 5`
+    incident."""
+
+    def _gate_extreme_edge(self):
+        return next(x for x in cert.GATE_DEFS if x.name == "gate_extreme_edge")
+
+    def test_lifetime_post_calibrator_window_present_in_slice(self):
+        rows = [
+            _bet_row(session_date="2026-05-25"),  # post-calibrator
+            _bet_row(session_date="2026-04-15"),  # pre-calibrator
+        ]
+        windows = cfr.slice_windows(rows)
+        self.assertIn("lifetime_post_calibrator_enforce", windows)
+        post_dates = {
+            r.session_date for r in windows["lifetime_post_calibrator_enforce"].rows
+        }
+        # Only the post-2026-05-19 row survives.
+        self.assertEqual(post_dates, {"2026-05-25"})
+
+    def test_no_reversal_when_30d_and_lifetime_agree(self):
+        # 30d says "tightening 0.22 -> 0.18 saves money"; lifetime says
+        # the same (just slightly less per bet). No reversal flag.
+        # Place all losers at edge=0.20 (kept by 0.22, blocked by 0.18).
+        rows = []
+        # 15 lifetime-only (pre-calibrator) bets at edge 0.20, all losers.
+        for i in range(15):
+            rows.append(_bet_row(
+                session_date="2026-03-01",
+                edge_at_ask=0.20,
+                target_win=0,
+                target_profit=-10.0,
+            ))
+        # 30 recent (post-calibrator era) bets at edge 0.20, all losers.
+        # session_date = latest in table.
+        for i in range(30):
+            rows.append(_bet_row(
+                session_date="2026-05-25",
+                edge_at_ask=0.20,
+                target_win=0,
+                target_profit=-10.0,
+            ))
+        payload = cfr.build_counterfactual_payload(rows)
+        recs = payload["top_recommendations"]
+        gate_recs = [r for r in recs if r.get("gate") == "gate_extreme_edge"]
+        self.assertGreater(len(gate_recs), 0,
+                           "expected at least one extreme-edge tightening rec")
+        for rec in gate_recs:
+            # Lifetime + post-calibrator deltas should agree in sign
+            # with the 30d delta (all positive = saves $).
+            self.assertGreater(
+                rec["counterfactual_profit_delta_usd"], 0,
+                "30d should show savings",
+            )
+            self.assertGreater(
+                rec.get("lifetime_counterfactual_profit_delta_usd") or 0, 0,
+                "lifetime should agree (also savings)",
+            )
+            self.assertFalse(rec["window_reversal"])
+            self.assertNotEqual(rec["confidence"], "review_required")
+
+    def test_reversal_flag_fires_when_lifetime_direction_inverts(self):
+        # Construct the 2026-05-20 P2 audit scenario in miniature.
+        # 30d window: tightening blocks losers -> looks great.
+        # Lifetime: NET POSITIVE bets blocked -> tightening LOSES money.
+        # For cf_delta lifetime to be negative, the bets being blocked
+        # at edge=0.20 (kept by 0.22, blocked by 0.18) must have NET
+        # POSITIVE profit across the lifetime cohort.
+        rows = []
+        # Lifetime-only winners (enough to make the lifetime cohort
+        # net-positive even after the 30d losers drag it down).
+        for i in range(30):
+            rows.append(_bet_row(
+                session_date="2026-03-01",
+                edge_at_ask=0.20,
+                target_win=1,
+                target_profit=+6.0,    # 30 * +6 = +180
+            ))
+        # Recent losers (the load-bearing cohort in 30d).
+        for i in range(15):
+            rows.append(_bet_row(
+                session_date="2026-05-25",
+                edge_at_ask=0.20,
+                target_win=0,
+                target_profit=-10.0,   # 15 * -10 = -150
+            ))
+        # Lifetime alt_blocked.profit = +180 + (-150) = +30 (net winners
+        # would be blocked by tightening). cf_delta_lifetime = 0 - +30 =
+        # -30 (tightening LOSES money on lifetime). cf_delta_30d = +150
+        # (tightening saves money on 30d). Direction inverts -> reversal.
+        payload = cfr.build_counterfactual_payload(rows)
+        recs = payload["top_recommendations"]
+        # Should find the 0.22->0.18 tightening rec
+        gate_recs = [r for r in recs if r.get("gate") == "gate_extreme_edge"]
+        self.assertGreater(len(gate_recs), 0)
+        rec = gate_recs[0]
+        self.assertEqual(rec["to_threshold"], 0.18)
+        # 30d delta is positive (we save $ in the recent window).
+        self.assertGreater(rec["counterfactual_profit_delta_usd"], 0)
+        # Lifetime delta should be NEGATIVE (tightening would have
+        # missed the lifetime winners).
+        self.assertLess(rec["lifetime_counterfactual_profit_delta_usd"], 0)
+        # Reversal flag must fire.
+        self.assertTrue(rec["window_reversal"])
+        self.assertIn("lifetime_reversal", rec["window_reversal_flags"])
+        # Confidence downgraded.
+        self.assertEqual(rec["confidence"], "review_required")
+        # Original confidence preserved for audit.
+        self.assertIn("confidence_before_reversal_check", rec)
+        # Rationale starts with the warning marker.
+        self.assertTrue(rec["rationale"].startswith("⚠️ WINDOW REVERSAL"))
+
+    def test_no_reversal_when_lifetime_cohort_too_small(self):
+        # Recent 30d cohort says tighten = save $; lifetime has only 3
+        # bets (below WINDOW_REVERSAL_MIN_LIFETIME_BLOCKED_N=10).
+        # Should NOT downgrade -- not enough lifetime evidence.
+        rows = []
+        # 30d cohort: 15 losers blocked by tightening.
+        for i in range(15):
+            rows.append(_bet_row(
+                session_date="2026-05-25",
+                edge_at_ask=0.20,
+                target_win=0,
+                target_profit=-10.0,
+            ))
+        # Lifetime extras: only 3 winners.
+        for i in range(3):
+            rows.append(_bet_row(
+                session_date="2026-03-01",
+                edge_at_ask=0.20,
+                target_win=1,
+                target_profit=+6.0,
+            ))
+        payload = cfr.build_counterfactual_payload(rows)
+        recs = payload["top_recommendations"]
+        for rec in recs:
+            if rec.get("gate") != "gate_extreme_edge":
+                continue
+            # Lifetime cohort too small -- no reversal flag.
+            self.assertFalse(rec["window_reversal"])
+
+
+class GateCounterfactualHealthBlockTests(unittest.TestCase):
+    """Hygiene #5: the daily-review block must surface reversed
+    recommendations as alerts AND suppress them from the actionable
+    Notes feed."""
+
+    def _build_report_with_reversed_rec(self, tmp_path: Path) -> Path:
+        # Same shape as test_reversal_flag_fires_when_lifetime_direction_inverts
+        # -- lifetime cohort dominated by winners so tightening LOSES
+        # money on lifetime; recent cohort dominated by losers so
+        # tightening SAVES money on 30d. Direction inverts -> reversal.
+        rows = []
+        for i in range(30):
+            rows.append(_bet_row(
+                session_date="2026-03-01",
+                edge_at_ask=0.20,
+                target_win=1, target_profit=+6.0,
+            ))
+        for i in range(15):
+            rows.append(_bet_row(
+                session_date="2026-05-25",
+                edge_at_ask=0.20,
+                target_win=0, target_profit=-10.0,
+            ))
+        payload = cfr.build_counterfactual_payload(rows)
+        report_path = tmp_path / "gate_counterfactual_report.json"
+        report_path.write_text(json.dumps(payload), encoding="utf-8")
+        return report_path
+
+    def test_health_block_surfaces_reversal_alert_and_suppresses_notes(self):
+        # Import here so the test stays self-contained even when the
+        # human_review package gets moved/refactored.
+        sys.path.insert(
+            0, str(PROJECT_DIR / "scripts" / "analysis"),
+        )
+        from human_review.core_health import _gate_counterfactual_health
+        with tempfile.TemporaryDirectory() as td:
+            report_path = self._build_report_with_reversed_rec(Path(td))
+            block = _gate_counterfactual_health(
+                report_path=report_path,
+                session_date="2026-05-25",
+            )
+            # Reversed recs counter present + non-zero.
+            self.assertGreater(block["reversed_recommendations_count"], 0)
+            self.assertIn("reversed_recommendations", block)
+            # Alerts list must carry the reversal warning text.
+            reversal_alerts = [
+                a for a in block["alerts"]
+                if "window_reversal" in a or "Gate-counterfactual" in a
+            ]
+            self.assertGreater(len(reversal_alerts), 0)
+            # The compact top_recommendations_30d entries still carry
+            # the structured cross-window fields for dashboards.
+            top = block.get("top_recommendations_30d", [])
+            self.assertGreater(len(top), 0)
+            self.assertIn("window_reversal", top[0])
+            self.assertIn("lifetime_counterfactual_profit_delta_usd", top[0])
+
+
 class PayloadBuildTests(unittest.TestCase):
     def test_payload_has_all_required_keys(self):
         rows = [_bet_row(edge_at_ask=0.18, target_profit=2.0)]

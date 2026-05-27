@@ -1957,6 +1957,204 @@ class ScopedAltAEnforceTests(unittest.TestCase):
         self.assertEqual(sum(engine._scoped_alt_a_rollup_counts.values()), 1)
 
 
+class LineHighFvBlockGateTests(unittest.TestCase):
+    """Hygiene #1 (2026-05-26) -- per-line high-FV slice guard.
+
+    The 2026-05-19 FV-overconfidence audit found that bets on line=5.5 at
+    base FV >= 0.90 hit only 51% realized on n=92 vs claimed ~96%. The
+    guard skips these bets when enforce-mode is on. Tests cover:
+      - mode=off: no guard, no tagging
+      - mode=shadow: tags but does not block
+      - mode=enforce + matching line + base_fv>=threshold: blocks
+      - mode=enforce + non-matching line: passes through
+      - mode=enforce + base_fv<threshold: passes through
+    """
+
+    @staticmethod
+    def _fake_market(line="5.5"):
+        from types import SimpleNamespace
+        return SimpleNamespace(line=line, token_id="tok")
+
+    @staticmethod
+    def _fake_game():
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            game_pk=999000,
+            away_abbrev="AAA",
+            home_abbrev="HHH",
+        )
+
+    @staticmethod
+    def _fake_ctx(line="5.5"):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            game=LineHighFvBlockGateTests._fake_game(),
+            market=LineHighFvBlockGateTests._fake_market(line=line),
+            state=None,
+            now=0.0,
+            inning=6,
+            inning_state="Top",
+            away_score=2,
+            home_score=2,
+            outs=1,
+            runners_on=0,
+            current_total=4,
+            line_val=float(line),
+            best_bid=0.50,
+            ask=0.55,
+            book={},
+        )
+
+    @staticmethod
+    def _fake_fv_result(base_fv=0.95):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            stopped=False,
+            edge=0.10,
+            min_edge=0.10,
+            min_edge_base=0.10,
+            ask_edge_boost=0.0,
+            base_fair_value=base_fv,
+            fair_value=base_fv,
+        )
+
+    def _engine(self, **trade_arg_overrides):
+        import sys
+        from pathlib import Path
+        from types import SimpleNamespace
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "trading"))
+        import signal_engine as se
+        engine = se.SignalEngine.__new__(se.SignalEngine)
+        # All trade_args fields that the post-FV gate chain may read.
+        # Defaults chosen so OTHER gates never fire -- we want to isolate
+        # the line-high-FV guard's behavior.
+        defaults = dict(
+            extreme_edge_max=1.0,  # off
+            max_base_fv=1.0,        # off (saturation)
+            fv_ask_gap_max=1.0,     # off
+            fv_ask_gap_min_inning=99,
+            s2_suppress_max=-99.0,  # off
+            s2_suppress_min_inning=99,
+            sp_era_threshold=0.0,   # off (only fires when era < threshold)
+            sp_era_max_inning=0,
+            sp_era_edge_boost=0.0,
+            event_dedup_secs=0.0,
+            inning_dedup_gap=0,
+            inning_dedup_edge_gap=0.0,
+            edge_threshold=0.0,
+            edge_threshold_high_line=0.0,
+            high_line_cutoff=999.0,
+            line_high_fv_block_mode="off",
+            line_high_fv_block_min_raw_fv=0.90,
+            line_high_fv_block_lines="5.5",
+        )
+        defaults.update(trade_arg_overrides)
+        engine.trade_args = SimpleNamespace(**defaults)
+        # Stub the debug-log dedup helper to a no-op.
+        engine._log_skip_debug_once = lambda **_: None
+        # Stub all dedup / boost state dicts the post-FV chain reads.
+        engine._line_state = {}
+        engine._last_bet_ts = {}
+        engine._last_bet_edge = {}
+        engine._last_bet_inning = {}
+        engine._last_bet_edge_by_line = {}
+        engine._pitcher_cache = None  # so sp-era gate degrades quietly
+        return engine
+
+    def _call(self, *, mode, base_fv, line="5.5"):
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "trading"))
+        import signal_pipeline_gates_post_fv as gpf
+
+        engine = self._engine(line_high_fv_block_mode=mode)
+        ctx = self._fake_ctx(line=line)
+        fv_result = self._fake_fv_result(base_fv=base_fv)
+        payload: Dict[str, Any] = {"base_fair_value": base_fv}
+        skip_reasons: List[str] = []
+        skip_values: List[Dict[str, Any]] = []
+
+        def record_skip(reason, *, shadow_values=None, **_):
+            skip_reasons.append(reason)
+            skip_values.append(shadow_values or {})
+
+        stopped = gpf.evaluate_post_fv_gates(
+            engine,
+            ctx=ctx,
+            candidate_payload=payload,
+            fv_result=fv_result,
+            record_skip=record_skip,
+        )
+        return stopped, payload, skip_reasons, skip_values
+
+    def test_mode_off_does_not_tag_or_block(self):
+        stopped, payload, reasons, _ = self._call(
+            mode="off", base_fv=0.95, line="5.5",
+        )
+        # Off mode: gate should not appear in the candidate payload at all.
+        self.assertNotIn("line_high_fv_block_mode", payload)
+        self.assertNotIn("gate_line_high_fv_block", reasons)
+        # And not block.
+        self.assertFalse(stopped)
+
+    def test_mode_shadow_tags_but_does_not_block(self):
+        stopped, payload, reasons, _ = self._call(
+            mode="shadow", base_fv=0.95, line="5.5",
+        )
+        self.assertEqual(payload["line_high_fv_block_mode"], "shadow")
+        self.assertEqual(
+            payload["line_high_fv_block_decision"], "would_block_in_shadow",
+        )
+        self.assertEqual(payload["line_high_fv_block_line"], "5.5")
+        self.assertAlmostEqual(payload["line_high_fv_block_base_fv"], 0.95)
+        # Shadow does NOT block.
+        self.assertNotIn("gate_line_high_fv_block", reasons)
+        self.assertFalse(stopped)
+
+    def test_mode_enforce_blocks_matching_line_at_high_fv(self):
+        stopped, payload, reasons, values = self._call(
+            mode="enforce", base_fv=0.95, line="5.5",
+        )
+        self.assertEqual(payload["line_high_fv_block_mode"], "enforce")
+        self.assertEqual(payload["line_high_fv_block_decision"], "blocked_enforce")
+        self.assertEqual(payload["line_high_fv_block_line"], "5.5")
+        self.assertIn("gate_line_high_fv_block", reasons)
+        self.assertTrue(stopped)
+        # Shadow values carry the audit-relevant context for downstream
+        # cohort reports.
+        idx = reasons.index("gate_line_high_fv_block")
+        sv = values[idx]
+        self.assertEqual(sv["line"], "5.5")
+        self.assertAlmostEqual(sv["min_raw_fv"], 0.90)
+        self.assertAlmostEqual(sv["base_fair_value"], 0.95)
+
+    def test_enforce_passes_through_non_matching_line(self):
+        # Line 7.5 is not in the default blocked list, so even with
+        # base_fv well above the threshold the guard must NOT fire.
+        stopped, payload, reasons, _ = self._call(
+            mode="enforce", base_fv=0.97, line="7.5",
+        )
+        self.assertEqual(payload["line_high_fv_block_mode"], "enforce")
+        self.assertEqual(
+            payload["line_high_fv_block_decision"], "not_applicable",
+        )
+        self.assertNotIn("gate_line_high_fv_block", reasons)
+        self.assertFalse(stopped)
+
+    def test_enforce_passes_through_when_base_fv_below_threshold(self):
+        # Line 5.5 matches but base_fv < 0.90 means the audit risk
+        # signature doesn't apply -> let it through.
+        stopped, payload, reasons, _ = self._call(
+            mode="enforce", base_fv=0.85, line="5.5",
+        )
+        self.assertEqual(payload["line_high_fv_block_mode"], "enforce")
+        self.assertEqual(
+            payload["line_high_fv_block_decision"], "not_applicable",
+        )
+        self.assertNotIn("gate_line_high_fv_block", reasons)
+        self.assertFalse(stopped)
+
+
 class UnderEmissionCalibrationStampTests(unittest.TestCase):
     """2026-05-23 (audit followup) -- under-side emission audit trail.
 

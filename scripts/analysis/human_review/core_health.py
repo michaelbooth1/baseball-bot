@@ -502,6 +502,8 @@ def _gate_counterfactual_health(
     payload["date_span"] = report.get("date_span")
 
     def _compact(r: Dict[str, Any]) -> Dict[str, Any]:
+        # Hygiene #5 (2026-05-26): pull the new cross-window fields
+        # through so dashboards / downstream consumers can read them.
         return {
             "gate": r.get("gate"),
             "from_threshold": r.get("from_threshold"),
@@ -515,6 +517,25 @@ def _gate_counterfactual_health(
             "kept_roi_delta_vs_current": r.get("kept_roi_delta_vs_current"),
             "confidence": r.get("confidence"),
             "window": r.get("window"),
+            # Cross-window check fields.
+            "lifetime_counterfactual_profit_delta_usd": r.get(
+                "lifetime_counterfactual_profit_delta_usd",
+            ),
+            "lifetime_blocked_n_filled": r.get("lifetime_blocked_n_filled"),
+            "lifetime_blocked_roi": r.get("lifetime_blocked_roi"),
+            "post_calibrator_counterfactual_profit_delta_usd": r.get(
+                "post_calibrator_counterfactual_profit_delta_usd",
+            ),
+            "post_calibrator_blocked_n_filled": r.get(
+                "post_calibrator_blocked_n_filled",
+            ),
+            "post_calibrator_blocked_roi": r.get("post_calibrator_blocked_roi"),
+            "window_reversal": r.get("window_reversal"),
+            "window_reversal_flags": r.get("window_reversal_flags"),
+            "window_reversal_reasons": r.get("window_reversal_reasons"),
+            "confidence_before_reversal_check": r.get(
+                "confidence_before_reversal_check",
+            ),
         }
 
     recs_30 = report.get("top_recommendations") or []
@@ -522,10 +543,48 @@ def _gate_counterfactual_health(
     payload["top_recommendations_30d"] = [_compact(r) for r in recs_30]
     payload["top_recommendations_7d"] = [_compact(r) for r in recs_7]
 
+    # Hygiene #5 (2026-05-26): only recommendations that BOTH clear
+    # the $-floor AND don't carry a window_reversal flag should be
+    # mirrored to the Notes block as actionable. Reversed ones stay
+    # visible in the structured payload (top_recommendations_30d)
+    # but no longer hit the operator's Notes feed as if they were
+    # safe to ship. Surface a separate alert for any reversed
+    # recommendation so the operator sees the audit trail.
+    reversed_recs = [
+        r for r in recs_30 if r.get("window_reversal")
+    ]
+    payload["reversed_recommendations_count"] = len(reversed_recs)
+    if reversed_recs:
+        payload["reversed_recommendations"] = [
+            _compact(r) for r in reversed_recs
+        ]
+        # One summary alert per reversed rec so the operator can audit.
+        for r in reversed_recs[:5]:
+            gate = r.get("gate")
+            window_delta = r.get("counterfactual_profit_delta_usd")
+            life_delta = r.get(
+                "lifetime_counterfactual_profit_delta_usd",
+            )
+            post_cal_delta = r.get(
+                "post_calibrator_counterfactual_profit_delta_usd",
+            )
+            payload["alerts"].append(
+                f"Gate-counterfactual: `{gate}` "
+                f"{r.get('from_threshold')} -> {r.get('to_threshold')} "
+                f"flagged window_reversal (30d delta "
+                f"${(window_delta or 0):+,.2f}, lifetime delta "
+                f"${(life_delta or 0):+,.2f}, post-calibrator delta "
+                f"${(post_cal_delta or 0):+,.2f}) — DO NOT ship; "
+                "see report for full audit."
+            )
+
     above_floor = [
         r for r in recs_30
         if (r.get("counterfactual_profit_delta_usd") or 0.0)
         >= GATE_COUNTERFACTUAL_NOTES_MIN_DELTA_USD
+        # Hygiene #5: suppress reversed recs from the "actionable"
+        # notes feed even when they clear the $-floor.
+        and not r.get("window_reversal")
     ]
     for r in above_floor[:GATE_COUNTERFACTUAL_NOTES_MAX_ALERTS]:
         gate = r.get("gate")

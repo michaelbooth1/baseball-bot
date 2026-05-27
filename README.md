@@ -867,10 +867,11 @@ tighter edge threshold) under the same baseball/market regime without
 refactoring the engine into a single-process dispatcher.
 
 ```bash
-# Default: launches the full 10-config bundle (A-J). The default
-# --config list is now A_current, B_cal_only, C_raw, D_scope_only,
+# Default: launches the full 11-config bundle (A-K). The default
+# --config list is A_current, B_cal_only, C_raw, D_scope_only,
 # E_tight_edge, F_no_dedup, G_loose_edge, H_late_innings,
-# I_extreme_018, J_no_phantom_filter -- so this one-liner is enough.
+# I_extreme_018, J_no_phantom_filter, K_line5p5_block -- so this
+# one-liner is enough.
 python scripts/trading/launch_parallel_engines.py
 
 # Subset (e.g. just the original 5-config 2x2):
@@ -898,7 +899,7 @@ becomes the decision evidence for that item.
 | `D_scope_only` | shadow | enforce | Calibrator off, scope on (completes 2x2) |
 | `E_tight_edge` | enforce | enforce | A + edge-threshold raised 5pp |
 
-**Question-mapped expansion (F-J, added 2026-05-26):**
+**Question-mapped expansion (F-K, added 2026-05-26):**
 
 | Preset | What it changes vs A | Question it answers |
 |---|---|---|
@@ -907,6 +908,7 @@ becomes the decision evidence for that item.
 | `H_late_innings` | `--min-inning 6 --min-inning-high-line 6` | Walk-forward cohort showed inn_4-5 = −22% ROI vs inn_6-7 = +53%. Does enforce confirm? |
 | `I_extreme_018` | `--extreme-edge-max 0.18` (tightened from 0.22) | Phase 6 prep for the 2026-06-07 TR19 recalibration deadline; tightens the cap. |
 | `J_no_phantom_filter` | `--extreme-edge-max 1.0` (effectively off) | Pairs with I to give a clean {off, current, tightened} = {1.0, 0.22, 0.18} 3-point sweep on the TR19 knob. |
+| `K_line5p5_block` | `--line-high-fv-block-mode enforce --line-high-fv-block-lines 5.5 --line-high-fv-block-min-raw-fv 0.90` | Hygiene #1 in paper mode. Blocks bets where line=5.5 AND base FV >= 0.90. The 2026-05-19 audit found this slice hits 51% realized vs ~96% claimed (n=92). K vs A is the A/B-test: same setup, only this guard differs. |
 
 All F-J configs inherit A's `prob_calibration_mode=enforce` +
 `stage1_alt_a_scope_mode=enforce` baseline so the only varying
@@ -946,6 +948,17 @@ The report carries stake-weighted edge metrics, daily fill rate,
 filled WR, completeness audit (last-seq + gaps + disconnects per
 engine), per-config gate funnel, and a shared-candidate disagreement
 table (configs that traded vs skipped on the exact same game-line tick).
+
+**Per-config normalized section (2026-05-26)**: in addition to the
+raw headline, the report now carries a dedicated normalized table
+with `$/Bet` (profit per settled bet — quality independent of volume),
+`Volume Idx` (n_bets vs the A_current baseline), `Settled Idx`
+(n_settled vs baseline), `Unique GLs` (unique game-line cohort breadth),
+and `Bets/GL` (per-cohort fire rate — high for F_no_dedup). Reads
+F_no_dedup against A_current on equal footing instead of letting
+F's volume dominate the raw P&L. The frontend's CompareView and per-day
+MultiEngineDayView both surface these columns; "Best $/Bet" is a new
+daily-read chip alongside Best ROI and Best P&L.
 
 ---
 

@@ -122,6 +122,26 @@ DEFAULT_FV_ASK_GAP_MIN_INNING  = 7      # [TR12] â€¦but only in inning >= th
 # Tunable via --extreme-edge-max if a future audit shifts the boundary.
 DEFAULT_EXTREME_EDGE_MAX        = 0.22
 
+# Hygiene #1 (2026-05-26): per-line high-FV slice guard. The 2026-05-19
+# FV-overconfidence audit found line=5.5 at raw FV >= 0.90 has a
+# realized hit rate of only 51% on n=92 settled predictions vs the
+# claimed ~96% — the worst per-line slice in the dataset. Even the
+# band-gated calibrator (TR23) only partially rescues this band.
+# The guard is OFF by default in production (preserves A_current's
+# behavior unchanged) and only enforced via the K_line5p5_block paper
+# preset for A/B-test evidence. After 30 days of paper-mode evidence,
+# the operator decides whether to promote to live.
+#   mode = off  -> no guard
+#   mode = shadow -> log a shadow tag but do not block
+#   mode = enforce -> skip the bet when raw_fv >= threshold AND
+#                     line matches one of the blocked-line strings
+DEFAULT_LINE_HIGH_FV_BLOCK_MODE = "off"  # off|shadow|enforce
+DEFAULT_LINE_HIGH_FV_BLOCK_MIN_RAW_FV = 0.90
+# Comma-separated list of line strings to block at high raw FV.
+# 5.5 is the only documented loser slice as of 2026-05-26; add more
+# only after fresh per-line audits.
+DEFAULT_LINE_HIGH_FV_BLOCK_LINES = "5.5"
+
 # [TR14] LTP-vs-ask shadow risk tag -- not an enforced gate. Historical examples
 # above 0.50 include winners/missed winners, so use this for diagnostics rather
 # than blocking trades.
@@ -499,6 +519,26 @@ def parse_trade_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace]
                    help=f"[TR14] Shadow-tag signals where |ask - ltp| exceeds this threshold. "
                         f"Diagnostics only; does not block trades. "
                         f"(default: {DEFAULT_LTP_ASK_GAP_MAX})")
+    # Hygiene #1 (2026-05-26): per-line high-FV slice guard.
+    p.add_argument("--line-high-fv-block-mode",
+                   choices=["off", "shadow", "enforce"],
+                   default=DEFAULT_LINE_HIGH_FV_BLOCK_MODE,
+                   help=f"[Hygiene #1] Block bets on configured lines when "
+                        f"base FV (Stage-1 cell prob) >= --line-high-fv-block-min-raw-fv. "
+                        f"Audit (2026-05-19): line=5.5 at raw_fv>=0.90 hits 51%% "
+                        f"realized vs claimed ~96%% (n=92). Default: off. The "
+                        f"K_line5p5_block paper preset flips this to enforce for "
+                        f"A/B-test evidence. (default: {DEFAULT_LINE_HIGH_FV_BLOCK_MODE})")
+    p.add_argument("--line-high-fv-block-min-raw-fv", type=float,
+                   default=DEFAULT_LINE_HIGH_FV_BLOCK_MIN_RAW_FV,
+                   help=f"[Hygiene #1] Block threshold on base_fair_value when "
+                        f"--line-high-fv-block-mode != off. "
+                        f"(default: {DEFAULT_LINE_HIGH_FV_BLOCK_MIN_RAW_FV})")
+    p.add_argument("--line-high-fv-block-lines", type=str,
+                   default=DEFAULT_LINE_HIGH_FV_BLOCK_LINES,
+                   help=f"[Hygiene #1] Comma-separated list of line strings "
+                        f"to block at high raw FV (e.g. '5.5,6.5'). "
+                        f"(default: '{DEFAULT_LINE_HIGH_FV_BLOCK_LINES}')")
     p.add_argument("--shadow-relaxed-enabled", dest="shadow_relaxed_enabled",
                    action="store_true", default=DEFAULT_SHADOW_RELAXED_ENABLED,
                    help="Enable shadow relaxed-gate diagnostics (metrics only; never affects trading decisions).")

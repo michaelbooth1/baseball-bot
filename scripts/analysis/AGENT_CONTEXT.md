@@ -46,6 +46,22 @@ daily-refresh step list lives in `build_refresh_steps()` in
 `run_daily_refresh.py` -- run `python scripts/analysis/dump_refresh_steps.py`
 to print the live list rather than maintaining it here by hand._
 
+- **2026-05-26 (Hygiene #5)** — gate-counterfactual cross-window
+  validation shipped. `build_gate_counterfactual_report.py` gains a
+  4th window `lifetime_post_calibrator_enforce` (filters to bets
+  with `session_date >= 2026-05-19`, the calibrator-enforce-flip
+  date) + `build_top_recommendations` augments each recommendation
+  with `lifetime_counterfactual_profit_delta_usd` /
+  `post_calibrator_counterfactual_profit_delta_usd` and flags
+  `window_reversal=True` when the 30d direction inverts on lifetime
+  with ≥10 N and ≥$20 |delta|. Confidence auto-downgrades to
+  `review_required` on reversal; `_gate_counterfactual_health` in
+  `human_review/core_health.py` raises a dedicated alert per
+  reversed rec and suppresses them from the actionable Notes feed.
+  **First production run**: 4 of 9 previously-HIGH-confidence top
+  recommendations flagged as reversed -- including the
+  `gate_min_current_total 4 -> 5` rec from the 2026-05-20 P2 audit
+  (30d +$44.31 vs lifetime -$151.97 on n=40). 6 new pytest cases.
 - **2026-05-25 (Tier 2.5)** — `_fit_calibration_bundle` (311 lines)
   split into 4 phase helpers under new `calibration/bundle_phases.py`.
   `calibrate_signal_probabilities.py` shrunk 1152 → 991 lines.

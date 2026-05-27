@@ -111,16 +111,46 @@ class ParallelEnginesMvpTests(unittest.TestCase):
         self.assertEqual(e_flags[e_cal_idx + 1], "enforce")
         self.assertEqual(e_flags[e_scope_idx + 1], "enforce")
 
-    def test_ten_preset_default_includes_f_through_j(self):
-        """2026-05-26: default config list expanded to 10 (A-J)."""
+    def test_eleven_preset_default_includes_k(self):
+        """2026-05-26 (later): K_line5p5_block added; default = 11 configs."""
         self.assertEqual(
             set(lpe.PRESETS.keys()),
             {
                 "A_current", "B_cal_only", "C_raw", "D_scope_only", "E_tight_edge",
                 "F_no_dedup", "G_loose_edge", "H_late_innings",
-                "I_extreme_018", "J_no_phantom_filter",
+                "I_extreme_018", "J_no_phantom_filter", "K_line5p5_block",
             },
         )
+
+    def test_k_line5p5_block_preset_flags(self):
+        """K_line5p5_block: A_current baseline + line-5.5 high-FV guard
+        enforced. Mirrors I/J pattern (single varying knob vs A)."""
+        flags = lpe.PRESETS["K_line5p5_block"]
+        self.assertEqual(
+            flags[flags.index("--line-high-fv-block-mode") + 1], "enforce"
+        )
+        self.assertEqual(
+            flags[flags.index("--line-high-fv-block-min-raw-fv") + 1], "0.90"
+        )
+        self.assertEqual(
+            flags[flags.index("--line-high-fv-block-lines") + 1], "5.5"
+        )
+        # Inherits A's enforce/enforce baseline so the only varying
+        # dimension vs A is the line-5.5 guard.
+        self.assertEqual(
+            flags[flags.index("--prob-calibration-mode") + 1], "enforce"
+        )
+        self.assertEqual(
+            flags[flags.index("--stage1-alt-a-scope-mode") + 1], "enforce"
+        )
+        # K must also pass the live-only safety check.
+        for f in flags:
+            if not f.startswith("--"):
+                continue
+            self.assertNotIn(
+                f, lpe.LIVE_ONLY_ENGINE_FLAGS,
+                f"K_line5p5_block contains LIVE_ONLY flag {f}",
+            )
 
     def test_f_no_dedup_strips_every_dedup_knob(self):
         """F_no_dedup: zero per-event cooldown, zero inning gap,
@@ -629,6 +659,140 @@ class ParallelEnginesMvpTests(unittest.TestCase):
                 report["shared_candidate_disagreement"]["game_line"]["counts"]["split"],
                 1,
             )
+
+    def test_aggregator_normalization_volume_index_and_profit_per_bet(self):
+        """2026-05-26: F-J normalization. Build a 2-config report where
+        config_F places 4x more bets than config_A on the same stake,
+        and verify the headline carries:
+          - profit_per_settled_bet (per-bet quality)
+          - n_unique_game_lines + bets_per_unique_game_line (cohort breadth)
+          - volume_index_vs_baseline (F's bet count / A's bet count)
+        Baseline defaults to A_current when present.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            # A_current: 2 bets, 1 settled win at +$5 -> $5/bet, $5 ROI/stake
+            # F_no_dedup: 8 bets, 4 settled wins at +$5 each -> $5/bet, $20 P&L
+            # Both configs place 2 bets per unique game-line for F (cohort
+            # breadth check: F's bets_per_unique_game_line = 2.0, A's = 1.0).
+            def _make_root(label, bets):
+                root = Path(td) / f"paper_{label}"
+                (root / "sessions").mkdir(parents=True)
+                (root / "candidate_universe").mkdir(parents=True)
+                session = {
+                    "date": "2026-05-24",
+                    "mode": "paper",
+                    "params": {"config_label": label},
+                    "summary": {
+                        "market_data_health": {
+                            "shutdown_received": True,
+                            "last_market_data_sequence": 1,
+                            "market_data_gap_count": 0,
+                        },
+                    },
+                    "bets": bets,
+                }
+                (root / "sessions" / "2026-05-24_session.json").write_text(
+                    json.dumps(session), encoding="utf-8",
+                )
+                return root
+
+            a_bets = [
+                _base_bet(
+                    bet_id="A_1", game_pk=1, line="7.5",
+                    settled=True, won=True, profit=5.0, config_label="A_current",
+                ),
+                _base_bet(
+                    bet_id="A_2", game_pk=2, line="8.5",
+                    settled=True, won=False, profit=-10.0,
+                    placed_at="2026-05-24T13:00:00Z",
+                    config_label="A_current",
+                ),
+            ]
+            # F: 8 bets across 2 unique game-lines (4 per line, mirroring the
+            # bet-multiple-times-on-same-line pattern F_no_dedup enables).
+            f_bets = []
+            for i in range(4):
+                f_bets.append(_base_bet(
+                    bet_id=f"F_g1_{i}", game_pk=1, line="7.5",
+                    settled=True, won=True, profit=5.0,
+                    placed_at=f"2026-05-24T1{i}:00:00Z",
+                    config_label="F_no_dedup",
+                ))
+            for i in range(4):
+                f_bets.append(_base_bet(
+                    bet_id=f"F_g2_{i}", game_pk=2, line="8.5",
+                    settled=True, won=False, profit=-10.0,
+                    placed_at=f"2026-05-24T1{i + 4}:00:00Z",
+                    config_label="F_no_dedup",
+                ))
+            a_root = _make_root("A_current", a_bets)
+            f_root = _make_root("F_no_dedup", f_bets)
+
+            report = ape.build_report([a_root, f_root], "2026-05-24", "2026-05-24")
+
+            self.assertEqual(report["baseline_config_label"], "A_current")
+
+            a_head = report["configs"]["A_current"]["headline"]
+            f_head = report["configs"]["F_no_dedup"]["headline"]
+
+            # Per-bet quality.
+            self.assertAlmostEqual(a_head["profit_per_settled_bet"], -2.5)
+            self.assertAlmostEqual(f_head["profit_per_settled_bet"], -2.5)
+
+            # Cohort breadth.
+            self.assertEqual(a_head["n_unique_game_lines"], 2)
+            self.assertEqual(f_head["n_unique_game_lines"], 2)
+            self.assertAlmostEqual(a_head["bets_per_unique_game_line"], 1.0)
+            self.assertAlmostEqual(f_head["bets_per_unique_game_line"], 4.0)
+
+            # Volume index: F bet 4x as much as A.
+            self.assertAlmostEqual(a_head["volume_index_vs_baseline"], 1.0)
+            self.assertAlmostEqual(f_head["volume_index_vs_baseline"], 4.0)
+            self.assertAlmostEqual(a_head["settled_index_vs_baseline"], 1.0)
+            self.assertAlmostEqual(f_head["settled_index_vs_baseline"], 4.0)
+
+            # Daily-read surfaces per-bet leader (ties broken by sort order;
+            # both configs tie here at -$2.50/bet, so just verify the field
+            # exists and references one of them).
+            read = report["daily_read"]
+            self.assertIn(
+                read["best_profit_per_settled_bet_config"],
+                {"A_current", "F_no_dedup"},
+            )
+            self.assertAlmostEqual(
+                read["best_profit_per_settled_bet"], -2.5,
+            )
+
+    def test_aggregator_baseline_falls_back_to_first_alpha_when_no_a_current(self):
+        """If no A_current root is present, baseline = first config
+        alphabetically (so volume index still computes)."""
+        with tempfile.TemporaryDirectory() as td:
+            def _make(label):
+                root = Path(td) / f"paper_{label}"
+                (root / "sessions").mkdir(parents=True)
+                (root / "candidate_universe").mkdir(parents=True)
+                session = {
+                    "date": "2026-05-24",
+                    "mode": "paper",
+                    "params": {"config_label": label},
+                    "summary": {"market_data_health": {"shutdown_received": True}},
+                    "bets": [_base_bet(bet_id=f"{label}_1", settled=True, won=True,
+                                       profit=2.0, config_label=label)],
+                }
+                (root / "sessions" / "2026-05-24_session.json").write_text(
+                    json.dumps(session), encoding="utf-8",
+                )
+                return root
+
+            roots = [_make("X_custom"), _make("Y_custom"), _make("Z_custom")]
+            report = ape.build_report(roots, "2026-05-24", "2026-05-24")
+            # First alpha = X_custom.
+            self.assertEqual(report["baseline_config_label"], "X_custom")
+            for label in ("X_custom", "Y_custom", "Z_custom"):
+                self.assertEqual(
+                    report["configs"][label]["headline"]["volume_index_vs_baseline"],
+                    1.0,
+                )
 
     def test_aggregator_marks_shared_consumer_gaps_incomplete(self):
         with tempfile.TemporaryDirectory() as td:

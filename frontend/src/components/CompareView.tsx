@@ -77,6 +77,7 @@ export const CompareView: FC = () => {
       {report && (
         <>
           <DailyReadBlock report={report} />
+          <NormalizedTable report={report} />
           <HeadlineTable report={report} />
           <DisagreementTable report={report} />
         </>
@@ -92,10 +93,22 @@ const DailyReadBlock: FC<{ report: ParallelComparison }> = ({ report }) => {
     <section className="compare-section">
       <h3>Daily read</h3>
       <ul className="compare-daily-read">
+        {read.baseline_config_label && (
+          <li>
+            Volume-index baseline: <code>{read.baseline_config_label}</code>
+          </li>
+        )}
         <li>
           Best ROI so far: <strong>{read.best_roi_config ?? "—"}</strong>{" "}
           ({fmtPct(read.best_roi)})
         </li>
+        {read.best_profit_per_settled_bet_config && (
+          <li>
+            Best <strong>$/Bet</strong> (per-bet quality, independent of volume):{" "}
+            <strong>{read.best_profit_per_settled_bet_config}</strong>{" "}
+            ({fmtMoney(read.best_profit_per_settled_bet, { signed: true })})
+          </li>
+        )}
         <li>
           Lowest drawdown so far:{" "}
           <strong>{read.lowest_drawdown_config ?? "—"}</strong>{" "}
@@ -166,6 +179,88 @@ const HeadlineTable: FC<{ report: ParallelComparison }> = ({ report }) => {
                   <td>{fmtPct(h.mean_entry_ask)}</td>
                   <td>
                     {fmtPct(h.edge_over_market_stake_weighted_actual_minus_ask)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+};
+
+/** 2026-05-26: per-bet + cohort breadth view. Sits between the daily
+ *  read and the full headline so the operator reads quality before
+ *  volume-dependent totals. F_no_dedup's volume-index column makes it
+ *  obvious when one config dominates raw P&L purely by trading more. */
+const NormalizedTable: FC<{ report: ParallelComparison }> = ({ report }) => {
+  const configs = report.configs;
+  if (!configs) return null;
+  const labels = Object.keys(configs).sort();
+  const baseline = report.baseline_config_label;
+  return (
+    <section className="compare-section">
+      <h3>
+        Per-config normalized (per-bet + cohort breadth)
+        {baseline && (
+          <span className="compare-baseline-chip">
+            baseline = <code>{baseline}</code>
+          </span>
+        )}
+      </h3>
+      <p className="compare-disagreement-summary">
+        <strong>$/Bet</strong> is per-bet quality independent of volume;{" "}
+        <strong>Volume Idx</strong> &gt; 1 means the config placed more bets
+        than the baseline. Use them together to separate quality from volume —
+        a config with high $/Bet but Volume Idx ≪ 1 makes great picks rarely,
+        while a config with low $/Bet but Volume Idx ≫ 1 is grinding volume.
+      </p>
+      <div className="compare-table-scroll">
+        <table className="compare-table">
+          <thead>
+            <tr>
+              <th>Config</th>
+              <th>Bets</th>
+              <th>Settled</th>
+              <th>Unique GLs</th>
+              <th>Bets/GL</th>
+              <th>$/Bet</th>
+              <th>Volume Idx</th>
+              <th>Settled Idx</th>
+            </tr>
+          </thead>
+          <tbody>
+            {labels.map((label) => {
+              const h = configs[label]?.headline ?? {};
+              const bpgl = h.bets_per_unique_game_line;
+              const vol = h.volume_index_vs_baseline;
+              const settledIdx = h.settled_index_vs_baseline;
+              return (
+                <tr key={label}>
+                  <td>
+                    <code>{label}</code>
+                  </td>
+                  <td>{fmtInt(h.n_bets)}</td>
+                  <td>{fmtInt(h.n_settled)}</td>
+                  <td>{fmtInt(h.n_unique_game_lines)}</td>
+                  <td>
+                    {bpgl != null && !Number.isNaN(bpgl)
+                      ? bpgl.toFixed(2)
+                      : "—"}
+                  </td>
+                  <td>
+                    {fmtMoney(h.profit_per_settled_bet, { signed: true })}
+                  </td>
+                  <td>
+                    {vol != null && !Number.isNaN(vol)
+                      ? `${vol.toFixed(2)}x`
+                      : "—"}
+                  </td>
+                  <td>
+                    {settledIdx != null && !Number.isNaN(settledIdx)
+                      ? `${settledIdx.toFixed(2)}x`
+                      : "—"}
                   </td>
                 </tr>
               );

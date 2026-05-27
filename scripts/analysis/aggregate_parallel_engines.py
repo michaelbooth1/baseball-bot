@@ -247,6 +247,41 @@ def _bet_metrics(sessions: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     stake_weighted_fv = _weighted_mean(weighted_fv_pairs)
     stake_weighted_wr = _weighted_mean(weighted_win_pairs)
     actual_wr = len(wins) / len(settled) if settled else None
+
+    # 2026-05-26 normalization: profit_per_settled_bet and
+    # bets_per_unique_game_line make F_no_dedup (which can place 5-10x
+    # more bets than A_current on the same slate) readable against A
+    # on equal per-bet footing. Without these, the headline P&L and
+    # stake columns favor whichever config trades most regardless of
+    # quality.
+    profit_per_settled_bet = (
+        round(total_profit / len(settled), 4) if settled else None
+    )
+    # Unique (game_pk, line) over ALL bets (including unsettled), so
+    # the denominator reflects cohort breadth, not realization timing.
+    unique_game_lines: set[Tuple[Any, Any]] = set()
+    for b in bets:
+        gpk = b.get("game_pk")
+        ln = b.get("line")
+        if gpk is not None and ln is not None:
+            unique_game_lines.add((gpk, ln))
+    n_unique_game_lines = len(unique_game_lines)
+    bets_per_unique_game_line = (
+        round(len(bets) / n_unique_game_lines, 4)
+        if n_unique_game_lines > 0 else None
+    )
+    # Settled-bets cohort breadth tracks "how many distinct game-lines
+    # actually produced realized outcomes" — useful for F's
+    # bet-multiple-times-on-same-line pattern (settled cohort may be
+    # narrower than n_settled suggests if many bets share a line).
+    settled_unique_game_lines: set[Tuple[Any, Any]] = set()
+    for b in settled:
+        gpk = b.get("game_pk")
+        ln = b.get("line")
+        if gpk is not None and ln is not None:
+            settled_unique_game_lines.add((gpk, ln))
+    n_settled_unique_game_lines = len(settled_unique_game_lines)
+
     return {
         "n_bets": len(bets),
         "n_settled": len(settled),
@@ -256,6 +291,11 @@ def _bet_metrics(sessions: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "total_profit": total_profit,
         "roi": round(total_profit / total_staked, 6) if total_staked > 0 else None,
         "max_drawdown": _max_drawdown(profits),
+        # Normalization metrics (per-bet / per-cohort breadth):
+        "profit_per_settled_bet": profit_per_settled_bet,
+        "n_unique_game_lines": n_unique_game_lines,
+        "n_settled_unique_game_lines": n_settled_unique_game_lines,
+        "bets_per_unique_game_line": bets_per_unique_game_line,
         "mean_fair_value": round(mean_fv, 6) if mean_fv is not None else None,
         "mean_entry_ask": round(mean_ask, 6) if mean_ask is not None else None,
         "mean_fair_value_settled": round(mean_fv_settled, 6) if mean_fv_settled is not None else None,
@@ -426,6 +466,35 @@ def build_report(roots: Sequence[Path], start: str, end: str) -> Dict[str, Any]:
             "completeness": _config_completeness(root, sessions),
         }
 
+    # 2026-05-26 normalization: stamp volume_index_vs_baseline on
+    # every config's headline so per-bet metrics are readable next to
+    # raw P&L. Baseline = A_current when present (it's the production-
+    # mirror), else the first config alphabetically. Lets the operator
+    # immediately spot "F is 8x A in volume" without doing arithmetic.
+    baseline_label = (
+        "A_current" if "A_current" in configs
+        else (sorted(configs.keys())[0] if configs else None)
+    )
+    baseline_n_bets = 0
+    baseline_n_settled = 0
+    if baseline_label is not None:
+        bh = configs[baseline_label]["headline"]
+        baseline_n_bets = int(bh.get("n_bets") or 0)
+        baseline_n_settled = int(bh.get("n_settled") or 0)
+    for label, payload in configs.items():
+        h = payload["headline"]
+        h["baseline_label"] = baseline_label
+        n_bets = int(h.get("n_bets") or 0)
+        n_settled = int(h.get("n_settled") or 0)
+        h["volume_index_vs_baseline"] = (
+            round(n_bets / baseline_n_bets, 4)
+            if baseline_n_bets > 0 else None
+        )
+        h["settled_index_vs_baseline"] = (
+            round(n_settled / baseline_n_settled, 4)
+            if baseline_n_settled > 0 else None
+        )
+
     public_configs = {
         label: {
             "root": payload["root"],
@@ -439,6 +508,7 @@ def build_report(roots: Sequence[Path], start: str, end: str) -> Dict[str, Any]:
         "schema_version": 1,
         "generated_at_utc": _now_iso(),
         "date_range": {"start": start or None, "end": end or None},
+        "baseline_config_label": baseline_label,
         "configs": public_configs,
         "shared_candidate_disagreement": _shared_disagreement(configs),
     }
@@ -450,6 +520,7 @@ def _daily_read(report: Dict[str, Any]) -> Dict[str, Any]:
     configs = report.get("configs") or {}
     ranked_roi: List[Tuple[str, float]] = []
     ranked_dd: List[Tuple[str, float]] = []
+    ranked_profit_per_bet: List[Tuple[str, float]] = []
     sample_flags: List[str] = []
     for label, payload in configs.items():
         h = payload.get("headline") or {}
@@ -461,12 +532,16 @@ def _daily_read(report: Dict[str, Any]) -> Dict[str, Any]:
             sample_flags.append(f"{label}: only {settled} settled bets")
         roi = h.get("roi")
         dd = h.get("max_drawdown")
+        ppb = h.get("profit_per_settled_bet")
         if roi is not None:
             ranked_roi.append((label, float(roi)))
         if dd is not None:
             ranked_dd.append((label, float(dd)))
+        if ppb is not None and settled >= 3:
+            ranked_profit_per_bet.append((label, float(ppb)))
     ranked_roi.sort(key=lambda x: x[1], reverse=True)
     ranked_dd.sort(key=lambda x: x[1], reverse=True)
+    ranked_profit_per_bet.sort(key=lambda x: x[1], reverse=True)
     sd = report.get("shared_candidate_disagreement") or {}
     game_line_counts = ((sd.get("game_line") or {}).get("counts") or {})
     fine_counts = ((sd.get("fine_state") or {}).get("counts") or {})
@@ -475,6 +550,18 @@ def _daily_read(report: Dict[str, Any]) -> Dict[str, Any]:
         "best_roi": ranked_roi[0][1] if ranked_roi else None,
         "lowest_drawdown_config": ranked_dd[0][0] if ranked_dd else None,
         "lowest_drawdown": ranked_dd[0][1] if ranked_dd else None,
+        # 2026-05-26: per-bet ranking helps spot configs that earn
+        # more per individual bet (quality) vs configs that just place
+        # many bets (volume). F_no_dedup will dominate ROI on volume
+        # alone; profit_per_settled_bet exposes whether each bet is
+        # actually profitable.
+        "best_profit_per_settled_bet_config": (
+            ranked_profit_per_bet[0][0] if ranked_profit_per_bet else None
+        ),
+        "best_profit_per_settled_bet": (
+            ranked_profit_per_bet[0][1] if ranked_profit_per_bet else None
+        ),
+        "baseline_config_label": report.get("baseline_config_label"),
         "game_line_splits": int(game_line_counts.get("split") or 0),
         "fine_state_splits": int(fine_counts.get("split") or 0),
         "sample_flags": sample_flags,
@@ -488,10 +575,20 @@ def render_markdown(report: Dict[str, Any]) -> str:
     lines.append(f"_Generated {report['generated_at_utc']} for {dr.get('start') or 'first'} to {dr.get('end') or 'last'}._\n")
     read = report.get("daily_read") or _daily_read(report)
     lines.append("## Daily read\n")
+    baseline_label = read.get("baseline_config_label") or "(none)"
+    lines.append(f"- Baseline config (for volume index): `{baseline_label}`")
     lines.append(
         f"- Best ROI so far: `{read.get('best_roi_config') or '--'}` "
         f"({_fmt_pct(read.get('best_roi'))})."
     )
+    if read.get("best_profit_per_settled_bet_config"):
+        lines.append(
+            f"- Best **profit per settled bet**: "
+            f"`{read.get('best_profit_per_settled_bet_config')}` "
+            f"({_fmt_money(read.get('best_profit_per_settled_bet'))})."
+            " (Reads quality independent of volume — useful when F_no_dedup "
+            "trades 5-10x more than A.)"
+        )
     lines.append(
         f"- Lowest drawdown so far: `{read.get('lowest_drawdown_config') or '--'}` "
         f"({_fmt_money(read.get('lowest_drawdown'))})."
@@ -537,6 +634,42 @@ def render_markdown(report: Dict[str, Any]) -> str:
             f"{_fmt_num(h.get('mean_entry_ask'))} | "
             f"{_fmt_pct(h.get('edge_over_market_settled_actual_minus_ask'))} | "
             f"{_fmt_pct(h.get('edge_over_market_stake_weighted_actual_minus_ask'))} |"
+        )
+
+    # 2026-05-26: per-bet / per-cohort normalization table. Reads
+    # configs on equal footing regardless of how many bets each
+    # placed -- the loose-dedup F_no_dedup config is expected to
+    # outvolume A_current by 5-10x on the same slate, so raw P&L
+    # comparisons there are misleading.
+    lines.append("")
+    lines.append("## Per-config normalized (per-bet + cohort breadth)\n")
+    lines.append(
+        "_Baseline for volume index = `"
+        + str(report.get("baseline_config_label") or "(none)")
+        + "`. Volume Idx > 1 means the config placed more bets than the baseline; "
+        "use it together with **$/Bet** (profit_per_settled_bet) to separate "
+        "quality from volume._\n"
+    )
+    lines.append(
+        "| Config | Bets | Settled | Unique GLs | Bets/GL | $/Bet | Volume Idx | Settled Idx |"
+    )
+    lines.append(
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+    )
+    for label, payload in (report.get("configs") or {}).items():
+        h = payload.get("headline") or {}
+        ppb = h.get("profit_per_settled_bet")
+        ppb_str = _fmt_money(ppb) if ppb is not None else "—"
+        vol_idx = h.get("volume_index_vs_baseline")
+        settled_idx = h.get("settled_index_vs_baseline")
+        vol_str = f"{vol_idx:.2f}x" if vol_idx is not None else "—"
+        settled_str = f"{settled_idx:.2f}x" if settled_idx is not None else "—"
+        bets_per_gl = h.get("bets_per_unique_game_line")
+        bpgl_str = f"{bets_per_gl:.2f}" if bets_per_gl is not None else "—"
+        lines.append(
+            f"| `{label}` | {h.get('n_bets', 0)} | {h.get('n_settled', 0)} | "
+            f"{h.get('n_unique_game_lines', 0)} | {bpgl_str} | {ppb_str} | "
+            f"{vol_str} | {settled_str} |"
         )
 
     lines.append("\n## Gate/candidate funnel\n")

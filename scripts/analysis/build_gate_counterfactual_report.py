@@ -79,6 +79,31 @@ DEFAULT_OUTPUT_DIR = (
 TRAILING_30D_DAYS = 30
 TRAILING_7D_DAYS = 7
 
+# Hygiene #5 (2026-05-26): cross-window validation.
+#
+# CALIBRATOR_ENFORCE_FLIP_DATE is the date the band-gated calibrator
+# (TR23) flipped from `shadow` to `enforce`. Bets BEFORE this date had
+# `fair_value` = raw Stage-1/2/3 output; bets AFTER have `fair_value` =
+# calibrator output when raw>=0.90. Mixing the two regimes in a single
+# cohort lets recommendations that look HIGH-confidence on the post-
+# calibrator (recent) data invert silently when extended to lifetime.
+# The 2026-05-20 P2 audit caught one such recommendation
+# (`gate_min_current_total 4 -> 5`): 30d ROI -20.2% vs lifetime +4.5%
+# on the same blocked cohort. Shipping it would have actively hurt
+# P&L. The cure: provide a fourth window restricted to the post-
+# calibrator-enforce era so the cross-check can isolate "regime
+# change" from "real direction inversion."
+CALIBRATOR_ENFORCE_FLIP_DATE = "2026-05-19"
+
+# Minimum lifetime blocked-N for a `window_reversal` flag to be
+# considered actionable. Below this we can't tell signal from noise on
+# the lifetime side, so don't downgrade the 30d recommendation.
+WINDOW_REVERSAL_MIN_LIFETIME_BLOCKED_N = 10
+# Minimum lifetime $-delta to consider a reversal "material" -- two
+# average stakes ($20). A tiny lifetime delta on a thin lifetime
+# cohort isn't enough evidence to override the 30d signal.
+WINDOW_REVERSAL_MIN_LIFETIME_DELTA_ABS_USD = 20.0
+
 # Minimum blocked-N for a confidence label; mirrors
 # GATE_RETUNE_MIN_BLOCKED_N in the cert builder so the two reports
 # agree on what "enough data" means.
@@ -127,11 +152,20 @@ class WindowSlice:
 
 
 def slice_windows(rows: Sequence[cert.BetRow]) -> "OrderedDict[str, WindowSlice]":
-    """Slice the bet rows into all / trailing_30d / trailing_7d windows.
+    """Slice the bet rows into all / trailing_30d / trailing_7d /
+    lifetime_post_calibrator_enforce windows.
 
     All windows are anchored on the LATEST session_date in the table
     (not today's date), so the report stays meaningful even if the daily
     refresh runs on a day with no new training data.
+
+    Hygiene #5 (2026-05-26): the 4th window restricts to bets placed on
+    or after CALIBRATOR_ENFORCE_FLIP_DATE so cross-window reversal
+    checks can separate "calibrator-mode regime change" from "true
+    direction inversion." Without this window, a 30d recommendation
+    that runs entirely on post-calibrator data appears to "reverse"
+    when compared against lifetime (which mixes pre/post-calibrator
+    bets) -- but that's a regime change, not a real reversal.
     """
     out: "OrderedDict[str, WindowSlice]" = OrderedDict()
     out["all"] = _window_from_rows("all", rows)
@@ -139,6 +173,9 @@ def slice_windows(rows: Sequence[cert.BetRow]) -> "OrderedDict[str, WindowSlice]
     if latest is None:
         out["trailing_30d"] = _window_from_rows("trailing_30d", [])
         out["trailing_7d"] = _window_from_rows("trailing_7d", [])
+        out["lifetime_post_calibrator_enforce"] = _window_from_rows(
+            "lifetime_post_calibrator_enforce", [],
+        )
         return out
     cutoff_30 = latest - timedelta(days=TRAILING_30D_DAYS - 1)  # inclusive
     cutoff_7 = latest - timedelta(days=TRAILING_7D_DAYS - 1)
@@ -150,6 +187,16 @@ def slice_windows(rows: Sequence[cert.BetRow]) -> "OrderedDict[str, WindowSlice]
         "trailing_7d",
         [r for r in rows if _in_window(r, cutoff_7, latest)],
     )
+    calibrator_cutoff = _parse_date(CALIBRATOR_ENFORCE_FLIP_DATE)
+    if calibrator_cutoff is None:
+        out["lifetime_post_calibrator_enforce"] = _window_from_rows(
+            "lifetime_post_calibrator_enforce", [],
+        )
+    else:
+        out["lifetime_post_calibrator_enforce"] = _window_from_rows(
+            "lifetime_post_calibrator_enforce",
+            [r for r in rows if _in_window(r, calibrator_cutoff, latest)],
+        )
     return out
 
 
@@ -434,7 +481,117 @@ def build_top_recommendations(
         key=lambda r: r.get("counterfactual_profit_delta_usd") or 0.0,
         reverse=True,
     )
-    return candidates[:max_results]
+    capped = candidates[:max_results]
+    # Hygiene #5 (2026-05-26): cross-window validation. Augment each
+    # recommendation with the same gate+threshold counterfactual from
+    # the lifetime window AND from the post-calibrator-enforce window,
+    # then flag `window_reversal` when the 30d direction inverts on
+    # either lifetime view (with enough N + $-delta to be material).
+    # Downgrade confidence to `review_required` on reversal so the
+    # daily review's notes-block suppression path can filter them.
+    return [
+        _augment_with_cross_window_check(rec, gates_payload, window_name)
+        for rec in capped
+    ]
+
+
+def _augment_with_cross_window_check(
+    rec: Dict[str, Any],
+    gates_payload: Sequence[Dict[str, Any]],
+    window_name: str,
+) -> Dict[str, Any]:
+    """Stamp lifetime + post-calibrator-enforce comparisons onto a
+    recommendation, and downgrade confidence to `review_required` when
+    the window-of-record direction inverts."""
+    gate_name = rec.get("gate")
+    to_threshold = rec.get("to_threshold")
+    window_delta = float(rec.get("counterfactual_profit_delta_usd") or 0.0)
+
+    # Find the gate payload.
+    gate_payload: Optional[Dict[str, Any]] = None
+    for g in gates_payload:
+        if g.get("name") == gate_name:
+            gate_payload = g
+            break
+    if gate_payload is None:
+        return rec
+
+    def _lookup(window_label: str) -> Tuple[Optional[float], Optional[int], Optional[float]]:
+        win = (gate_payload.get("windows") or {}).get(window_label) or {}
+        for s in (win.get("sweep") or []):
+            if s.get("threshold") == to_threshold:
+                blocked = s.get("blocked") or {}
+                return (
+                    s.get("counterfactual_profit_delta_vs_current"),
+                    blocked.get("n_filled"),
+                    blocked.get("roi"),
+                )
+        return None, None, None
+
+    lifetime_cf, lifetime_n, lifetime_roi = _lookup("all")
+    post_cal_cf, post_cal_n, post_cal_roi = _lookup(
+        "lifetime_post_calibrator_enforce"
+    )
+    rec["lifetime_counterfactual_profit_delta_usd"] = lifetime_cf
+    rec["lifetime_blocked_n_filled"] = lifetime_n
+    rec["lifetime_blocked_roi"] = lifetime_roi
+    rec["post_calibrator_counterfactual_profit_delta_usd"] = post_cal_cf
+    rec["post_calibrator_blocked_n_filled"] = post_cal_n
+    rec["post_calibrator_blocked_roi"] = post_cal_roi
+
+    # Reversal flags. Use post-calibrator window as primary if it has
+    # enough N (separates "regime change" from "real inversion"); fall
+    # back to lifetime when post-calibrator is thin.
+    reversal_flags: List[str] = []
+    reversal_reasons: List[str] = []
+    primary_window: Optional[str] = None
+    if (
+        post_cal_cf is not None
+        and post_cal_n is not None
+        and post_cal_n >= WINDOW_REVERSAL_MIN_LIFETIME_BLOCKED_N
+        and abs(post_cal_cf) >= WINDOW_REVERSAL_MIN_LIFETIME_DELTA_ABS_USD
+        and window_delta * post_cal_cf < 0
+    ):
+        reversal_flags.append("post_calibrator_reversal")
+        reversal_reasons.append(
+            f"post-calibrator ({CALIBRATOR_ENFORCE_FLIP_DATE}+) delta "
+            f"{post_cal_cf:+.2f} on n={post_cal_n} inverts vs "
+            f"{window_name} delta {window_delta:+.2f}"
+        )
+        primary_window = "lifetime_post_calibrator_enforce"
+    if (
+        lifetime_cf is not None
+        and lifetime_n is not None
+        and lifetime_n >= WINDOW_REVERSAL_MIN_LIFETIME_BLOCKED_N
+        and abs(lifetime_cf) >= WINDOW_REVERSAL_MIN_LIFETIME_DELTA_ABS_USD
+        and window_delta * lifetime_cf < 0
+    ):
+        reversal_flags.append("lifetime_reversal")
+        reversal_reasons.append(
+            f"lifetime delta {lifetime_cf:+.2f} on n={lifetime_n} "
+            f"inverts vs {window_name} delta {window_delta:+.2f}"
+        )
+        if primary_window is None:
+            primary_window = "all"
+
+    rec["window_reversal"] = bool(reversal_flags)
+    rec["window_reversal_flags"] = reversal_flags
+    rec["window_reversal_reasons"] = reversal_reasons
+    if reversal_flags:
+        # Save original confidence + override to review_required so the
+        # daily-review notes path can filter on it.
+        rec["confidence_before_reversal_check"] = rec.get("confidence")
+        rec["confidence"] = "review_required"
+        # Prepend a warning marker to the rationale so any consumer that
+        # surfaces the rationale string sees the caveat first.
+        original_rationale = rec.get("rationale", "")
+        rec["rationale"] = (
+            "⚠️ WINDOW REVERSAL: "
+            + "; ".join(reversal_reasons)
+            + ". Treat as candidate-for-audit, NOT ready-to-ship. "
+            + original_rationale
+        )
+    return rec
 
 
 def _rationale_text(

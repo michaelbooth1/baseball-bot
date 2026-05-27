@@ -44,6 +44,10 @@ type EngineRow = {
   roi: number | null;
   meanAsk: number | null;
   meanFv: number | null;
+  // 2026-05-26 normalization (computed locally; mirrors the aggregator).
+  nUniqueGameLines: number;
+  betsPerUniqueGameLine: number | null;
+  profitPerSettledBet: number | null;
 };
 
 function computeRow(
@@ -79,6 +83,17 @@ function computeRow(
     .filter((x): x is number => typeof x === "number");
   const meanAsk = askVals.length > 0 ? askVals.reduce((a, b) => a + b, 0) / askVals.length : null;
   const meanFv = fvVals.length > 0 ? fvVals.reduce((a, b) => a + b, 0) / fvVals.length : null;
+  // 2026-05-26: per-bet + cohort breadth metrics (mirrors aggregator).
+  const uniqueGameLines = new Set<string>();
+  for (const b of bets) {
+    if (b.game_pk != null && b.line != null) {
+      uniqueGameLines.add(`${b.game_pk}|${b.line}`);
+    }
+  }
+  const nUniqueGameLines = uniqueGameLines.size;
+  const betsPerUniqueGameLine =
+    nUniqueGameLines > 0 ? bets.length / nUniqueGameLines : null;
+  const profitPerSettledBet = settled > 0 ? profit / settled : null;
   return {
     modeFolder,
     configLabel,
@@ -94,6 +109,9 @@ function computeRow(
     roi,
     meanAsk,
     meanFv,
+    nUniqueGameLines,
+    betsPerUniqueGameLine,
+    profitPerSettledBet,
   };
 }
 
@@ -124,11 +142,25 @@ export const MultiEngineDayView: FC<MultiEngineDayViewProps> = ({
     );
   }
 
-  // Best ROI + best P&L for quick ranking glance.
+  // Best ROI + best P&L + best $/Bet for quick ranking glance.
+  // $/Bet is the volume-independent quality metric -- F_no_dedup will
+  // grind out raw P&L on volume alone; profit_per_settled_bet exposes
+  // whether each individual bet is actually +EV.
   const bestRoiRow = rows
     .filter((r) => r.roi !== null)
     .sort((a, b) => (b.roi ?? -Infinity) - (a.roi ?? -Infinity))[0];
   const bestPnlRow = [...rows].sort((a, b) => b.profit - a.profit)[0];
+  const bestPpbRow = rows
+    .filter((r) => r.profitPerSettledBet !== null && r.settled >= 3)
+    .sort(
+      (a, b) =>
+        (b.profitPerSettledBet ?? -Infinity) -
+        (a.profitPerSettledBet ?? -Infinity),
+    )[0];
+  // Baseline for the on-the-fly volume index = A_current when present,
+  // else first row alphabetically. Mirrors aggregator behavior.
+  const baselineRow =
+    rows.find((r) => r.configLabel === "A_current") ?? rows[0];
 
   return (
     <div className="multi-engine-day">
@@ -145,7 +177,7 @@ export const MultiEngineDayView: FC<MultiEngineDayViewProps> = ({
           </div>
         </header>
 
-        {(bestRoiRow || bestPnlRow) && (
+        {(bestRoiRow || bestPnlRow || bestPpbRow) && (
           <div className="multi-engine-headline">
             {bestRoiRow && (
               <div className="multi-engine-headline-item">
@@ -155,12 +187,33 @@ export const MultiEngineDayView: FC<MultiEngineDayViewProps> = ({
                 </span>
               </div>
             )}
+            {bestPpbRow && (
+              <div className="multi-engine-headline-item">
+                <span className="multi-engine-headline-label">
+                  Best $/Bet (quality, vs volume)
+                </span>
+                <span className="multi-engine-headline-value">
+                  <code>{bestPpbRow.configLabel}</code>{" "}
+                  ({fmtMoney(bestPpbRow.profitPerSettledBet, { signed: true })})
+                </span>
+              </div>
+            )}
             {bestPnlRow && (
               <div className="multi-engine-headline-item">
                 <span className="multi-engine-headline-label">Best P&amp;L</span>
                 <span className="multi-engine-headline-value">
                   <code>{bestPnlRow.configLabel}</code>{" "}
                   ({fmtMoney(bestPnlRow.profit, { signed: true })})
+                </span>
+              </div>
+            )}
+            {baselineRow && (
+              <div className="multi-engine-headline-item">
+                <span className="multi-engine-headline-label">
+                  Volume baseline
+                </span>
+                <span className="multi-engine-headline-value">
+                  <code>{baselineRow.configLabel}</code>
                 </span>
               </div>
             )}
@@ -180,6 +233,9 @@ export const MultiEngineDayView: FC<MultiEngineDayViewProps> = ({
                 <th className="num">Staked</th>
                 <th className="num">P&amp;L</th>
                 <th className="num">ROI</th>
+                <th className="num">$/Bet</th>
+                <th className="num">Vol Idx</th>
+                <th className="num">Bets/GL</th>
                 <th className="num">Mean Ask</th>
                 <th className="num">Mean FV</th>
               </tr>
@@ -192,6 +248,16 @@ export const MultiEngineDayView: FC<MultiEngineDayViewProps> = ({
                     : r.profit < 0
                       ? "metric-negative"
                       : "metric-neutral";
+                const ppbClass =
+                  r.profitPerSettledBet != null && r.profitPerSettledBet > 0
+                    ? "metric-positive"
+                    : r.profitPerSettledBet != null && r.profitPerSettledBet < 0
+                      ? "metric-negative"
+                      : "metric-neutral";
+                const volIdx =
+                  baselineRow && baselineRow.placed > 0
+                    ? r.placed / baselineRow.placed
+                    : null;
                 return (
                   <tr key={r.modeFolder}>
                     <td>
@@ -213,6 +279,20 @@ export const MultiEngineDayView: FC<MultiEngineDayViewProps> = ({
                       {fmtMoney(r.profit, { signed: true })}
                     </td>
                     <td className="num">{fmtPct(r.roi)}</td>
+                    <td className={"num " + ppbClass}>
+                      {fmtMoney(r.profitPerSettledBet, { signed: true })}
+                    </td>
+                    <td className="num">
+                      {volIdx != null && !Number.isNaN(volIdx)
+                        ? `${volIdx.toFixed(2)}x`
+                        : "—"}
+                    </td>
+                    <td className="num">
+                      {r.betsPerUniqueGameLine != null &&
+                      !Number.isNaN(r.betsPerUniqueGameLine)
+                        ? r.betsPerUniqueGameLine.toFixed(2)
+                        : "—"}
+                    </td>
                     <td className="num">{fmtNumOrDash(r.meanAsk, 3)}</td>
                     <td className="num">{fmtNumOrDash(r.meanFv, 3)}</td>
                   </tr>
