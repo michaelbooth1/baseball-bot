@@ -13,7 +13,7 @@ wallet-aware paper fallback + stake-scaling promotion analyzer +
 weekly drift rollup HTML + Stage-3 weight externalization +
 run_daily_refresh smoke test).
 
-There are **90 test modules** (as of 2026-05-28; many added since the
+There are **94 test modules** (as of 2026-05-29; many added since the
 2026-05-14 line-by-line walk). They split roughly between trading runtime
 behavior, analysis-builder schemas, observability/rollup characterization,
 UNDER-family side-aware tests, lineage/promotion-audit tests, drift
@@ -27,6 +27,30 @@ _Append dated bullets here when you add or restructure tests. Mirrors
 above when you sweep the whole doc. To verify the test count is current
 run `pytest --collect-only -q 2>&1 | tail -5`._
 
+- **2026-05-29 (Tier-3 feed enrichment)** — added `test_build_feed_enrichment.py`
+  (parse_iso/half/defending-side/platoon helpers, GameTimeline build, enrich
+  at mid-stint / after-reliever / pregame / no-ts, pitch-count + TTO +
+  bullpen + handedness + velocity math, model-bearing filter, end-to-end
+  main writing jsonl/csv/summary over a synthetic feed).
+- **2026-05-29 (Tier-2 capture)** — added `test_game_meta_client.py` (umpire/
+  officials extraction, fail-open build with injected schedule/boxscore
+  fetchers, write/load round-trip, engine candidate-row join). Extended
+  `test_signal_context_capture.py` for the new schedule-derived players (both
+  starters + ERAs, current batter + on-deck) and the None-when-absent
+  behavior (writer strips Nones → no empty-string bloat). Updated the
+  `test_run_daily_refresh` weather-only step assertion to expect
+  `[game_weather_cache, game_meta_cache]`.
+- **2026-05-28 (Tier-1 capture)** — added `test_signal_context_capture.py`
+  (pitcher id/name/era + balls/strikes + start_time_utc + day_night now flow
+  onto candidate rows AND bet records via `models.signal_context_fields`).
+  Updated the 4 golden candidate-row dicts in
+  `test_signal_engine_phase1_characterization.py` for the new fields
+  (current_pitcher_era=4.2, current_pitcher_name/start_time_utc/day_night="").
+- **2026-05-28 (gate EV audit)** — added `test_audit_over_gate_ev.py` (10
+  cases): Wilson interval, taker-ROI math, verdict classifier
+  (+EV/-EV/marginal/insufficient thresholds), cohort aggregation with
+  bettable-subset split, and end-to-end `main()` that flags a synthetic
+  -EV gate (blocks winners) vs +EV gate (blocks losers).
 - **2026-05-28 (live UNDER)** — extended `test_under_paper_placement.py`
   (live-UNDER path: `place_bet` is side-parameterized; live UNDER routes the
   CLOB order to `under_token_id`; `bet_traded_token_id` side routing;

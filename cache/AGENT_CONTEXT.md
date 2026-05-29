@@ -29,6 +29,12 @@ _Append dated bullets here when you change anything in this folder.
 Mirrors `MASTER_CONTEXT.md`'s "Recent major shifts" pattern; bump
 "Last checked" above when you sweep the whole doc._
 
+- **2026-05-29** — new `cache/game_meta/game_meta_<date>.json` artifact
+  (Tier-2 data capture): per-game home-plate umpire + officials, written by
+  `scripts/analysis/refresh_game_meta.py` (build logic in
+  `scripts/trading/game_meta_client.py`), loaded by the live engine and
+  joined onto candidate rows by game_pk. Mirrors the `cache/weather/` pattern.
+  Do not hand-edit; rerun the refresher.
 - **2026-05-25** — added the Alt-A staging cache row + lineage block
   doc section (cross-reference to Active #16 v2 lineage stamping
   shipped 2026-05-17).

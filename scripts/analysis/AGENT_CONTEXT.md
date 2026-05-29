@@ -46,6 +46,55 @@ daily-refresh step list lives in `build_refresh_steps()` in
 `run_daily_refresh.py` -- run `python scripts/analysis/dump_refresh_steps.py`
 to print the live list rather than maintaining it here by hand._
 
+- **2026-05-29 (Tier-3 feed enrichment)** — new `build_feed_enrichment.py`
+  joins each model-bearing candidate to the MLB live-feed JSON we already
+  scrape (`data/games/regular/.../<game_pk>.json` -> `liveData.plays`) by
+  decision-time `ts` and reconstructs pitch count, batters-faced,
+  times-through-order, bullpen depth (pitchers/relievers used),
+  handedness matchup (+platoon flag), catcher, and pitch-velocity /
+  exit-velocity trends -- all as-of-ts. **No live polling** (reads scraped
+  feeds; only loads the few hundred game_pks we actually evaluated) and
+  backfills full history. Output `data/analysis_output/feed_enrichment/`
+  keyed by `candidate_id` (+ `feed_match_quality` / `feed_state_agrees` /
+  `feed_pitcher_matches_candidate` audit flags so weak matches are
+  filterable). First run: 32,205 model-bearing candidates / 322 games,
+  30,991 enriched (96%), avg pitch count 36.9. Wired as the
+  `feed_enrichment` refresh step (after `over_gate_ev_audit`). The Option-C
+  (offline, zero live risk) realization of the deferred Tier-3 audit item;
+  the live `/feed/live` poller stays deferred until a feature earns a gate.
+- **2026-05-29 (Tier-2 game-meta cache)** — new `refresh_game_meta.py`
+  (mirrors `refresh_game_weather.py`): builds the per-game home-plate
+  umpire/officials cache at `cache/game_meta/game_meta_<date>.json` from the
+  boxscore endpoint. Wired into the daily refresh as the `game_meta_cache`
+  step (right after `game_weather_cache`, gated on the same
+  `refresh_weather_cache` flag → `--startup-refresh-skip-weather-cache` skips
+  both). Fail-open. The build/extract logic lives in
+  `scripts/trading/game_meta_client.py`; the engine joins umpire fields onto
+  candidate rows by game_pk.
+- **2026-05-28 (OVER gate EV audit)** — new `audit_over_gate_ev.py`
+  closes a blind spot in `walk_forward_certification` /
+  `build_gate_counterfactual_report` (both run on the ~227 FILLED bets, so
+  they can't see what a pre-FV gate that blocks 0 filled bets actually
+  filters). This reads candidate-universe **skip** rows (the bets each gate
+  truly blocked), dedupes to unique game-state opportunities, joins
+  `over_hit` outcomes, and computes the blocked cohort's counterfactual
+  taker ROI vs breakeven (with Wilson bounds) → per-gate verdict
+  (+EV / marginal / -EV / insufficient). Counterfactual at taker ask
+  (assumes fill; real over-hit labels); does NOT model downstream gates or
+  fill probability. OVER only. **First run (1715 outcomes): 12 +EV,
+  6 marginal, 1 -EV.** Headline: `gate_stage2_suppression` is **-EV**
+  (blocks overs that hit 80.8% at avg ask 0.718 → +10.6% taker ROI on
+  n=52); `gate_extreme_edge` is only marginal (blocked cohort ~breakeven,
+  +0.4%). Strongest +EV gates: `gate_wide_spread` (-51.5%),
+  `gate_sp_era`/`gate_ask_jump_unconfirmed`/`gate_min_entry_ask` (-18 to
+  -27%). Output: `data/analysis_output/over_gate_ev_audit/`. 10 pytest
+  cases. **Wired into the daily refresh** as the `over_gate_ev_audit` step
+  (after `gate_counterfactual_report`; read-only, no staleness check so the
+  verdicts always refresh). Acted on the first run:
+  `gate_extreme_edge` + `gate_stage2_suppression` DISABLED in the production
+  command (`--extreme-edge-max 1.0 --s2-suppress-max -99.0`); compiled
+  defaults left protective so the boot drift heartbeat stays armed and the
+  paper fleet keeps the enforced A/B. This step keeps the re-enable case fresh.
 - **2026-05-28 (calibration edge-shaving deep dive)** — new
   `analyze_calibration_edge_shaving.py` answers the 2026-05-27 paper-audit
   question "is the calibrator over-shrinking post-structural candidates?".

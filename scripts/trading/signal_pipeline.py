@@ -65,7 +65,7 @@ from signal_pipeline_gates_post_fv import (  # noqa: E402
     evaluate_post_fv_gates as _evaluate_post_fv_gates,
     run_inference_and_fv_phase as _run_inference_and_fv_phase,
 )
-from models import BetRecord  # noqa: E402
+from models import BetRecord, signal_context_fields  # noqa: E402
 
 LOGGER = logging.getLogger("signal_engine")
 
@@ -298,6 +298,7 @@ def _place_under_paper_bet(
         config_label=str(
             getattr(engine.trade_args, "config_label", "default") or "default"
         ),
+        **signal_context_fields(game),
     )
     engine._bets.append(bet)
 

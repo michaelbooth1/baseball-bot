@@ -32,6 +32,7 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from line_state import _now_iso
 from model_families import SCORE_EVENT_TRANSITION
+from models import signal_context_fields
 from remaining_opportunity import (
     REMAINING_OPPORTUNITY_FIELD_KEYS,
     compute_remaining_opportunity_fields,
@@ -357,6 +358,11 @@ def build_base_candidate_payload(engine: "SignalEngine", ctx: "TickContext") -> 
         "away_score_before": ctx.away_score,
         "home_score_before": ctx.home_score,
         "current_total": ctx.current_total,
+        # Tier-1 player/count/scheduling capture (2026-05-28): pitcher
+        # identity/ERA, count, and scheduling metadata already in memory on
+        # the ScheduledGame but previously dropped. Shared with the bet
+        # record via models.signal_context_fields so both stay in lockstep.
+        **signal_context_fields(ctx.game),
         **remaining_opportunity_fields,
         **scoring_path_fields,
         **_market_complement_fields(ctx),
@@ -436,6 +442,9 @@ def build_base_candidate_payload(engine: "SignalEngine", ctx: "TickContext") -> 
     weather_getter = getattr(engine, "_weather_fields_for_game", None)
     if callable(weather_getter):
         payload.update(weather_getter(ctx.game.game_pk))
+    game_meta_getter = getattr(engine, "_game_meta_fields_for_game", None)
+    if callable(game_meta_getter):
+        payload.update(game_meta_getter(ctx.game.game_pk))
     return payload
 
 

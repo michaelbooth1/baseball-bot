@@ -17,6 +17,19 @@ _Append dated bullets here when you change anything in this folder.
 Mirrors `MASTER_CONTEXT.md`'s "Recent major shifts" pattern; bump
 "Last checked" above when you sweep the whole doc._
 
+- **2026-05-29** — Tier-2 player capture (schedule-derived, no extra fetch):
+  schedule `hydrate` gained `probablePitcher`; `parse_games` now extracts both
+  starting pitchers (id/name + ERA from the pitcher cache) and the current
+  batter + on-deck (`linescore.offense.batter`/`onDeck`). New `ScheduledGame`
+  fields: `away_starter_*`, `home_starter_*` (game-static), `batter_*`,
+  `on_deck_*` (dynamic). Propagated to candidate rows + bet records downstream
+  via `models.signal_context_fields`.
+- **2026-05-28** — `ScheduledGame.day_night` added (Tier-1 data capture);
+  extracted from the StatsAPI schedule `dayNight` field in `parse_games`.
+  Authoritative day/night tag (not derived), propagated to candidate rows +
+  bet records downstream for totals cohort analysis. `ScheduleScore` already
+  carried `balls`/`strikes` and `ScheduledGame` the `current_pitcher_*`
+  fields — those are now logged downstream too.
 - **2026-05-25** — added "Recent changes" pattern, no code changes.
   Monitor package has been stable since the 2026-05-09 10-module split;
   largest file is the orchestrator at 857 lines (under 1,000 threshold).

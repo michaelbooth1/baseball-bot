@@ -56,7 +56,7 @@ from analyze_polymarket_overreactions import (  # noqa: E402
 from team_offense_model import TeamOffenseModel  # noqa: E402
 from stage2_run_env_model import Stage2RunEnvModel, RunEnvContext  # noqa: E402
 
-from models import BetRecord  # noqa: E402
+from models import BetRecord, signal_context_fields  # noqa: E402
 from model_families import SCORE_EVENT_TRANSITION  # noqa: E402
 from probability_calibration import ProbabilityCalibrator  # noqa: E402
 from signal_config import *  # noqa: F401,F403
@@ -115,6 +115,10 @@ from runtime_log_rollups import (  # noqa: E402
 from weather_client import (  # noqa: E402
     default_weather_cache_path as _default_weather_cache_path,
     load_weather_features_by_game as _load_weather_features_by_game,
+)
+from game_meta_client import (  # noqa: E402
+    default_game_meta_cache_path as _default_game_meta_cache_path,
+    load_game_meta_features_by_game as _load_game_meta_features_by_game,
 )
 
 LOGGER = logging.getLogger("signal_engine")
@@ -209,6 +213,11 @@ class SignalEngine(MLBPolymarketMonitor):
         self._weather_features_by_game_pk: Dict[int, Dict[str, object]] = {}
         self._weather_cache_loaded = False
         self._load_weather_feature_cache()
+        # Per-game metadata cache (home-plate umpire + officials), Tier-2.
+        self._game_meta_cache_path = _default_game_meta_cache_path(self.date_str)
+        self._game_meta_features_by_game_pk: Dict[int, Dict[str, object]] = {}
+        self._game_meta_cache_loaded = False
+        self._load_game_meta_cache()
         self.cache = OUCache(trade_args.cache_path)
         LOGGER.info("Cache loaded: %d cells", len(self.cache.cells))
         # Active #16 v3 (2026-05-17): log build-time lineage for each
@@ -925,6 +934,40 @@ class SignalEngine(MLBPolymarketMonitor):
             return {"weather_cache_available": False}
         return {}
 
+    def _load_game_meta_cache(self) -> None:
+        try:
+            if not self._game_meta_cache_path.exists():
+                LOGGER.info(
+                    "Game-meta cache not found for %s at %s; umpire context will be unavailable.",
+                    self.date_str, self._game_meta_cache_path,
+                )
+                return
+            self._game_meta_features_by_game_pk = _load_game_meta_features_by_game(
+                self._game_meta_cache_path
+            )
+            self._game_meta_cache_loaded = True
+            LOGGER.info(
+                "Game-meta cache loaded: games=%d path=%s",
+                len(self._game_meta_features_by_game_pk), self._game_meta_cache_path,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._game_meta_features_by_game_pk = {}
+            self._game_meta_cache_loaded = False
+            LOGGER.warning("Game-meta cache failed to load (%s); umpire context unavailable.", exc)
+
+    def _game_meta_fields_for_game(self, game_pk: int) -> Dict[str, object]:
+        try:
+            key = int(game_pk)
+        except Exception:
+            key = -1
+        by_game = getattr(self, "_game_meta_features_by_game_pk", {}) or {}
+        row = by_game.get(key)
+        if row:
+            return dict(row)
+        if getattr(self, "_game_meta_cache_loaded", False):
+            return {"game_meta_available": False}
+        return {}
+
     # ------------------------------------------------------------------
     # Candidate logging surfaces (raw JSONL, rollup counters, skip dedup).
     # Implementations live in candidate_logging.py; methods below are thin
@@ -1304,6 +1347,7 @@ class SignalEngine(MLBPolymarketMonitor):
             venue_name=game.venue_name,
             ltp_at_signal=ltp,
             config_label=str(getattr(self.trade_args, "config_label", "default") or "default"),
+            **signal_context_fields(game),
             inferred_state_base_poisson=_diag_float("inferred_state_base_poisson"),
             inferred_state_base_empirical=_diag_float("inferred_state_base_empirical"),
             inferred_state_poisson_minus_empirical=_diag_float("inferred_state_poisson_minus_empirical"),

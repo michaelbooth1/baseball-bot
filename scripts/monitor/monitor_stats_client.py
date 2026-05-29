@@ -301,7 +301,9 @@ class MLBStatsClient:
             "date": date_str,
             # hydrate=team includes team abbreviations and richer identifiers.
             # Venue is needed for matching and Weather v2 stadium joins.
-            "hydrate": "team,linescore,venue",
+            # probablePitcher (2026-05-29) adds each team's starting pitcher
+            # (id + fullName) for free in the schedule we already poll.
+            "hydrate": "team,linescore,venue,probablePitcher",
         }
         fast_timeout = min(float(self.timeout), 4.0)
         retry_timeout = min(max(fast_timeout * 1.5, 5.0), 6.0)
@@ -352,6 +354,14 @@ class MLBStatsClient:
                     | (2 if "second" in offense else 0)
                     | (4 if "third" in offense else 0)
                 )
+                # Current batter + on-deck (dynamic, ~30s-stale at tick time).
+                # Already present in linescore.offense; previously discarded.
+                batter = offense.get("batter", {}) or {}
+                on_deck = offense.get("onDeck", {}) or {}
+                batter_id = _safe_int(batter.get("id"))
+                batter_name = str(batter.get("fullName") or "")
+                on_deck_id = _safe_int(on_deck.get("id"))
+                on_deck_name = str(on_deck.get("fullName") or "")
                 away_inning_runs = []
                 home_inning_runs = []
                 for inning_row in linescore.get("innings", []) or []:
@@ -389,6 +399,23 @@ class MLBStatsClient:
                         str(current_pitcher_id), MLB_AVG_ERA
                     )
 
+                # Starting pitchers (both teams) from probablePitcher hydrate.
+                # ERA pulled from the same local pitcher cache as the current
+                # pitcher; None id => unknown (ERA stays None, not the 4.20
+                # fallback, so absence is distinguishable).
+                away_pp = away.get("probablePitcher", {}) or {}
+                home_pp = home.get("probablePitcher", {}) or {}
+                away_starter_id = _safe_int(away_pp.get("id"))
+                home_starter_id = _safe_int(home_pp.get("id"))
+                away_starter_era = (
+                    self._pitcher_cache.get(str(away_starter_id))
+                    if away_starter_id is not None else None
+                )
+                home_starter_era = (
+                    self._pitcher_cache.get(str(home_starter_id))
+                    if home_starter_id is not None else None
+                )
+
                 game = ScheduledGame(
                     game_pk=game_pk,
                     game_date=str(g.get("gameDate") or ""),
@@ -401,9 +428,20 @@ class MLBStatsClient:
                     status_detailed=str(status.get("detailedState") or ""),
                     score=score,
                     venue_name=str(venue_data.get("name") or ""),
+                    day_night=str(g.get("dayNight") or ""),
                     current_pitcher_id=current_pitcher_id,
                     current_pitcher_name=current_pitcher_name,
                     current_pitcher_era=current_pitcher_era,
+                    away_starter_id=away_starter_id,
+                    away_starter_name=str(away_pp.get("fullName") or ""),
+                    away_starter_era=away_starter_era,
+                    home_starter_id=home_starter_id,
+                    home_starter_name=str(home_pp.get("fullName") or ""),
+                    home_starter_era=home_starter_era,
+                    batter_id=batter_id,
+                    batter_name=batter_name,
+                    on_deck_id=on_deck_id,
+                    on_deck_name=on_deck_name,
                 )
                 out[game_pk] = game
         return out

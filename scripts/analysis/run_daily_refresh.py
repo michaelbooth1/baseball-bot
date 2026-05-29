@@ -1632,6 +1632,23 @@ def build_refresh_steps(config: RefreshConfig, session_dates: Sequence[str], max
                 ],
             )
         )
+        # Tier-2 (2026-05-29): per-game umpire/officials cache. Gated on the
+        # same flag as weather (both are active-date network enrichments;
+        # --startup-refresh-skip-weather-cache skips both). Fail-open.
+        steps.append(
+            RefreshStep(
+                name="game_meta_cache",
+                description="Refresh per-game home-plate umpire / officials cache for active schedule date.",
+                command=[
+                    _python(),
+                    _script("scripts/analysis/refresh_game_meta.py"),
+                    "--date",
+                    config.active_date,
+                    "--timeout",
+                    f"{float(config.weather_timeout):g}",
+                ],
+            )
+        )
 
     if config.refresh_pitcher_cache:
         season = config.active_date[:4]
@@ -2645,6 +2662,45 @@ def build_refresh_steps(config: RefreshConfig, session_dates: Sequence[str], max
         command=[
             _python(),
             _script("scripts/analysis/build_gate_counterfactual_report.py"),
+        ],
+    ))
+
+    steps.append(RefreshStep(
+        name="over_gate_ev_audit",
+        description=(
+            "Per-OVER-gate counterfactual EV audit (2026-05-28). Unlike "
+            "walk_forward_certification / gate_counterfactual (which run on "
+            "the ~227 FILLED bets and can't see pre-FV gates that block 0 "
+            "filled bets), this reads candidate-universe SKIP rows -- the "
+            "bets each gate actually blocked -- dedupes to unique game "
+            "states, joins over_hit outcomes, and computes each blocked "
+            "cohort's taker ROI vs breakeven (Wilson-bounded) -> per-gate "
+            "+EV / marginal / -EV verdict. Keeps the case for re-enabling "
+            "gate_extreme_edge / gate_stage2_suppression (disabled "
+            "2026-05-28) fresh as live data accumulates. Outputs to "
+            "data/analysis_output/over_gate_ev_audit/."
+        ),
+        command=[
+            _python(),
+            _script("scripts/analysis/audit_over_gate_ev.py"),
+        ],
+    ))
+
+    steps.append(RefreshStep(
+        name="feed_enrichment",
+        description=(
+            "Tier-3 offline feed enrichment (2026-05-29). Joins each "
+            "model-bearing candidate to its scraped MLB live-feed JSON by ts "
+            "and reconstructs decision-time pitch count, times-through-order, "
+            "bullpen depth, handedness matchup, catcher, and velocity/exit-velo "
+            "trends. No live polling -- reads data/games we already scrape; "
+            "backfills history. Outputs data/analysis_output/feed_enrichment/ "
+            "keyed by candidate_id for join into calibration / walk-forward / "
+            "the gate-EV audit."
+        ),
+        command=[
+            _python(),
+            _script("scripts/analysis/build_feed_enrichment.py"),
         ],
     ))
 

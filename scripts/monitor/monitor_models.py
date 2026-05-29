@@ -45,6 +45,11 @@ class ScheduledGame:
     # temp/wind context through cache/weather/game_weather_<date>.json.
     venue_name: str = ""
 
+    # Scheduling metadata from StatsAPI (2026-05-28, Tier-1 capture). day_night
+    # is the authoritative MLB "day"/"night" tag (not derived); used as a
+    # totals cohort dimension (day games trend higher-scoring).
+    day_night: str = ""
+
     # Stage-4 pitcher quality context (populated from linescore.defense.pitcher).
     # Defaults to MLB_AVG_ERA (4.20) when pitcher cache is not loaded or pitcher
     # has no qualifying stats. Gate 8i only fires when ERA is below threshold,
@@ -52,6 +57,21 @@ class ScheduledGame:
     current_pitcher_id: Optional[int] = None
     current_pitcher_name: str = ""
     current_pitcher_era: float = 4.20
+
+    # Tier-2 player capture (2026-05-29), all from the schedule we already
+    # poll (probablePitcher hydrate + linescore.offense) -- no extra fetch.
+    # Starting pitchers (both teams) are game-static; batter/on-deck are
+    # dynamic (refresh ~every schedule poll). ERAs None when pitcher unknown.
+    away_starter_id: Optional[int] = None
+    away_starter_name: str = ""
+    away_starter_era: Optional[float] = None
+    home_starter_id: Optional[int] = None
+    home_starter_name: str = ""
+    home_starter_era: Optional[float] = None
+    batter_id: Optional[int] = None
+    batter_name: str = ""
+    on_deck_id: Optional[int] = None
+    on_deck_name: str = ""
 
     def is_live(self) -> bool:
         return self.status_abstract.lower() in LIVE_STATES

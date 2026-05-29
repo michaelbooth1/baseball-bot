@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import datetime as _dt
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Dict, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +57,30 @@ class BetRecord:
     venue_name: str = ""    # stadium (from ScheduledGame.venue_name, park analytics)
     ltp_at_signal: Optional[float] = None  # last traded price at signal time; gap vs entry_ask measures adversarial selection risk
     config_label: str = "default"  # parallel paper/live config identifier for A/B analysis
+
+    # Tier-1 capture (2026-05-28): pitcher identity/ERA, count, and scheduling
+    # metadata at signal time. Already in memory on the ScheduledGame; logged on
+    # the bet so placed-bet cohorts (pitcher quality, count state, day/night)
+    # are analyzable post-hoc. None / "" when the source object lacks them.
+    balls: Optional[int] = None
+    strikes: Optional[int] = None
+    current_pitcher_id: Optional[int] = None
+    current_pitcher_name: Optional[str] = None
+    current_pitcher_era: Optional[float] = None
+    start_time_utc: Optional[str] = None
+    day_night: Optional[str] = None
+    # Tier-2 (2026-05-29): both starting pitchers + ERAs, current batter +
+    # on-deck (schedule-derived; None when unknown).
+    away_starter_id: Optional[int] = None
+    away_starter_name: Optional[str] = None
+    away_starter_era: Optional[float] = None
+    home_starter_id: Optional[int] = None
+    home_starter_name: Optional[str] = None
+    home_starter_era: Optional[float] = None
+    batter_id: Optional[int] = None
+    batter_name: Optional[str] = None
+    on_deck_id: Optional[int] = None
+    on_deck_name: Optional[str] = None
 
     # Inferred Stage-1 audit fields -- non-enforcing research fields.
     inferred_state_base_poisson: Optional[float] = None
@@ -292,6 +316,41 @@ class TradeRecord:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def signal_context_fields(game) -> Dict[str, Any]:
+    """Signal-time player / count / scheduling context pulled best-effort
+    from a ScheduledGame-like object. Splat into a BetRecord constructor
+    (`**signal_context_fields(game)`) AND into the candidate-row payload so
+    both carry identical context. Tier-1 (2026-05-28): current pitcher,
+    count, scheduling. Tier-2 (2026-05-29): both starting pitchers + ERAs,
+    current batter + on-deck (all from the schedule we already poll).
+
+    Absent fields resolve to None (NOT ""), so the candidate writer's
+    existing None-stripping drops them -- no empty-string bloat in rows.
+    All keys are always present in the returned dict for safe access by
+    callers that read it before the row is written.
+    """
+    score = getattr(game, "score", None)
+    return {
+        "balls": getattr(score, "balls", None) if score is not None else None,
+        "strikes": getattr(score, "strikes", None) if score is not None else None,
+        "current_pitcher_id": getattr(game, "current_pitcher_id", None),
+        "current_pitcher_name": getattr(game, "current_pitcher_name", None) or None,
+        "current_pitcher_era": getattr(game, "current_pitcher_era", None),
+        "start_time_utc": getattr(game, "start_time_utc", None) or None,
+        "day_night": getattr(game, "day_night", None) or None,
+        "away_starter_id": getattr(game, "away_starter_id", None),
+        "away_starter_name": getattr(game, "away_starter_name", None) or None,
+        "away_starter_era": getattr(game, "away_starter_era", None),
+        "home_starter_id": getattr(game, "home_starter_id", None),
+        "home_starter_name": getattr(game, "home_starter_name", None) or None,
+        "home_starter_era": getattr(game, "home_starter_era", None),
+        "batter_id": getattr(game, "batter_id", None),
+        "batter_name": getattr(game, "batter_name", None) or None,
+        "on_deck_id": getattr(game, "on_deck_id", None),
+        "on_deck_name": getattr(game, "on_deck_name", None) or None,
+    }
+
 
 def bet_traded_token_id(bet) -> str:
     """Return the Polymarket token actually traded for this bet.

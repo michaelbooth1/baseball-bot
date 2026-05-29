@@ -40,7 +40,7 @@ from live_pricing import (
     resolve_calibrated_edge,
 )
 from model_families import SCORE_EVENT_TRANSITION
-from models import LiveBetRecord
+from models import LiveBetRecord, signal_context_fields
 from order_status import (
     is_exposure_counted_status as _is_exposure_counted_status,
     normalize_accepted_order_status as _normalize_accepted_order_status,
@@ -638,6 +638,7 @@ def place_bet(
         calibrated_stake_multiplier=round(cs_multiplier, 4) if cs_multiplier is not None else None,
         calibrated_stake_edge_used=round(cs_edge, 6) if cs_edge is not None else None,
         calibrated_stake_applied=cs_applied if cs_multiplier is not None else None,
+        **signal_context_fields(game),
     )
     engine._bets.append(bet)
 

@@ -178,7 +178,9 @@ def test_weather_cache_step_runs_even_without_completed_session(tmp_path):
 
     steps = rdr.build_refresh_steps(config, [], None)
 
-    assert [step.name for step in steps] == ["game_weather_cache"]
+    # game_meta_cache (Tier-2 umpire cache, 2026-05-29) rides on the same
+    # refresh_weather_cache gate as the weather step.
+    assert [step.name for step in steps] == ["game_weather_cache", "game_meta_cache"]
 
 
 def test_weather_cache_can_be_skipped(tmp_path):

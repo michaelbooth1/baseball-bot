@@ -752,12 +752,31 @@ python scripts/trading/real_trader.py \
   --stake-mode flat --stake 10 \
   --daily-budget 80 --per-game-budget-fraction 0.40 --max-open-orders 7 \
   --fv-ask-gap-max 0.26 \
+  --extreme-edge-max 1.0 --s2-suppress-max -99.0 \
   --capture-duration 120 --capture-interval 1 --capture-depth 5 \
   --ev-policy-mode shadow --shadow-relaxed-enabled \
   --under-mode live \
   --pitcher-cache-path cache/pitcher_cache.json \
   --log-level INFO
 ```
+
+> **2026-05-28 — `gate_extreme_edge` and `gate_stage2_suppression` DISABLED
+> in production** (`--extreme-edge-max 1.0` = cap above any reachable edge;
+> `--s2-suppress-max -99.0` = threshold below any reachable Stage-2 delta).
+> Motivated by the OVER gate EV audit
+> (`scripts/analysis/audit_over_gate_ev.py`,
+> `data/analysis_output/over_gate_ev_audit/`): on the deduped blocked
+> cohort, `gate_stage2_suppression` was **−EV** (blocked overs hit 80.8% at
+> avg ask 0.718 → **+10.6% taker ROI** it threw away, n=52), and
+> `gate_extreme_edge` was only **marginal** (blocked cohort ~breakeven,
+> +0.4%, n=139) — not the clear winner its TR17/TR19 justification claimed.
+> **Re-evaluate later.** To re-enable, drop the two flags (compiled defaults
+> are still the protective `0.22` / `−0.20`). Deliberate choice to leave the
+> *defaults* untouched: the boot-time gate-threshold drift heartbeat
+> (`_check_gate_threshold_drift`, built after the 2026-05-22 −$190 incident)
+> stays armed and will log these two as a deliberate loosening every boot —
+> expected, not a bug. The paper fleet (`launch_parallel_engines.py`) still
+> enforces both gates, so it remains the no-risk A/B for the re-evaluation.
 
 > **2026-05-28 — live UNDER enabled (`--under-mode live`).** The engine now
 > places REAL limit BUYs on the `under_no` token alongside OVER, sharing the

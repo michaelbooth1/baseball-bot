@@ -17,6 +17,34 @@ _Append dated bullets here when you change anything in this folder.
 Mirrors `MASTER_CONTEXT.md`'s "Recent major shifts" pattern; bump
 "Last checked" above when you sweep the whole doc._
 
+- **2026-05-29 (Tier-2 data capture)** — two pieces. (1) Schedule-derived
+  players (no extra fetch): `signal_context_fields` expanded to carry both
+  starting pitchers (+ERAs), current batter, and on-deck (sourced from the
+  monitor's `probablePitcher` hydrate + `linescore.offense`); absent fields
+  now resolve to **None** (not "") so the candidate writer's None-stripping
+  keeps rows clean. Matching `BetRecord` fields added. (2) New
+  `game_meta_client.py` (mirrors `weather_client.py`): per-game home-plate
+  umpire / officials cache at `cache/game_meta/game_meta_<date>.json`, fetched
+  once per game from the boxscore endpoint (too heavy to poll per tick). The
+  engine loads it at startup (`_load_game_meta_cache` /
+  `_game_meta_fields_for_game`, same pattern as weather) and
+  `build_base_candidate_payload` joins `hp_umpire_id`/`hp_umpire_name` onto
+  candidate rows by game_pk. Umpire timing caveat: only populated once
+  lineups post / game is live (documented in the client). Closes Tier-2 of
+  the 2026-05-28 data-capture audit.
+- **2026-05-28 (Tier-1 data capture)** — pitcher identity/ERA, count
+  (balls/strikes), and scheduling metadata (start_time_utc, day_night) are
+  now logged on **both** the candidate row (`build_base_candidate_payload`)
+  and the `BetRecord`/`LiveBetRecord`. These were already in memory on the
+  `ScheduledGame` (gate 8i used ERA but never logged it) and were dropped
+  before logging. New shared helper `models.signal_context_fields(game)` is
+  the single source for both paths (splatted via `**`). New monitor field
+  `ScheduledGame.day_night` (extracted from StatsAPI `dayNight` in
+  `parse_games`). Immediately enables pitcher/count/day-night cohorts in the
+  gate-EV audit + calibration. ~zero bloat (None fields stay omitted from
+  candidate rows). Closes the Tier-1 gaps from the 2026-05-28 data-capture
+  audit; Tier-2 (per-game enrichment cache: umpire, both starters, batter)
+  is a follow-up.
 - **2026-05-28 (live UNDER)** — real-money UNDER trading shipped
   (`--under-mode live`). Operator-directed accepted-loss data-gathering
   posture (pre-B4, UNDER calibrator still `unreliable_pre_refit`). Changes:
