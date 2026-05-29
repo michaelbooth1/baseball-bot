@@ -212,26 +212,53 @@ def place_bet(
     decision_bid: Optional[float] = None,
     ltp: Optional[float] = None,
     state_value_diagnostics: Optional[Dict[str, object]] = None,
+    side: str = "over",
 ) -> Optional[BetRecord]:
     """Place a real limit BUY order on the Polymarket CLOB.
 
     Mirrors SignalEngine._place_bet() for record-keeping, then posts
     a live limit order via CLOBOrderClient.
+
+    2026-05-28: parameterized by ``side``. For ``side="over"`` (default)
+    behavior is unchanged: trade the over outcome token. For
+    ``side="under"`` the caller passes UNDER-side inputs (under FV, under
+    ask, under edge, under bid) and the order is posted on
+    ``market.under_token_id``. Budget / per-game / max-open-order caps are
+    shared across both sides (total exposure); the correlated-line cap is
+    evaluated per side. The EV-policy gate is OVER-only (the runtime EV
+    artifact is a score-event OVER model) and is skipped for UNDER.
+    Downstream lifecycle (fill polling, cancel, reconcile) routes on the
+    side-correct token via ``models.bet_traded_token_id``.
     """
     engine._last_place_bet_skip_reason = None
     line_val = float(market.line)
     half = _inning_state_to_half(inning_state)
+    side = str(side or "over").lower()
+    is_under = side == "under"
+    traded_token_id = (
+        str(getattr(market, "under_token_id", "") or "")
+        if is_under
+        else str(getattr(market, "over_token_id", "") or "")
+    )
+    if is_under and not traded_token_id:
+        LOGGER.info(
+            "Skip %s@%s line=%.1f UNDER: market has no under_token_id",
+            game.away_abbrev, game.home_abbrev, line_val,
+        )
+        engine._last_place_bet_skip_reason = "no_under_token"
+        return None
+    side_label = side.upper()
 
     # --- Compute limit price from a fresh executable book ---
     # Keep best_ask as the immutable decision-time ask; use the refreshed
     # bid/ask only for execution so we do not mix stale signal prices with
     # current book depth.
     try:
-        book = engine._fetch_depth_snapshot(market.over_token_id, engine.trade_args.capture_depth)
+        book = engine._fetch_depth_snapshot(traded_token_id, engine.trade_args.capture_depth)
     except Exception as exc:
         LOGGER.info(
-            "Skip %s@%s line=%.1f: fresh execution book unavailable (%s)",
-            game.away_abbrev, game.home_abbrev, line_val, exc,
+            "Skip %s@%s line=%.1f %s: fresh execution book unavailable (%s)",
+            game.away_abbrev, game.home_abbrev, line_val, side_label, exc,
         )
         engine._last_place_bet_skip_reason = "fresh_book_unavailable"
         return None
@@ -341,44 +368,49 @@ def place_bet(
         engine._last_place_bet_skip_reason = "stake_below_min_order"
         return None
 
-    # --- EV policy gate (optional) ---
-    feature_bid = decision_bid if decision_bid is not None else bid
-    ev_feature_row = engine._build_ev_feature_row(
-        game=game, market=market, line_val=line_val,
-        best_ask=best_ask, bid=feature_bid, fair_value=fair_value,
-        base_fair_value=base_fair_value,
-        stage2_run_env_delta=stage2_run_env_delta,
-        team_offense_delta=team_offense_delta,
-        edge=edge, inferred_runs=inferred_runs,
-        inning=inning, inning_state=inning_state, outs=outs,
-        away_score_before=away_score_before, home_score_before=home_score_before,
-        runners_on=runners_on, limit_price=limit_price, stake=stake,
-        ltp=ltp, execution_book=book,
-        state_value_diagnostics=state_value_diagnostics,
-    )
-    ev_allow, ev_diag = engine._evaluate_ev_policy(ev_feature_row, stake, limit_price)
-    if engine._ev_policy_mode == "shadow" and ev_diag:
-        LOGGER.info(
-            "EV policy [%s] %s@%s line=%.1f allow=%s p_win=%.3f p_fill=%.3f "
-            "ev_if_filled=%.2f ev_per_stake=%.4f",
-            "SHADOW",
-            game.away_abbrev, game.home_abbrev, line_val,
-            ev_allow,
-            ev_diag.get("p_win_if_filled", 0),
-            ev_diag.get("p_fill", 0),
-            ev_diag.get("ev_if_filled", 0),
-            ev_diag.get("ev_per_stake", 0),
+    # --- EV policy gate (optional, OVER-only) ---
+    # The runtime EV-policy artifact is a score-event OVER win/fill model;
+    # it has no UNDER features. Skip the gate entirely for UNDER bets.
+    if is_under:
+        ev_allow, ev_diag = True, None
+    else:
+        feature_bid = decision_bid if decision_bid is not None else bid
+        ev_feature_row = engine._build_ev_feature_row(
+            game=game, market=market, line_val=line_val,
+            best_ask=best_ask, bid=feature_bid, fair_value=fair_value,
+            base_fair_value=base_fair_value,
+            stage2_run_env_delta=stage2_run_env_delta,
+            team_offense_delta=team_offense_delta,
+            edge=edge, inferred_runs=inferred_runs,
+            inning=inning, inning_state=inning_state, outs=outs,
+            away_score_before=away_score_before, home_score_before=home_score_before,
+            runners_on=runners_on, limit_price=limit_price, stake=stake,
+            ltp=ltp, execution_book=book,
+            state_value_diagnostics=state_value_diagnostics,
         )
-    elif engine._ev_policy_mode == "enforce" and not ev_allow:
-        LOGGER.info(
-            "EV policy BLOCK %s@%s line=%.1f reason=%s ev_per_stake=%.4f < min=%.4f",
-            game.away_abbrev, game.home_abbrev, line_val,
-            ev_diag.get("reason", "threshold"),
-            ev_diag.get("ev_per_stake", 0),
-            ev_diag.get("min_ev_per_stake", 0),
-        )
-        engine._last_place_bet_skip_reason = "ev_policy_block"
-        return None
+        ev_allow, ev_diag = engine._evaluate_ev_policy(ev_feature_row, stake, limit_price)
+        if engine._ev_policy_mode == "shadow" and ev_diag:
+            LOGGER.info(
+                "EV policy [%s] %s@%s line=%.1f allow=%s p_win=%.3f p_fill=%.3f "
+                "ev_if_filled=%.2f ev_per_stake=%.4f",
+                "SHADOW",
+                game.away_abbrev, game.home_abbrev, line_val,
+                ev_allow,
+                ev_diag.get("p_win_if_filled", 0),
+                ev_diag.get("p_fill", 0),
+                ev_diag.get("ev_if_filled", 0),
+                ev_diag.get("ev_per_stake", 0),
+            )
+        elif engine._ev_policy_mode == "enforce" and not ev_allow:
+            LOGGER.info(
+                "EV policy BLOCK %s@%s line=%.1f reason=%s ev_per_stake=%.4f < min=%.4f",
+                game.away_abbrev, game.home_abbrev, line_val,
+                ev_diag.get("reason", "threshold"),
+                ev_diag.get("ev_per_stake", 0),
+                ev_diag.get("min_ev_per_stake", 0),
+            )
+            engine._last_place_bet_skip_reason = "ev_policy_block"
+            return None
 
     # --- Budget checks ---
     deployed = sum(
@@ -428,7 +460,7 @@ def place_bet(
     # Multiple over-side bets on the same game share the same trade idea
     # (a run scored / about to score), so their outcomes are highly
     # correlated. See `LiveTradingEngine._evaluate_correlated_line_cap`.
-    correlated_skip = engine._evaluate_correlated_line_cap(game=game, market=market)
+    correlated_skip = engine._evaluate_correlated_line_cap(game=game, market=market, side=side)
     if correlated_skip is not None:
         engine._last_place_bet_skip_reason = correlated_skip
         return None
@@ -493,7 +525,7 @@ def place_bet(
         away_abbrev=game.away_abbrev,
         home_abbrev=game.home_abbrev,
         line=market.line,
-        side="over",
+        side=side,
         entry_ask=best_ask,
         decision_ask=best_ask,
         execution_bid=bid,
@@ -596,7 +628,8 @@ def place_bet(
         limit_price=limit_price,
         posted_limit=limit_price,
         order_size_shares=stake / limit_price if limit_price > 0 else None,
-        over_token_id=market.over_token_id,
+        over_token_id=str(getattr(market, "over_token_id", "") or ""),
+        under_token_id=(str(getattr(market, "under_token_id", "") or "") if is_under else ""),
         stake_mode=stake_mode,
         kelly_full_fraction=round(kelly_full, 4) if kelly_full is not None else None,
         kelly_fraction_used=getattr(engine.live_args, "kelly_fraction", None) if stake_mode == "kelly" else None,
@@ -617,7 +650,7 @@ def place_bet(
         kelly_cap      = getattr(engine.live_args, "kelly_max_bet_fraction", DEFAULT_KELLY_MAX_BET_FRACTION)
         kelly_edge_cap = max(0.0, getattr(engine.live_args, "kelly_max_edge", DEFAULT_KELLY_MAX_EDGE))
         LOGGER.info(
-            "LIVE BET [%s] %s@%s O/U %.1f OVER | "
+            "LIVE BET [%s] %s@%s O/U %.1f %s | "
             "decision_ask=%.3f  exec_bid=%.3f  exec_ask=%.3f  spread=%.3f  "
             "ltp=%s  limit=%.3f | "
             "FV=%.3f (base=%.3f S2=%+.3f S3=%+.3f) | "
@@ -626,7 +659,7 @@ def place_bet(
             "kelly_f*=%.3f->%.3f  edge_cap=%.3f  frac=%.2f  stake=$%.2f  "
             "shares=%.4f  cap=$%.2f",
             bet_id,
-            game.away_abbrev, game.home_abbrev, line_val,
+            game.away_abbrev, game.home_abbrev, line_val, side_label,
             best_ask, bid, execution_ask, spread, f"{ltp:.3f}" if ltp is not None else "n/a", limit_price,
             fair_value, base_fair_value, stage2_run_env_delta, team_offense_delta,
             edge, fair_value - limit_price,
@@ -638,7 +671,7 @@ def place_bet(
         )
     else:
         LOGGER.info(
-            "LIVE BET [%s] %s@%s O/U %.1f OVER | "
+            "LIVE BET [%s] %s@%s O/U %.1f %s | "
             "decision_ask=%.3f  exec_bid=%.3f  exec_ask=%.3f  spread=%.3f  "
             "ltp=%s  limit=%.3f | "
             "FV=%.3f (base=%.3f S2=%+.3f S3=%+.3f) | "
@@ -646,7 +679,7 @@ def place_bet(
             "inn=%s%d  outs=%d  score=%d-%d  rn=%.1f  runners=%d | "
             "stake=$%.2f shares=%.4f (flat)",
             bet_id,
-            game.away_abbrev, game.home_abbrev, line_val,
+            game.away_abbrev, game.home_abbrev, line_val, side_label,
             best_ask, bid, execution_ask, spread, f"{ltp:.3f}" if ltp is not None else "n/a", limit_price,
             fair_value, base_fair_value, stage2_run_env_delta, team_offense_delta,
             edge,
@@ -685,7 +718,7 @@ def place_bet(
 
     try:
         result = engine._clob.place_limit_buy(
-            token_id=market.over_token_id,
+            token_id=traded_token_id,
             price=limit_price,
             size_usdc=stake,
         )

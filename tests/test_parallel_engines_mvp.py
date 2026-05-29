@@ -111,16 +111,56 @@ class ParallelEnginesMvpTests(unittest.TestCase):
         self.assertEqual(e_flags[e_cal_idx + 1], "enforce")
         self.assertEqual(e_flags[e_scope_idx + 1], "enforce")
 
-    def test_eleven_preset_default_includes_k(self):
-        """2026-05-26 (later): K_line5p5_block added; default = 11 configs."""
+    def test_thirteen_preset_default_includes_k_l_m(self):
+        """2026-05-26: K_line5p5_block. 2026-05-28: L_enforce_min_raw_095 +
+        M_under_paper; default = 13 configs."""
         self.assertEqual(
             set(lpe.PRESETS.keys()),
             {
                 "A_current", "B_cal_only", "C_raw", "D_scope_only", "E_tight_edge",
                 "F_no_dedup", "G_loose_edge", "H_late_innings",
                 "I_extreme_018", "J_no_phantom_filter", "K_line5p5_block",
+                "L_enforce_min_raw_095", "M_under_paper",
             },
         )
+
+    def test_m_under_paper_preset_flags(self):
+        """M_under_paper: A_current baseline + --under-mode paper (paper
+        mirror of live UNDER; no live-only flags)."""
+        flags = lpe.PRESETS["M_under_paper"]
+        self.assertEqual(flags[flags.index("--under-mode") + 1], "paper")
+        self.assertEqual(flags[flags.index("--prob-calibration-mode") + 1], "enforce")
+        for f in flags:
+            if not f.startswith("--"):
+                continue
+            self.assertNotIn(
+                f, lpe.LIVE_ONLY_ENGINE_FLAGS,
+                f"M_under_paper contains LIVE_ONLY flag {f}",
+            )
+
+    def test_l_enforce_min_raw_095_preset_flags(self):
+        """L_enforce_min_raw_095: A_current baseline + enforce_min_raw raised
+        0.90 -> 0.95 (single varying knob vs A, mirrors I/J/K pattern)."""
+        flags = lpe.PRESETS["L_enforce_min_raw_095"]
+        self.assertEqual(
+            flags[flags.index("--prob-calibration-enforce-min-raw") + 1], "0.95"
+        )
+        # Inherits A's enforce/enforce baseline so the only varying dimension
+        # vs A_current is the band-gate threshold.
+        self.assertEqual(
+            flags[flags.index("--prob-calibration-mode") + 1], "enforce"
+        )
+        self.assertEqual(
+            flags[flags.index("--stage1-alt-a-scope-mode") + 1], "enforce"
+        )
+        # Must pass the live-only safety check (paper-safe flag only).
+        for f in flags:
+            if not f.startswith("--"):
+                continue
+            self.assertNotIn(
+                f, lpe.LIVE_ONLY_ENGINE_FLAGS,
+                f"L_enforce_min_raw_095 contains LIVE_ONLY flag {f}",
+            )
 
     def test_k_line5p5_block_preset_flags(self):
         """K_line5p5_block: A_current baseline + line-5.5 high-FV guard

@@ -2084,6 +2084,38 @@ def build_refresh_steps(config: RefreshConfig, session_dates: Sequence[str], max
                 ),
             ),
             RefreshStep(
+                name="calibration_edge_shaving",
+                description=(
+                    "Quantify how much edge the current probability calibrator "
+                    "shaves off post-structural score-event candidates and "
+                    "whether the shrinkage is justified by realized win rates. "
+                    "Emits a recommended --prob-calibration-enforce-min-raw "
+                    "(0.90->0.95 as of first run); feeds the manual lever "
+                    "decision + the L_enforce_min_raw_095 paper A/B."
+                ),
+                command=[
+                    _python(),
+                    _script("scripts/analysis/analyze_calibration_edge_shaving.py"),
+                ],
+                staleness_check=StalenessCheck(
+                    output_path=PROJECT_DIR
+                    / "data" / "analysis_output"
+                    / "calibration_edge_shaving"
+                    / "calibration_edge_shaving.json",
+                    input_paths=(
+                        PROJECT_DIR
+                        / "data" / "analysis_output"
+                        / "calibration_opportunity_training"
+                        / "by_family"
+                        / "calibration_opportunity_training_table_score_event_transition.jsonl",
+                        PROJECT_DIR
+                        / "data" / "analysis_output"
+                        / "calibration"
+                        / "signal_win_calibration.json",
+                    ),
+                ),
+            ),
+            RefreshStep(
                 name="train_baseline_models",
                 description=(
                     "Rebuild EV-policy win + fill baseline models from the "

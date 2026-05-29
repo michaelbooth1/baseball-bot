@@ -28,6 +28,8 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+from models import bet_traded_token_id
+
 if TYPE_CHECKING:
     from live_engine import LiveTradingEngine
     from models import LiveBetRecord
@@ -83,7 +85,7 @@ def _candidate_bets(engine: "LiveTradingEngine") -> List["LiveBetRecord"]:
     for bet in bets:
         if not getattr(bet, "order_id", None):
             continue
-        if not getattr(bet, "over_token_id", None):
+        if not bet_traded_token_id(bet):
             continue
         if _bet_is_unfilled(bet):
             out.append(bet)
@@ -137,7 +139,7 @@ def _resolve_orphan_via_trades(
     if clob is None or not hasattr(clob, "get_user_trades_for_market"):
         return None
     after_ts = _placed_at_ts(bet)
-    trades = clob.get_user_trades_for_market(bet.over_token_id, after_ts=after_ts)
+    trades = clob.get_user_trades_for_market(bet_traded_token_id(bet), after_ts=after_ts)
     if not trades:
         return None
     # Prefer trades at our limit price or better; otherwise the largest one.
@@ -215,7 +217,7 @@ def reconcile_orphan_fills(engine: "LiveTradingEngine") -> Dict[str, int]:
 
     for bet in candidates:
         try:
-            token_id = str(bet.over_token_id)
+            token_id = str(bet_traded_token_id(bet))
             held = float(positions.get(token_id, 0.0) or 0.0)
             if held < MIN_RECONCILABLE_SHARES:
                 continue

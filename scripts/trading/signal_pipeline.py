@@ -65,6 +65,7 @@ from signal_pipeline_gates_post_fv import (  # noqa: E402
     evaluate_post_fv_gates as _evaluate_post_fv_gates,
     run_inference_and_fv_phase as _run_inference_and_fv_phase,
 )
+from models import BetRecord  # noqa: E402
 
 LOGGER = logging.getLogger("signal_engine")
 
@@ -204,27 +205,157 @@ def _get_inventory_snapshot(engine) -> InventorySnapshot:
     return snapshot
 
 
+def _place_under_paper_bet(
+    *,
+    engine,
+    ctx,
+    over_fv_phase: "FvPhaseResult",
+    over_candidate_payload: Dict[str, object],
+    under_fv: float,
+    under_fv_raw: float,
+    under_ask: float,
+    under_edge: float,
+) -> Optional[BetRecord]:
+    """Phase C-paper (2026-05-27): record a paper BetRecord(side="under").
+
+    Mirrors the inferred-state derivation that SignalEngine._place_bet
+    uses for OVER, but the resulting bet is plain paper (never sent to
+    the CLOB) and the live-engine placement path is explicitly guarded
+    against side=under for defense-in-depth. UNDER capture sidecars
+    (book/tape/velocity) are intentionally not started here -- those
+    pipelines are OVER-bet-focused; UNDER paper bets only need the
+    BetRecord to flow through the settlement loop.
+    """
+    game = ctx.game
+    market = ctx.market
+
+    engine._under_bet_counter = (
+        getattr(engine, "_under_bet_counter", 0) + 1
+    )
+    bet_id = (
+        f"{engine.date_str}_{game.game_pk}_{market.line}"
+        f"_under_{engine._under_bet_counter:04d}"
+    )
+
+    def _payload_int(name: str, default: int = 0) -> int:
+        v = over_candidate_payload.get(name)
+        if v is None or v == "":
+            return default
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            return default
+
+    inferred_runs = _payload_int("inferred_runs", 0)
+    inning = _payload_int("inning", 1)
+    inning_state = str(over_candidate_payload.get("inning_state") or "")
+    outs = _payload_int("outs", 0)
+    away_before = _payload_int("away_score_before", 0)
+    home_before = _payload_int("home_score_before", 0)
+    runners_on = _payload_int("runners_on", 0)
+    batting_is_away = inning_state.upper().startswith("T")
+    inf_away = (
+        away_before + inferred_runs if batting_is_away else away_before
+    )
+    inf_home = (
+        home_before if batting_is_away else home_before + inferred_runs
+    )
+
+    try:
+        stake = float(engine.trade_args.stake)
+    except (TypeError, ValueError):
+        stake = 100.0
+
+    bet = BetRecord(
+        bet_id=bet_id,
+        placed_at=_now_iso(),
+        game_pk=game.game_pk,
+        away_abbrev=game.away_abbrev,
+        home_abbrev=game.home_abbrev,
+        line=str(market.line),
+        side="under",
+        entry_ask=under_ask,
+        fair_value=under_fv,
+        base_fair_value=float(1.0 - float(over_fv_phase.base_fair_value)),
+        stage2_run_env_delta=round(
+            -1.0 * float(over_fv_phase.stage2_run_env_delta), 4
+        ),
+        team_offense_delta=round(
+            -1.0 * float(over_fv_phase.team_offense_delta), 4
+        ),
+        edge=under_edge,
+        inferred_runs=inferred_runs,
+        inning=inning,
+        inning_state=inning_state,
+        outs=outs,
+        away_score_before=away_before,
+        home_score_before=home_before,
+        inferred_away_after=inf_away,
+        inferred_home_after=inf_home,
+        stake=stake,
+        runners_on=runners_on,
+        venue_name=getattr(game, "venue_name", "") or "",
+        config_label=str(
+            getattr(engine.trade_args, "config_label", "default") or "default"
+        ),
+    )
+    engine._bets.append(bet)
+
+    half = inning_state[:1].upper() if inning_state else "?"
+    batting_team = (
+        game.away_abbrev if half == "T" else game.home_abbrev
+    )
+    current_total = away_before + home_before
+    LOGGER.info(
+        "PAPER UNDER BET [%s] %s@%s O/U %s UNDER @ %.3f  FV=%.3f  "
+        "edge=%.3f  inn=%s%d outs=%d  %s inferred +%d runs  "
+        "score=%d-%d(total=%d)  stake=$%.0f",
+        bet_id,
+        game.away_abbrev, game.home_abbrev, market.line,
+        under_ask, under_fv, under_edge,
+        half, inning, outs,
+        batting_team, inferred_runs,
+        away_before, home_before, current_total, stake,
+    )
+
+    save_session = getattr(engine, "_save_session", None)
+    if callable(save_session):
+        try:
+            save_session()
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.debug(
+                "UNDER paper bet save_session failed: %r", exc
+            )
+    return bet
+
+
 def _maybe_emit_under_candidate(
     engine,
     ctx,
     over_fv_phase: "FvPhaseResult",
     over_candidate_payload: Dict[str, object],
 ) -> None:
-    """Phase A5 (2026-05-19): emit an UNDER candidate row alongside OVER.
+    """Phase A5 (2026-05-19) -> Phase C-paper (2026-05-27): emit an
+    UNDER candidate row alongside OVER and, in paper mode, place a
+    paper UNDER BetRecord.
 
-    No-op when `--under-emission-mode off` (default). When `shadow`,
-    builds a sibling UNDER candidate row whose `fair_value` is
-    `(1 - over_fv_raw)` passed through the UNDER calibrator, gets
-    the UNDER ask from the market book, evaluates a minimal set of
-    UNDER-side gates (min_edge using OVER's threshold for the MVP),
-    and appends to the candidate log via the engine's standard
-    `_record_candidate_decision` path. NO UNDER bets are placed.
+    No-op when `--under-mode off` (default). When `shadow`, builds a
+    sibling UNDER candidate row whose `fair_value` is
+    `(1 - over_fv_raw)` passed through the UNDER calibrator, gets the
+    UNDER ask from the market book, evaluates the 5 symmetric UNDER
+    gates + gate_min_edge, and appends to the candidate log via the
+    engine's standard `_record_candidate_decision` path. NO UNDER bets
+    placed. When `paper`, runs the same gates AND, when all pass,
+    appends a BetRecord(side="under") to engine._bets so the standard
+    settlement loop picks it up.
 
     Fail-open: any exception is logged at DEBUG and swallowed; OVER's
     downstream flow is unaffected.
     """
-    mode = getattr(engine, "_under_emission_mode", "off")
-    if mode != "shadow":
+    mode = getattr(engine, "_under_mode", None) or getattr(
+        engine, "_under_emission_mode", "off"
+    )
+    if mode not in {"shadow", "paper", "live"}:
         return
     try:
         from model_families import SCORE_EVENT_TRANSITION  # noqa: WPS433
@@ -320,34 +451,188 @@ def _maybe_emit_under_candidate(
             under_payload["edge"] = None
             under_payload["decision"] = "skip"
             under_payload["decision_reason"] = "gate_no_under_liquidity"
-        else:
-            try:
-                under_ask_f = float(under_best_ask)
-            except (TypeError, ValueError):
-                return
-            under_edge = under_fv - under_ask_f
-            under_payload["edge"] = under_edge
-            # MVP: ride OVER's edge_threshold for UNDER gating. UNDER-
-            # specific thresholds get tuned from the shadow data
-            # once enough UNDER candidates accumulate (B1 dimension
-            # in the roadmap).
-            try:
-                min_edge = float(
-                    getattr(engine.trade_args, "edge_threshold", 0.10)
-                )
-            except (TypeError, ValueError):
-                min_edge = 0.10
-            if under_edge < min_edge:
-                under_payload["decision"] = "skip"
-                under_payload["decision_reason"] = "gate_min_edge"
-            else:
-                # UNDER gates pass. Tag the candidate so the daily
-                # review's by_side block (Phase B3) can count
-                # "would-have-traded" UNDER candidates.
-                under_payload["decision"] = "shadow_under"
-                under_payload["decision_reason"] = "shadow_under_gates_pass"
+            engine._record_candidate_decision(under_payload)
+            return
 
+        try:
+            under_ask_f = float(under_best_ask)
+        except (TypeError, ValueError):
+            return
+        under_edge = under_fv - under_ask_f
+        under_payload["edge"] = under_edge
+
+        try:
+            min_edge = float(
+                getattr(engine.trade_args, "edge_threshold", 0.10)
+            )
+        except (TypeError, ValueError):
+            min_edge = 0.10
+
+        # Phase C-paper (2026-05-27): 5 symmetric UNDER gates +
+        # gate_min_edge. Asymmetric OVER gates (pace, runs_needed,
+        # close_game, inn5/6 dead zone, blowout, S2 suppress, pitcher
+        # boost) are intentionally NOT mirrored -- they work in the
+        # opposite direction for UNDER and need explicit UNDER-
+        # specific design after paper data accumulates.
+        try:
+            inning_int = int(
+                getattr(ctx, "inning", None)
+                if getattr(ctx, "inning", None) is not None
+                else (over_candidate_payload.get("inning") or 0)
+            )
+        except (TypeError, ValueError):
+            inning_int = 0
+        try:
+            line_f = float(market.line)
+        except (TypeError, ValueError):
+            line_f = 0.0
+        high_line_cutoff = float(getattr(
+            engine.trade_args, "high_line_cutoff", 8.5,
+        ))
+        is_high_line = line_f >= high_line_cutoff
+        under_base_fv = float(under_payload["base_fair_value"])
+
+        under_skip_reason: Optional[str] = None
+        under_skip_values: Dict[str, object] = {}
+
+        # Gate U1: min_inning (symmetric — variance reduction)
+        min_inning_attr = (
+            "under_min_inning_high_line" if is_high_line
+            else "under_min_inning"
+        )
+        min_inning_thresh = int(getattr(
+            engine.trade_args, min_inning_attr,
+            5 if is_high_line else 4,
+        ))
+        if inning_int < min_inning_thresh:
+            under_skip_reason = "gate_under_min_inning"
+            under_skip_values = {
+                "inning": inning_int,
+                "min_inning": min_inning_thresh,
+            }
+
+        # Gate U2: min_entry_ask on UNDER side (thin-book guard).
+        if under_skip_reason is None:
+            min_ask_attr = (
+                "under_min_entry_ask_high_line" if is_high_line
+                else "under_min_entry_ask"
+            )
+            min_ask_thresh = float(getattr(
+                engine.trade_args, min_ask_attr,
+                0.60 if is_high_line else 0.55,
+            ))
+            if under_ask_f < min_ask_thresh:
+                under_skip_reason = "gate_under_min_entry_ask"
+                under_skip_values = {
+                    "under_ask": under_ask_f,
+                    "min_ask": min_ask_thresh,
+                }
+
+        # Gate U3: max_base_fv (FV saturation / phantom no-score).
+        if under_skip_reason is None:
+            max_base_fv_thresh = float(getattr(
+                engine.trade_args, "under_max_base_fv", 0.99,
+            ))
+            if under_base_fv >= max_base_fv_thresh:
+                under_skip_reason = "gate_under_max_base_fv"
+                under_skip_values = {
+                    "under_base_fv": under_base_fv,
+                    "max_base_fv": max_base_fv_thresh,
+                }
+
+        # Gate U4: extreme_edge (symmetric TR19 protection).
+        if under_skip_reason is None:
+            extreme_edge_max = float(getattr(
+                engine.trade_args, "under_extreme_edge_max", 0.22,
+            ))
+            if under_edge > extreme_edge_max:
+                under_skip_reason = "gate_under_extreme_edge"
+                under_skip_values = {
+                    "under_edge": under_edge,
+                    "extreme_edge_max": extreme_edge_max,
+                }
+
+        # Gate U5: fv_ask_gap (late-inning large gap = market
+        # disagreement signal).
+        if under_skip_reason is None:
+            gap_max = float(getattr(
+                engine.trade_args, "under_fv_ask_gap_max", 0.26,
+            ))
+            gap_min_inning = int(getattr(
+                engine.trade_args, "under_fv_ask_gap_min_inning", 7,
+            ))
+            if under_edge > gap_max and inning_int >= gap_min_inning:
+                under_skip_reason = "gate_under_fv_ask_gap"
+                under_skip_values = {
+                    "under_edge": under_edge,
+                    "gap_max": gap_max,
+                    "inning": inning_int,
+                }
+
+        # gate_min_edge (existing, runs last so the 5 structural
+        # gates fire first on cohort audits).
+        if under_skip_reason is None and under_edge < min_edge:
+            under_skip_reason = "gate_min_edge"
+            under_skip_values = {
+                "under_edge": under_edge,
+                "min_edge": min_edge,
+            }
+
+        if under_skip_reason is not None:
+            under_payload["decision"] = "skip"
+            under_payload["decision_reason"] = under_skip_reason
+            for k, v in under_skip_values.items():
+                under_payload.setdefault(f"under_gate_{k}", v)
+            engine._record_candidate_decision(under_payload)
+            return
+
+        # All UNDER gates passed. Decision tag distinguishes shadow
+        # (no bet) from paper/live (BetRecord recorded / order placed).
+        if mode == "paper":
+            under_payload["decision"] = "paper_under"
+            under_payload["decision_reason"] = "paper_under_gates_pass"
+        elif mode == "live":
+            under_payload["decision"] = "live_under"
+            under_payload["decision_reason"] = "live_under_gates_pass"
+        else:
+            under_payload["decision"] = "shadow_under"
+            under_payload["decision_reason"] = "shadow_under_gates_pass"
         engine._record_candidate_decision(under_payload)
+
+        if mode in ("paper", "live"):
+            try:
+                # Polymorphic: SignalEngine._place_under_bet -> paper
+                # BetRecord; LiveTradingEngine._place_under_bet -> real
+                # CLOB order on the under_no token when mode == "live".
+                placer = getattr(engine, "_place_under_bet", None)
+                if callable(placer):
+                    placer(
+                        ctx=ctx,
+                        over_fv_phase=over_fv_phase,
+                        over_candidate_payload=over_candidate_payload,
+                        under_fv=under_fv,
+                        under_fv_raw=under_fv_raw,
+                        under_ask=under_ask_f,
+                        under_edge=under_edge,
+                    )
+                else:  # back-compat: older engines without the method
+                    _place_under_paper_bet(
+                        engine=engine,
+                        ctx=ctx,
+                        over_fv_phase=over_fv_phase,
+                        over_candidate_payload=over_candidate_payload,
+                        under_fv=under_fv,
+                        under_fv_raw=under_fv_raw,
+                        under_ask=under_ask_f,
+                        under_edge=under_edge,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning(
+                    "UNDER %s bet failed for game_pk=%s line=%s: %r "
+                    "(candidate row already recorded; OVER pipeline "
+                    "unaffected).",
+                    mode, game.game_pk, market.line, exc,
+                )
     except Exception as exc:  # noqa: BLE001
         LOGGER.debug(
             "UNDER candidate emit failed for game_pk=%s line=%s: %r "

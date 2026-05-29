@@ -300,10 +300,35 @@ class LiveTradingEngine(SignalEngine):
         trade_args.stage1_shadow_empirical_mode = getattr(
             live_args, "stage1_shadow_empirical_override", "off",
         )
-        # Phase A5 (2026-05-19): bridge UNDER emission mode.
-        trade_args.under_emission_mode = getattr(
-            live_args, "under_emission_mode", "off",
+        # Phase A5 (2026-05-19) -> Phase C-paper (2026-05-27): bridge
+        # UNDER mode + legacy alias + 5 UNDER gate thresholds.
+        legacy_under = getattr(
+            live_args, "under_emission_mode_legacy", None,
         )
+        under_mode = getattr(live_args, "under_mode", "off")
+        if legacy_under is not None and under_mode == "off":
+            under_mode = legacy_under
+        trade_args.under_mode = under_mode
+        trade_args.under_emission_mode = under_mode  # legacy mirror
+
+        # Phase C-paper UNDER gate thresholds. If the live CLI didn't
+        # surface these as flags (operator launched via paper_trader's
+        # signal_config.parse_trade_args), the existing trade_args
+        # values are kept. Otherwise the live CLI value wins.
+        for attr, default in (
+            ("under_min_inning", 4),
+            ("under_min_inning_high_line", 5),
+            ("under_min_entry_ask", 0.55),
+            ("under_min_entry_ask_high_line", 0.60),
+            ("under_max_base_fv", 0.99),
+            ("under_fv_ask_gap_max", 0.26),
+            ("under_fv_ask_gap_min_inning", 7),
+            ("under_extreme_edge_max", 0.22),
+        ):
+            if hasattr(live_args, attr):
+                setattr(trade_args, attr, getattr(live_args, attr))
+            elif not hasattr(trade_args, attr):
+                setattr(trade_args, attr, default)
 
         super().__init__(args=args, trade_args=trade_args)
 
@@ -737,25 +762,29 @@ class LiveTradingEngine(SignalEngine):
     def _filled_notional(self, bet: LiveBetRecord) -> float:
         return _filled_notional_impl(self, bet)
 
-    def _evaluate_correlated_line_cap(self, *, game, market) -> Optional[str]:
+    def _evaluate_correlated_line_cap(
+        self, *, game, market, side: str = "over",
+    ) -> Optional[str]:
         """Return a skip-reason string if a correlated-line cap would block
         this placement, else None.
 
-        Two independent rules:
+        Two independent rules (applied PER SIDE as of 2026-05-28, so live
+        OVER and live UNDER do not share a correlated-line budget):
           1. **Count cap**: at most ``max_correlated_over_lines_per_game``
-             over-side bets on the same game (default 2). Counts filled +
+             SAME-side bets on the same game (default 2). Counts filled +
              open/pending bets so a cancellation sequence doesn't hide
              accumulated exposure.
-          2. **Spacing cap**: every new over-side line must be at least
+          2. **Spacing cap**: every new line must be at least
              ``min_correlated_line_gap`` runs away from every other
-             already-placed over line on the game (default 1.5 -- blocks
-             O7.5+O8.5 but allows O7.5+O9.5).
+             already-placed SAME-side line on the game (default 1.5 --
+             blocks O7.5+O8.5 but allows O7.5+O9.5).
 
         Either rule can be disabled by setting its threshold to 0.
 
         Returns ``"correlated_line_count_cap"``,
         ``"correlated_line_gap_cap"``, or ``None``.
         """
+        want_side = str(side or "over").lower()
         max_lines_per_game = int(getattr(
             self.live_args,
             "max_correlated_over_lines_per_game",
@@ -777,7 +806,7 @@ class LiveTradingEngine(SignalEngine):
         same_game_over_bets = [
             b for b in self._bets
             if b.game_pk == game.game_pk
-            and str(getattr(b, "side", "over")).lower() == "over"
+            and str(getattr(b, "side", "over")).lower() == want_side
             and (
                 getattr(b, "order_status", "") == "filled"
                 or _is_exposure_counted_status(getattr(b, "order_status", ""))
@@ -868,6 +897,88 @@ class LiveTradingEngine(SignalEngine):
             state_value_diagnostics=state_value_diagnostics,
         )
 
+    def _place_under_bet(
+        self,
+        *,
+        ctx,
+        over_fv_phase,
+        over_candidate_payload,
+        under_fv: float,
+        under_fv_raw: float,
+        under_ask: float,
+        under_edge: float,
+    ) -> Optional[BetRecord]:
+        """Live override: place a REAL UNDER limit BUY on the under_no token
+        when --under-mode live. Otherwise (paper/shadow hosted in the live
+        engine) fall back to the paper BetRecord path.
+
+        Routes through the shared, side-parameterized ``place_bet`` so UNDER
+        inherits the exact same budget / per-game / max-open-order caps,
+        Kelly/flat sizing, fresh-book limit pricing, CLOB placement, open-
+        order registration, and lifecycle as OVER. UNDER-side inputs
+        (under FV/ask/edge, negated Stage-2/3 deltas, 1-over base FV) are
+        assembled here from the OVER phase result + candidate payload.
+        """
+        if str(getattr(self, "_under_mode", "off")).lower() != "live":
+            from signal_pipeline import _place_under_paper_bet  # lazy
+            return _place_under_paper_bet(
+                engine=self, ctx=ctx, over_fv_phase=over_fv_phase,
+                over_candidate_payload=over_candidate_payload,
+                under_fv=under_fv, under_fv_raw=under_fv_raw,
+                under_ask=under_ask, under_edge=under_edge,
+            )
+
+        game = ctx.game
+        market = ctx.market
+        book = ctx.book if isinstance(getattr(ctx, "book", None), dict) else {}
+
+        def _pi(name: str, default: int = 0) -> int:
+            v = over_candidate_payload.get(name)
+            try:
+                return int(float(v))
+            except (TypeError, ValueError):
+                return default
+
+        inning = _pi("inning", 1)
+        inning_state = str(over_candidate_payload.get("inning_state") or "")
+        outs = _pi("outs", 0)
+        away_before = _pi("away_score_before", 0)
+        home_before = _pi("home_score_before", 0)
+        runners_on = _pi("runners_on", 0)
+        inferred_runs = _pi("inferred_runs", 0)
+        batting_is_away = inning_state.upper().startswith("T")
+        under_base_fv = 1.0 - float(over_fv_phase.base_fair_value)
+        under_s2 = -1.0 * float(over_fv_phase.stage2_run_env_delta)
+        under_s3 = -1.0 * float(over_fv_phase.team_offense_delta)
+        under_bid = book.get("under_best_bid")
+        # Diagnostics are OVER-oriented research fields; carry them for
+        # auditability (non-enforcing). state_value_strategy is preserved.
+        diag = dict(over_candidate_payload)
+
+        return _place_bet_impl(
+            self,
+            game=game,
+            market=market,
+            best_ask=float(under_ask),
+            fair_value=float(under_fv),
+            base_fair_value=under_base_fv,
+            stage2_run_env_delta=under_s2,
+            team_offense_delta=under_s3,
+            edge=float(under_edge),
+            inferred_runs=inferred_runs,
+            inning=inning,
+            inning_state=inning_state,
+            outs=outs,
+            away_score_before=away_before,
+            home_score_before=home_before,
+            batting_is_away=batting_is_away,
+            runners_on=runners_on,
+            decision_bid=under_bid,
+            ltp=None,
+            state_value_diagnostics=diag,
+            side="under",
+        )
+
 
     # ------------------------------------------------------------------
     # Order monitoring
@@ -899,7 +1010,24 @@ class LiveTradingEngine(SignalEngine):
     # ------------------------------------------------------------------
 
     def _is_bet_executable(self, bet: BetRecord) -> bool:
-        """Live override: only a filled order represents an executed position."""
+        """Live override: only a filled order represents an executed position.
+
+        Routing by placement provenance, NOT just side:
+          - REAL CLOB orders (placement_mode == "live") -- OVER or UNDER --
+            are executable only when order_status == "filled". A live UNDER
+            order that never filled must NOT be settled as if it traded
+            (2026-05-28 fix: the prior blanket `side==under -> True` would
+            have fabricated P&L on unfilled live UNDER orders).
+          - paper / paper_fallback bets (paper UNDER hosted in the live
+            engine via --under-mode paper, or wallet-exhausted fallbacks)
+            are filled-at-limit by construction, so they are always
+            executable.
+        """
+        placement_mode = str(getattr(bet, "placement_mode", "") or "").lower()
+        side = str(getattr(bet, "side", "over") or "over").lower()
+        if side == "under" and placement_mode != "live":
+            # Paper UNDER (no CLOB order placed): filled-at-limit.
+            return True
         return getattr(bet, "order_status", "") == "filled"
 
     def _settle_finished_games(self) -> None:

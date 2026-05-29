@@ -17,6 +17,37 @@ _Append dated bullets here when you change anything in this folder.
 Mirrors `MASTER_CONTEXT.md`'s "Recent major shifts" pattern; bump
 "Last checked" above when you sweep the whole doc._
 
+- **2026-05-28 (live UNDER)** — real-money UNDER trading shipped
+  (`--under-mode live`). Operator-directed accepted-loss data-gathering
+  posture (pre-B4, UNDER calibrator still `unreliable_pre_refit`). Changes:
+  `place_bet` (live_engine_placement) is now **side-parameterized**
+  (`side="over"` default; `side="under"` routes book/limit/CLOB/record/log to
+  `market.under_token_id`; EV-policy gate is OVER-only and skipped for
+  UNDER). New `LiveTradingEngine._place_under_bet` (real CLOB via
+  `place_bet(side="under")`) + `SignalEngine._place_under_bet` (paper);
+  `signal_pipeline._maybe_emit_under_candidate` now places for mode in
+  {paper, live} (decision tag `live_under`). `LiveBetRecord.under_token_id`
+  added + `models.bet_traded_token_id(bet)` helper; **all lifecycle
+  (`try_recover_fill`, orphan reconciliation) routes on the side-correct
+  token**. `_is_bet_executable` is now provenance-aware: a `placement_mode
+  == "live"` UNDER order is executable ONLY when `order_status=="filled"`
+  (the old blanket `side==under -> True` would have fabricated P&L on
+  unfilled live UNDER orders). FV-decay + ask-reversal early-cancel are
+  **OVER-only** (live UNDER rests to fill / game-final / stale-timeout —
+  intentional, maximizes fill data). Correlated-line cap now applies
+  **per side** (paper + live). Budget / per-game / max-open-order caps are
+  shared across both sides. New paper fleet preset `M_under_paper`
+  (A_current + `--under-mode paper`) mirrors live UNDER for B4 evidence.
+- **2026-05-28** — `L_enforce_min_raw_095` paper preset added to
+  `launch_parallel_engines.py` (12th preset; added to the default
+  `--config` fleet). It is `A_current` + `--prob-calibration-enforce-min-raw
+  0.95` -- the only varying knob vs A. A/B-tests the
+  `analyze_calibration_edge_shaving.py` finding that the band-gated
+  calibrator wrongly flattens the realized +EV [0.90,0.95) raw-FV band
+  while correctly killing the -EV [0.95,1.0) tail. Production default stays
+  0.90 (`DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW` unchanged); the preset is
+  the evidence-gathering harness before any live flip. `--prob-calibration-
+  enforce-min-raw` is paper-safe (not in LIVE_ONLY_ENGINE_FLAGS).
 - **2026-05-26 (later)** — Hygiene #1 line-5.5 high-FV slice guard
   shipped as K_line5p5_block paper preset. New CLI flags in
   `signal_config.py`: `--line-high-fv-block-mode {off,shadow,enforce}`
@@ -569,7 +600,12 @@ promotion thresholds, or walk-forward conclusions across them.
 ### New candidate decisions / skip reasons (since 2026-05-14)
 
 - `shadow_under` — UNDER candidate row passed UNDER gates
-  (`--under-emission-mode shadow`); never places.
+  (`--under-mode shadow`); never places.
+- `paper_under` / `live_under` — UNDER candidate passed gates under
+  `--under-mode paper` / `live`; places a paper BetRecord / real CLOB
+  order on the under_no token respectively (2026-05-28).
+- `no_under_token` — live UNDER placement skipped: market has no
+  `under_token_id` (place_bet side=under).
 - `gate_no_under_liquidity` — UNDER candidate skipped because the
   UNDER book is too thin to evaluate.
 - `correlated_line_count_cap` / `correlated_line_gap_cap` — same-game

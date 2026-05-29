@@ -190,6 +190,38 @@ PRESETS: Dict[str, List[str]] = {
         "--line-high-fv-block-min-raw-fv", "0.90",
         "--line-high-fv-block-lines", "5.5",
     ],
+    # 2026-05-28: L_enforce_min_raw_095 A/B-tests the calibration
+    # edge-shaving deep dive (analyze_calibration_edge_shaving.py). That
+    # report found the band-gated calibrator flattens a realized +EV
+    # high-FV sub-band ([0.90,0.95): WR 0.796 vs ask 0.744) together with
+    # the -EV overconfident tail ([0.95,1.0): WR 0.689 vs ask 0.824), and
+    # recommended raising enforce_min_raw 0.90 -> 0.95 so the +EV band keeps
+    # its raw FV while the tail stays shrunk. L = A_current with the higher
+    # band gate; A_current keeps 0.90. After ~30 days the operator compares
+    # L vs A on (n_settled, profit, profit_per_settled_bet, filled WR) to
+    # decide whether to flip DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW live.
+    "L_enforce_min_raw_095": [
+        "--prob-calibration-mode", "enforce",
+        "--stage1-shadow-empirical-mode", "shadow",
+        "--stage1-alt-a-scope-mode", "enforce",
+        "--under-emission-mode", "shadow",
+        "--quote-engine-mode", "shadow",
+        "--prob-calibration-enforce-min-raw", "0.95",
+    ],
+    # 2026-05-28: M_under_paper is the no-risk paper mirror of live UNDER
+    # trading. A_current baseline + `--under-mode paper`, so when the live
+    # engine runs `--under-mode live` for real-money fill data, this paper
+    # config accumulates the matching paper-UNDER bets that feed the B4
+    # 60-session validation milestone (sessions / n_settled / ROI /
+    # calibration / drift) WITHOUT real-money risk. It is the research
+    # counterpart to the live UNDER posture.
+    "M_under_paper": [
+        "--prob-calibration-mode", "enforce",
+        "--stage1-shadow-empirical-mode", "shadow",
+        "--stage1-alt-a-scope-mode", "enforce",
+        "--quote-engine-mode", "shadow",
+        "--under-mode", "paper",
+    ],
 }
 
 PRESET_ALIASES = {
@@ -1134,10 +1166,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # mapped to one open Active or Hygiene roadmap question.
     # 2026-05-26 (later): K_line5p5_block added (11 total) -- ships
     # Hygiene #1 as a paper preset for A/B-test evidence vs A_current.
+    # 2026-05-28: L_enforce_min_raw_095 (12) -- A/B-tests the calibration
+    # edge-shaving recommendation (enforce_min_raw 0.90 -> 0.95).
+    # 2026-05-28: M_under_paper (13) -- no-risk paper mirror of live UNDER;
+    # accumulates the B4 paper-UNDER validation evidence.
     raw_configs = args.config or [
         "A_current", "B_cal_only", "C_raw", "D_scope_only", "E_tight_edge",
         "F_no_dedup", "G_loose_edge", "H_late_innings",
         "I_extreme_018", "J_no_phantom_filter", "K_line5p5_block",
+        "L_enforce_min_raw_095", "M_under_paper",
     ]
     configs = [_resolve_config(raw, Path(args.paper_root_prefix)) for raw in raw_configs]
 

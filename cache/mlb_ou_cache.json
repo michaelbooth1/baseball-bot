@@ -1,6 +1,6 @@
 {
   "meta": {
-    "built": "2026-05-27T17:16:12.045905Z",
+    "built": "2026-05-28T15:10:38.745901Z",
     "sport": "mlb",
     "season_type": "regular",
     "game_types": [
@@ -100463,17 +100463,17 @@
   },
   "lineage": {
     "schema_version": 1,
-    "built_at_utc": "2026-05-27T17:16:18.274333Z",
+    "built_at_utc": "2026-05-28T15:10:40.932908Z",
     "builder_path": "cache/build_mlb_ou_cache.py",
-    "git_sha": "802710a4a839",
+    "git_sha": "8e3a5726e5d8",
     "git_branch": "main",
     "git_dirty": true,
     "input_hashes": {},
     "input_dir_summaries": {
       "data/games/regular": {
-        "n_files": 24091,
+        "n_files": 24106,
         "min_mtime_utc": "2026-04-04T18:16:10.668634Z",
-        "max_mtime_utc": "2026-05-27T17:08:45.641647Z"
+        "max_mtime_utc": "2026-05-28T15:04:17.096147Z"
       }
     },
     "python_version": "3.11.0",

@@ -754,9 +754,24 @@ python scripts/trading/real_trader.py \
   --fv-ask-gap-max 0.26 \
   --capture-duration 120 --capture-interval 1 --capture-depth 5 \
   --ev-policy-mode shadow --shadow-relaxed-enabled \
+  --under-mode live \
   --pitcher-cache-path cache/pitcher_cache.json \
   --log-level INFO
 ```
+
+> **2026-05-28 — live UNDER enabled (`--under-mode live`).** The engine now
+> places REAL limit BUYs on the `under_no` token alongside OVER, sharing the
+> same daily budget, per-game cap, max-open-orders, and Kelly/flat sizing
+> (correlated-line caps apply per side). This is a deliberate
+> **accepted-loss data-gathering posture**, NOT a validated edge: the UNDER
+> calibrator is flagged `unreliable_pre_refit`, the asymmetric UNDER gate
+> stack is not yet designed (UNDER runs only the 5 symmetric gates +
+> `gate_min_edge`), and the early-exit cancel logic (FV-decay, ask-reversal)
+> is OVER-only — live UNDER orders rest to fill / game-final / stale-timeout,
+> which is intentional: it maximizes real fill data. Keep `--daily-budget`
+> low while gathering. Run the paper fleet (`launch_parallel_engines.py`) in
+> parallel for the no-risk research counterfactuals; the `M_under_paper`
+> preset accumulates the B4 paper-UNDER validation evidence on the side.
 
 The 2026-04-22 P0 cancel-discipline values (`--fv-cancel-min-edge 0.03`,
 `--fv-decay-min-age-secs 90`, `--fv-decay-min-ask-drop 0.03`) are now compiled

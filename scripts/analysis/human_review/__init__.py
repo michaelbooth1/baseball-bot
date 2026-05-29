@@ -63,6 +63,10 @@ from .under_health import (
     _collect_under_settled_rows,
     _aggregate_under_settled,
     _under_settled_by_cohort,
+    _under_paper_b4_milestone_health,
+    _collect_paper_under_bets_for_date,
+    _aggregate_paper_under_bets,
+    _count_persistent_under_drift_alerts,
 )
 
 __all__ = [
@@ -118,5 +122,9 @@ __all__ = [
     "_collect_under_settled_rows",
     "_aggregate_under_settled",
     "_under_settled_by_cohort",
+    "_under_paper_b4_milestone_health",
+    "_collect_paper_under_bets_for_date",
+    "_aggregate_paper_under_bets",
+    "_count_persistent_under_drift_alerts",
 ]
 

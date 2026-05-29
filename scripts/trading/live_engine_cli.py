@@ -309,23 +309,34 @@ def parse_live_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace, 
                        "consumes the logged alt FVs to surface the "
                        "cumulative shadow improvement. (default: off)"
                    ))
-    # Phase A5 (2026-05-19): UNDER candidate emission.
-    p.add_argument("--under-emission-mode",
-                   choices=["off", "shadow"],
+    # Phase A5 (2026-05-19) -> Phase C-paper (2026-05-27) -> live (2026-05-28).
+    p.add_argument("--under-mode",
+                   choices=["off", "shadow", "paper", "live"],
                    default="off",
                    help=(
-                       "UNDER candidate emission. off = no UNDER rows "
-                       "emitted (default; existing OVER-only behavior). "
-                       "shadow = alongside every OVER candidate that "
-                       "reaches the FV phase, emit a sibling UNDER "
-                       "candidate row with `side=under`, FV = "
-                       "under_calibrator(1 - over_fv_raw), UNDER-side "
-                       "ask, and decision=`shadow_under` when UNDER "
-                       "gates pass. NO UNDER bets are placed (paper or "
-                       "live) in either mode. Phase A5 prereq for the "
-                       "bidirectional pivot; eventual UNDER paper-bet "
-                       "flip is a separate ship gated by B4 60-session "
-                       "validation. (default: off)"
+                       "UNDER mode. off (default): no UNDER rows. "
+                       "shadow: emit sibling UNDER candidate row but "
+                       "never place a bet. paper: emit row AND place a "
+                       "paper BetRecord(side=under) when all 5 "
+                       "symmetric UNDER gates pass -- feeds the B4 "
+                       "60-session validation milestone. live: place a "
+                       "REAL limit BUY on the under_no token via the "
+                       "same CLOB path as OVER (same budget / exposure "
+                       "caps / lifecycle). NOTE: the UNDER calibrator is "
+                       "flagged unreliable_pre_refit and the asymmetric "
+                       "UNDER gate stack is not yet designed -- live is "
+                       "an accepted-loss data-gathering posture, not a "
+                       "validated edge."
+                   ))
+    # Backward-compat alias for the old flag name.
+    p.add_argument("--under-emission-mode",
+                   dest="under_emission_mode_legacy",
+                   choices=["off", "shadow"],
+                   default=None,
+                   help=(
+                       "DEPRECATED: legacy alias for --under-mode. "
+                       "Accepts only {off, shadow}. Use --under-mode "
+                       "for the new `paper` value."
                    ))
     p.add_argument("--calibrated-stake-min-multiplier",
                    type=float,

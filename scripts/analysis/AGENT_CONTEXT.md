@@ -46,6 +46,53 @@ daily-refresh step list lives in `build_refresh_steps()` in
 `run_daily_refresh.py` -- run `python scripts/analysis/dump_refresh_steps.py`
 to print the live list rather than maintaining it here by hand._
 
+- **2026-05-28 (calibration edge-shaving deep dive)** — new
+  `analyze_calibration_edge_shaving.py` answers the 2026-05-27 paper-audit
+  question "is the calibrator over-shrinking post-structural candidates?".
+  Re-applies the CURRENT `signal_win_calibration.json` Platt curve (under
+  production band-gated enforce) to every `fair_value_raw` in the
+  score-event family calibration-opportunity table (the logged
+  `fair_value_calibrated` predates enforce so it == raw and can't be
+  trusted), then builds: reliability-by-raw-FV-band (avg raw vs avg cal vs
+  REALIZED win rate + which is closer), an edge-shave distribution, a
+  calibration-suppression cohort (bets killed only because calibration
+  shrank the edge), an `enforce_min_raw × min_edge` scenario sweep, and a
+  recommended `enforce_min_raw`. **First production run: verdict
+  `OVER_SHRINKING_PARTIAL`, recommends raising enforce_min_raw 0.90 → 0.95.**
+  The [0.90,0.95) raw band is realized +EV (WR 0.796 vs ask 0.744) but
+  flattened to ~0.72; the [0.95,1.0) tail is correctly killed (WR 0.689 vs
+  ask 0.824). Raising the threshold to 0.95 grows admitted bets 45 → 104
+  AND lifts realized taker units +11.8 → +20.4 (Wilson LB 0.754 > breakeven
+  0.705). Descriptive over a small recent labeled sample; feeds the manual
+  `--prob-calibration-enforce-min-raw` decision, NOT auto-promote. Output:
+  `data/analysis_output/calibration_edge_shaving/calibration_edge_shaving.{json,md}`.
+  Imports `ProbabilityCalibrator` from `scripts/trading` for curve fidelity.
+  28 pytest cases in `tests/test_analyze_calibration_edge_shaving.py`.
+  **Wired into the daily refresh** as the `calibration_edge_shaving` step
+  (after `fv_disagreement_quality`; staleness-checked against the score-event
+  family table + `signal_win_calibration.json`). Paired with the
+  `L_enforce_min_raw_095` paper A/B preset in `launch_parallel_engines.py`
+  (keeps prod default 0.90; the preset pins 0.95 for ~30d head-to-head vs
+  A_current before any live flip).
+- **2026-05-27 (Edge Atlas)** — new `build_edge_atlas.py` joins the 10y
+  Stage-1 MLB cache (`cache/mlb_ou_cache.json`) to ~1mo of Polymarket
+  OVER-side candidate ticks across all default data roots
+  (`live_trading`, `paper_A_current`, `paper_trading`). Filters:
+  over-side only, no inferred score event (stale-schedule guard),
+  no boundary asks (≤0.01 or ≥0.99 are exchange settled markers),
+  no wide-spread asks (ask-bid > 25c is a stale offer on a thin
+  book). For every (cell × line) clearing the 40-game + 10-tick floor,
+  computes `bias = market_ask_median - p_empirical` and ranks by
+  `|bias| × sqrt(min(n_ticks, 1000))`. Optional realized-outcomes
+  overlay joins `outcomes.jsonl` to compute the realized Over rate
+  per cell-line. Output:
+  `data/analysis_output/edge_atlas/edge_atlas.{json,md,csv}`. **First
+  production run (2026-05-27)**: 424k clean obs across 380 games,
+  7,609 qualifying pairs; market structurally overprices Over by
+  +2-5pp across every cohort (worst on lines 9.5/10.5/11.5 +
+  inn_8-9). Confirms bidirectional pivot's structural premise.
+  Descriptive only -- not predictive of tomorrow's market; treat as
+  research input, not promotion evidence. 27 new unit tests.
 - **2026-05-26 (Hygiene #5)** — gate-counterfactual cross-window
   validation shipped. `build_gate_counterfactual_report.py` gains a
   4th window `lifetime_post_calibrator_enforce` (filters to bets

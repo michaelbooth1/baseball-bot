@@ -13,7 +13,7 @@ wallet-aware paper fallback + stake-scaling promotion analyzer +
 weekly drift rollup HTML + Stage-3 weight externalization +
 run_daily_refresh smoke test).
 
-There are **84 test modules** (as of 2026-05-25; many added since the
+There are **90 test modules** (as of 2026-05-28; many added since the
 2026-05-14 line-by-line walk). They split roughly between trading runtime
 behavior, analysis-builder schemas, observability/rollup characterization,
 UNDER-family side-aware tests, lineage/promotion-audit tests, drift
@@ -27,6 +27,21 @@ _Append dated bullets here when you add or restructure tests. Mirrors
 above when you sweep the whole doc. To verify the test count is current
 run `pytest --collect-only -q 2>&1 | tail -5`._
 
+- **2026-05-28 (live UNDER)** — extended `test_under_paper_placement.py`
+  (live-UNDER path: `place_bet` is side-parameterized; live UNDER routes the
+  CLOB order to `under_token_id`; `bet_traded_token_id` side routing;
+  `_is_bet_executable` requires a real fill for `placement_mode="live"`
+  UNDER — no fabricated P&L; `--under-mode live` accepted). Replaced the
+  obsolete "place_bet is OVER-only" docstring test. Extended
+  `test_parallel_engines_mvp.py` for the `M_under_paper` preset (13-preset
+  fleet). No new test-module files (module count unchanged at 90).
+- **2026-05-28** — added `test_analyze_calibration_edge_shaving.py` (28
+  cases): band-gated FV transform, Wilson interval, gate admission, raw-FV
+  band labelling, cohort stats, suppression-cohort split (over_shrinking /
+  justified / insufficient), reliability table, edge-shaving summary,
+  scenario sweep, recommendation objective, verdict synthesis (keyed off
+  the recommendation grid, not the blended suppression cohort), and
+  end-to-end `main()` writing JSON + Markdown over synthetic rows.
 - **2026-05-25** — added 9 new test categories (UNDER family, Stage-1,
   promote.py + daemon, lineage, drift, settlement/attribution/counterfactual,
   quote-engine + parallel, weekly rollup + stake scaling, CLV/disagreement/alpha).

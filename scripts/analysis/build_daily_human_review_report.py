@@ -63,6 +63,7 @@ from scripts.analysis.human_review import (
     _refresh_staleness_health,
     _under_emission_health,
     _under_outcomes_counterfactual_health,
+    _under_paper_b4_milestone_health,
     _wilson_upper_bound,
     _shift_date,
     _parse_iso_to_epoch_safe,
@@ -111,6 +112,7 @@ from human_review.constants import (  # noqa: F401  (explicit for static analysi
     DEFAULT_MODEL_MATURITY_REPORT,
     DEFAULT_GATE_COUNTERFACTUAL_REPORT,
     DEFAULT_STARTUP_REFRESH_DIR,
+    DEFAULT_PAPER_SESSIONS_DIR,
     LOG_PATTERNS,
 )
 
@@ -184,6 +186,7 @@ def _build_notes(
     promotion_lag_health: Optional[Dict[str, Any]] = None,
     under_emission_health: Optional[Dict[str, Any]] = None,
     under_outcomes_counterfactual_health: Optional[Dict[str, Any]] = None,
+    under_paper_b4_milestone_health: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     notes: List[str] = []
     roi = bet_totals.get("roi")
@@ -279,6 +282,13 @@ def _build_notes(
         notes.append(f"Under-coverage: {alert}")
     for alert in (under_outcomes_counterfactual_health or {}).get("alerts") or []:
         notes.append(f"Under-outcomes: {alert}")
+    # Phase C-paper follow-up (2026-05-27): B4 milestone alerts.
+    # The helper already prefixes alerts with `Under-B4:`; append
+    # them directly so the existing prefix-scan filters in
+    # _count_persistent_under_drift_alerts can ignore them (B4
+    # verdict alerts are not drift alerts).
+    for alert in (under_paper_b4_milestone_health or {}).get("alerts") or []:
+        notes.append(alert)
     for alert in (reconciler_summary or {}).get("alerts") or []:
         notes.append(f"Reconciler watch: {alert}")
 
@@ -481,6 +491,17 @@ def build_report(
         session_date=session_date,
         candidate_dir=candidate_dir,
     )
+    # Phase C-paper follow-up (2026-05-27): B4 milestone tracker.
+    # Walks paper_sessions_dir + live_sessions_dir for the trailing
+    # 60d and reports verdict status against the 5 ROADMAP B4
+    # conditions using ACTUAL side="under" paper bets (the prior
+    # block tracks SHADOW counterfactuals which does not advance B4).
+    under_paper_b4_milestone_health = _under_paper_b4_milestone_health(
+        session_date=session_date,
+        paper_sessions_dir=DEFAULT_PAPER_SESSIONS_DIR,
+        live_sessions_dir=sessions_dir,
+        output_root=output_root,
+    )
     reconciler_summary = _reconciler_summary(session.get("bets") or [])
     notes = _build_notes(
         session_summary,
@@ -512,6 +533,7 @@ def build_report(
         promotion_lag_health,
         under_emission_health,
         under_outcomes_counterfactual_health,
+        under_paper_b4_milestone_health,
     )
     stake_usdc = _safe_float((session.get("params") or {}).get("stake"), 10.0)
     stage2_audit = _stage2_suppression_dollar_audit(
@@ -567,6 +589,9 @@ def build_report(
         "under_emission_health": under_emission_health,
         "under_outcomes_counterfactual_health": (
             under_outcomes_counterfactual_health
+        ),
+        "under_paper_b4_milestone_health": (
+            under_paper_b4_milestone_health
         ),
         "concept_drift_health": concept_drift_health,
         "drift_in_drift_health": drift_in_drift_health,

@@ -260,6 +260,32 @@ UNDER_OUTCOMES_MIN_N_FOR_ALERT = 30
 UNDER_OUTCOMES_TRAILING_DAYS = 7
 UNDER_OUTCOMES_TRAILING_MIN_N_FOR_ALERT = 50
 
+# Phase C-paper follow-up (2026-05-27): UNDER paper-bet B4 milestone
+# dashboard. Tracks the 5 ROADMAP B4 verdict conditions against
+# ACTUAL `side="under"` paper bets (the existing
+# `_under_outcomes_counterfactual_health` block tracks SHADOW
+# counterfactuals, which does not advance B4). The block walks both
+# paper_root/sessions/ and live_root/sessions/ across the trailing
+# window so an operator running the live engine with
+# `--under-mode paper` accumulates evidence the same way the paper
+# engine does.
+DEFAULT_PAPER_SESSIONS_DIR = (
+    PROJECT_DIR / "data" / "paper_trading" / "sessions"
+)
+# B4 thresholds (from ROADMAP B4 entry; change here AND in ROADMAP
+# together so the doc and the verdict stay in sync).
+B4_MILESTONE_TRAILING_DAYS = 60
+B4_MILESTONE_MIN_SESSIONS = 60
+B4_MILESTONE_MIN_SETTLED = 150
+B4_MILESTONE_MIN_ROI = 0.0
+B4_MILESTONE_CALIBRATION_TOLERANCE_PP = 5.0
+B4_MILESTONE_DRIFT_ALERT_LOOKBACK_DAYS = 7
+B4_MILESTONE_DRIFT_PERSISTENCE_THRESHOLD = 3
+# Minimum n_settled for ROI / calibration / drift alerts to fire
+# (avoids noisy alerts on tiny samples while still showing per-
+# condition status in the JSON for the operator).
+B4_MILESTONE_MIN_N_FOR_FAILURE_ALERT = 30
+
 CROSS_ARTIFACT_CONSISTENCY_PATHS: Tuple[Tuple[str, str], ...] = (
     ("stage1_cache", "cache/mlb_ou_cache.json"),
     ("stage2_cache", "cache/mlb_stage2_run_env.json"),

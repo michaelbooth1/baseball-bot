@@ -44,15 +44,25 @@ def _make_fake_engine(
     mode: str = "off",
     under_calibrator_returns: float | None = None,
     edge_threshold: float = 0.10,
+    under_gate_overrides: Dict[str, Any] | None = None,
 ) -> Any:
     """Build a duck-typed engine for the helper.
 
     Records every `_record_candidate_decision(payload)` call into
     `engine.recorded_decisions` so tests can assert on the emitted
     row directly.
+
+    Phase C-paper (2026-05-27): UNDER gate thresholds default to
+    permissive values so existing shadow-only tests are unaffected
+    by the 5 new symmetric gates. Per-test overrides via
+    `under_gate_overrides` exercise individual gate behavior.
     """
     engine = SimpleNamespace()
-    engine._under_emission_mode = mode
+    # Carry both the legacy and new mode attrs so the helper's
+    # `getattr(engine, "_under_mode", ...) or getattr(engine,
+    # "_under_emission_mode", "off")` resolves either way.
+    engine._under_mode = mode
+    engine._under_emission_mode = mode if mode != "paper" else "shadow"
 
     if under_calibrator_returns is None:
         under_cal = None
@@ -63,9 +73,34 @@ def _make_fake_engine(
         )
     engine._under_prob_calibrator = under_cal
 
-    engine.trade_args = SimpleNamespace(edge_threshold=edge_threshold)
+    # Permissive UNDER gate defaults: tuned so the existing tests
+    # (which only assert on gate_min_edge / no_liquidity) are not
+    # accidentally tripped by the new 5-gate stack. Each test that
+    # exercises a specific gate overrides the relevant attr.
+    under_gate_defaults = {
+        "edge_threshold": edge_threshold,
+        "high_line_cutoff": 8.5,
+        "under_min_inning": 1,
+        "under_min_inning_high_line": 1,
+        "under_min_entry_ask": 0.0,
+        "under_min_entry_ask_high_line": 0.0,
+        "under_max_base_fv": 1.01,
+        "under_fv_ask_gap_max": 1.0,
+        "under_fv_ask_gap_min_inning": 99,
+        "under_extreme_edge_max": 1.0,
+        "stake": 10.0,
+        "config_label": "default",
+    }
+    if under_gate_overrides:
+        under_gate_defaults.update(under_gate_overrides)
+    engine.trade_args = SimpleNamespace(**under_gate_defaults)
     engine.recorded_decisions: List[Dict[str, Any]] = []
     engine._record_candidate_decision = lambda p: engine.recorded_decisions.append(dict(p))
+    # Phase C-paper paper placement collects BetRecords here.
+    engine._bets: List[Any] = []
+    engine.date_str = "2026-05-27"
+    engine._under_bet_counter = 0
+    engine._save_session = lambda: None
     return engine
 
 
@@ -317,25 +352,38 @@ class UnderCandidateEmissionTests(unittest.TestCase):
 
 
 class LiveEngineUnderEmissionBridgeTests(unittest.TestCase):
-    """Verify the live_engine -> trade_args bridge for
-    --under-emission-mode is wired correctly. Mirrors the existing
-    bridge test for --stage1-shadow-empirical-override.
+    """Verify the live_engine -> trade_args bridge for --under-mode
+    (and the legacy --under-emission-mode alias) is wired correctly.
+    Mirrors the existing bridge test for
+    --stage1-shadow-empirical-override.
     """
 
-    def test_bridge_copies_default_off_when_flag_unset(self):
+    def test_bridge_resolves_under_mode_and_alias(self):
         # Read the source directly to avoid having to instantiate
         # the full LiveTradingEngine.
         src = (PROJECT_DIR / "scripts" / "trading" / "live_engine.py").read_text(
             encoding="utf-8",
         )
+        # New flag bridge.
         self.assertIn(
-            "trade_args.under_emission_mode = getattr(", src,
-            "Missing the trade_args.under_emission_mode bridge in "
-            "live_engine.py. Without it, --under-emission-mode on "
-            "live_engine_cli.py is silently dropped before "
-            "SignalEngine.__init__ reads it.",
+            'under_mode = getattr(live_args, "under_mode", "off")', src,
+            "Missing the trade_args.under_mode bridge in live_engine.py.",
         )
-        self.assertIn('"under_emission_mode", "off"', src)
+        # Legacy alias merge.
+        self.assertIn(
+            'getattr(\n            live_args, "under_emission_mode_legacy", None',
+            src,
+            "Missing the legacy --under-emission-mode alias bridge.",
+        )
+        # Legacy mirror so any downstream reader still works for one
+        # transition cycle.
+        self.assertIn("trade_args.under_emission_mode = under_mode", src)
+        # 5 symmetric UNDER gate thresholds wired through.
+        self.assertIn('"under_min_inning"', src)
+        self.assertIn('"under_min_entry_ask"', src)
+        self.assertIn('"under_max_base_fv"', src)
+        self.assertIn('"under_fv_ask_gap_max"', src)
+        self.assertIn('"under_extreme_edge_max"', src)
 
 
 if __name__ == "__main__":

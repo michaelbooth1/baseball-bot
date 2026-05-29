@@ -16,7 +16,104 @@ lives where and how the pieces fit.
   from 2026-05-17 and earlier (~80 entries). Carved out of ROADMAP on
   2026-05-25 to keep the active document scannable.
 
-Last checked against the linked files: 2026-05-26. Recent major shifts:
+Last checked against the linked files: 2026-05-27. Recent major shifts:
+
+- **2026-05-27 (latest): RF1.a — Recent-N Edge Atlas comparison.**
+  Tests whether the 2026-05-27 Edge Atlas finding (+2-5pp Over
+  premium across every cohort, RF1) survives across multiple
+  historical windows or whether it's a 10y baseline artifact
+  (juiced ball era, fence moves, regime change). New
+  `scripts/analysis/compare_edge_atlas_windows.py` runs the existing
+  `build_atlas_payload` once per cache window (3y/4y/5y/6y/10y all
+  existed pre-comparison) and rolls per-cohort biases into a
+  comparison matrix vs the 10y baseline. Computes Δ per cohort ×
+  window in pp and emits one of 4 verdicts:
+  `BIAS_SURVIVES_RECENT` (|Δ| < 1.5pp, no sign flips) /
+  `BIAS_PARTIALLY_SURVIVES` (signs consistent, some 1.5-3pp Δ) /
+  `BIAS_STALE_REGIME_DRIFT` (sign flip OR |Δ| ≥ 3pp) /
+  `INSUFFICIENT_DATA`. **First production run**: verdict =
+  `BIAS_PARTIALLY_SURVIVES`. 0 sign flips across **16 cohort
+  buckets** × **5 windows**; max |Δ| 1.78pp on extras innings
+  (inn_10+, 5y +4.05pp vs 10y +5.83pp). Aggregate biases: 3y +2.41pp,
+  4y +3.18pp, 5y +2.91pp, 6y +2.78pp, 10y +2.46pp — all
+  positive, all in the 2-5pp envelope from the original RF1
+  finding. **Operator takeaway**: the directional finding (Over
+  is overpriced) is robust across every measured window; the
+  magnitude varies somewhat (4y actually shows the largest bias,
+  not the longest window). Treat RF1 as directionally reliable
+  for post-B4 bidirectional-pivot decisions; expect cohort-level
+  magnitude drift but not a flipped sign. Output:
+  `data/analysis_output/edge_atlas/recent_n_comparison.{json,md}`.
+  20 new pytest cases cover the verdict ladder transitions,
+  cohort matrix arithmetic, sign-flip near-zero tolerance,
+  stake-weighted aggregate computation, baseline fallback when
+  canonical cache missing, markdown render shape. **1560 tests +
+  41 subtests pass** (+20).
+
+- **2026-05-27 (later): B4 milestone dashboard.** Closes the
+  Phase C-paper loop: now that paper UNDER bets land, the operator
+  needs a daily-review block that explicitly tracks B4 verdict
+  progress so the 60-session timer is readable. New
+  `_under_paper_b4_milestone_health` block in
+  `human_review/under_health.py` walks BOTH paper_root/sessions and
+  live_root/sessions across the trailing 60 dates, accumulates
+  ACTUAL `side="under"` paper bets (not shadow counterfactuals,
+  which is what the existing block tracks), and reports verdict
+  status across all 5 ROADMAP B4 conditions:
+  (1) sessions_with_under_bets ≥ 60,
+  (2) n_settled ≥ 150,
+  (3) taker ROI > 0%,
+  (4) |calibration delta| ≤ 5pp,
+  (5) UNDER drift alerts <3 of last 7 days.
+  Verdict ladder surfaces the highest-priority gap:
+  `NOT_EMITTING → INSUFFICIENT_SESSIONS → INSUFFICIENT_OUTCOMES →
+  SUB_ZERO_ROI → CALIBRATION_OFF → DRIFT_ALERT_PERSISTENT → READY`.
+  Each B4 verdict failure alert ≥30 settled is mirrored to the
+  Notes feed via `Under-B4:` prefix (and the drift-alert scanner
+  explicitly EXCLUDES the `under-b4:` prefix so today's verdict
+  alert can't pollute tomorrow's drift count). READY alert always
+  fires regardless of n. Cross-root union dedupes by bet_id so a
+  bet present in both paper and live session JSONs counts once.
+  First run on today's data correctly reports `NOT_EMITTING` (no
+  paper UNDER bets exist yet — operator hasn't run `--under-mode
+  paper` for a full session). 22 new pytest cases cover each
+  verdict ladder step, cross-root dedup, malformed session
+  tolerance, drift-alert self-loop guard, per-condition arithmetic,
+  alert emission gating. **1540 tests + 41 subtests pass** (+22).
+
+- **2026-05-27: Phase C-paper — UNDER paper-bet path unblocked.**
+  Closes the B4 prerequisite that was the entire reason
+  `--under-mode paper` didn't exist. New `--under-mode {off, shadow,
+  paper}` CLI flag (live + paper parsers; `--under-emission-mode`
+  kept as silent backward-compat alias for one transition cycle).
+  When `paper`, `_maybe_emit_under_candidate` (signal_pipeline.py)
+  evaluates 5 symmetric UNDER gates + gate_min_edge and, on pass,
+  appends a `BetRecord(side="under")` to `engine._bets` via new
+  `_place_under_paper_bet` helper. Settlement (`signal_engine.py
+  ::_settle_finished_games`) now reads `bet.side` and flips the
+  win condition to `final_total < line` for UNDER; SETTLED/MISSED
+  log lines show the actual side (no longer hardcoded "OVER").
+  `LiveTradingEngine._is_bet_executable` overridden to return True
+  for UNDER bets so paper UNDER settles even when hosted inside
+  the live engine. The live CLOB `place_bet` carries an explicit
+  "Phase C-paper invariant: OVER-only by construction" docstring +
+  test that pins the contract. **5 symmetric UNDER gates only**
+  (`gate_under_min_inning`, `gate_under_min_entry_ask`,
+  `gate_under_max_base_fv`, `gate_under_fv_ask_gap`,
+  `gate_under_extreme_edge`) — defaults mirror OVER. Asymmetric
+  OVER gates (pace, runs_needed, close_game, inn5/6 dead zone,
+  blowout, S2 suppress, pitcher boost) intentionally deferred:
+  they work in the OPPOSITE direction for UNDER (e.g. blowout
+  suppresses scoring — bad for OVER, good for UNDER) and need
+  UNDER-specific design after paper data accumulates. Live UNDER
+  trading + `--quote-engine-mode act` flip remain gated by the B4
+  60-session verdict per ROADMAP.md. 29 new pytest cases in
+  `tests/test_under_paper_placement.py` cover each gate, paper vs
+  shadow placement decision, settlement (UNDER wins iff final_total
+  < line; OVER unchanged), `_is_bet_executable` UNDER override,
+  CLI flag rename + legacy alias precedence, and the live
+  `place_bet` docstring invariant. **1518 tests + 41 subtests pass**
+  (+29 new).
 
 - **2026-05-26: frontend multi-engine day view.** New
   `frontend/src/components/MultiEngineDayView.tsx` (~360 lines).
@@ -31,6 +128,32 @@ Last checked against the linked files: 2026-05-26. Recent major shifts:
   on each loaded SessionFile so the view can map sessions back to
   configs without an extra lookup. Build clean (TS + Vite, 11.17 KB CSS,
   178.69 KB JS bundles).
+
+- **2026-05-27: Edge Atlas — per-cell market-efficiency map.** Day
+  of long-form research. New `scripts/analysis/build_edge_atlas.py`
+  joins the 10y MLB Stage-1 cache (mlb_ou_cache.json, 4,298 cells)
+  to ~1mo of Polymarket OVER-side candidate ticks (~424k clean
+  observations across 380 distinct games after filtering for non-
+  inferred state + non-boundary asks + sub-25c spread + over-side
+  only). For every (cell × line) pair that clears the 40-game +
+  10-tick floor (7,609 qualifying pairs), the report computes
+  `bias = market_ask_median - p_empirical` and ranks by
+  `|bias| × sqrt(n)`. **Headline finding**: the market structurally
+  OVERPRICES the Over across every cohort. Bias by inning band:
+  inn_1-3 +1.9%, inn_4-5 +3.6%, inn_6-7 +3.8%, inn_8-9 +4.5%,
+  inn_10+ +5.4%. By line: 7.5 +1.1%, 8.5 +3.2%, 9.5 +4.6%, 10.5
+  +4.0%, 11.5 +4.3%. By score-diff: every band shows +3.1% to
+  +3.7%. By outs / bases: every sub-bucket positive. Direct strategic
+  implication: confirms the bidirectional pivot's structural premise
+  (UNDER betting has consistent +EV against the cache; OVER-only
+  trades pay a 2-5pp premium vs 10y history). Caveats: descriptive
+  only (lifetime baseline may not predict tomorrow's market), and
+  10y MLB rates don't account for current-season scoring environment
+  shifts. Output:
+  `data/analysis_output/edge_atlas/edge_atlas.{json,md,csv}`. 27 new
+  unit tests cover cell-key derivation + percentile math + the four
+  filters (UNDER-side / inferred-active / boundary-ask / wide-spread)
+  + bias arithmetic + summarize_by aggregation.
 
 - **2026-05-26 (fourth ship): Hygiene #5 — gate-counterfactual
   cross-window validation.** Closes the audit-flagged risk that every

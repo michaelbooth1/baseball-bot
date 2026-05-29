@@ -5,6 +5,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .constants import (
     DEFAULT_CANDIDATE_DIR,
+    DEFAULT_OUTPUT_ROOT,
+    DEFAULT_PAPER_SESSIONS_DIR,
+    DEFAULT_SESSIONS_DIR,
     UNDER_COVERAGE_RATE_LOW_WARN,
     UNDER_COVERAGE_MIN_N_FOR_ALERT,
     UNDER_SHADOW_UNDER_RATE_HIGH_WARN,
@@ -18,6 +21,14 @@ from .constants import (
     UNDER_OUTCOMES_UNPROFITABLE_ROI_WARN,
     UNDER_OUTCOMES_MIN_N_FOR_ALERT,
     UNDER_OUTCOMES_TRAILING_MIN_N_FOR_ALERT,
+    B4_MILESTONE_TRAILING_DAYS,
+    B4_MILESTONE_MIN_SESSIONS,
+    B4_MILESTONE_MIN_SETTLED,
+    B4_MILESTONE_MIN_ROI,
+    B4_MILESTONE_CALIBRATION_TOLERANCE_PP,
+    B4_MILESTONE_DRIFT_ALERT_LOOKBACK_DAYS,
+    B4_MILESTONE_DRIFT_PERSISTENCE_THRESHOLD,
+    B4_MILESTONE_MIN_N_FOR_FAILURE_ALERT,
 )
 
 from .helpers import (
@@ -600,4 +611,512 @@ def _under_outcomes_counterfactual_health(
             trailing["status"] = "no_settled"
 
     payload["trailing_7d"] = trailing
+    return payload
+
+
+# ----------------------------------------------------------------------
+# Phase C-paper follow-up (2026-05-27): UNDER paper-bet B4 milestone
+# dashboard. Closes the Phase C-paper loop by giving the operator a
+# daily-review block that explicitly tracks B4 verdict progress
+# against ACTUAL `side="under"` paper bets across the trailing window.
+# ----------------------------------------------------------------------
+
+
+def _load_session_bets(session_path: Path) -> List[Dict[str, Any]]:
+    """Load and return the `bets` list from one session JSON file.
+
+    Defensive: returns [] on missing file, IO error, JSON decode
+    error, or unexpected schema. The B4 milestone block walks 60
+    session files per refresh and should never abort the entire
+    block because a single file is malformed.
+    """
+    if not session_path.exists():
+        return []
+    try:
+        with session_path.open("r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return []
+    bets = payload.get("bets")
+    if not isinstance(bets, list):
+        return []
+    return [b for b in bets if isinstance(b, dict)]
+
+
+def _collect_paper_under_bets_for_date(
+    *,
+    session_date: str,
+    paper_sessions_dir: Path,
+    live_sessions_dir: Path,
+) -> Dict[str, Any]:
+    """Walk paper_root + live_root session JSONs for one date and
+    return the union of side="under" bets across both. Operator may
+    accumulate evidence on either root depending on whether they're
+    running the paper engine or the live engine with `--under-mode
+    paper`; this function ignores the source and reports the merged
+    set so a "session with paper UNDER bets" counts once per date.
+
+    Returns:
+      {
+        "session_date": str,
+        "n_paper_under_bets": int,
+        "settled_under_bets": List[Dict],   # only side=under AND
+                                            # settled
+        "sources": ["paper" | "live", ...], # which roots had data
+      }
+    """
+    out: Dict[str, Any] = {
+        "session_date": session_date,
+        "n_paper_under_bets": 0,
+        "settled_under_bets": [],
+        "sources": [],
+    }
+    seen_bet_ids: set = set()
+
+    for label, root in (
+        ("paper", paper_sessions_dir),
+        ("live", live_sessions_dir),
+    ):
+        session_path = root / f"{session_date}_session.json"
+        bets = _load_session_bets(session_path)
+        if not bets:
+            continue
+        under_bets = [
+            b for b in bets
+            if str(b.get("side") or "over").lower() == "under"
+        ]
+        if not under_bets:
+            continue
+        out["sources"].append(label)
+        for b in under_bets:
+            bet_id = str(b.get("bet_id") or "")
+            if bet_id and bet_id in seen_bet_ids:
+                continue
+            if bet_id:
+                seen_bet_ids.add(bet_id)
+            out["n_paper_under_bets"] += 1
+            if bool(b.get("settled")):
+                out["settled_under_bets"].append(b)
+    return out
+
+
+def _aggregate_paper_under_bets(
+    settled_bets: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Compute aggregate metrics over a list of settled paper UNDER
+    bets. Bets without numeric stake / fair_value are skipped from
+    the relevant aggregate but still counted in n.
+    """
+    n = len(settled_bets)
+    if n == 0:
+        return {
+            "n_settled": 0,
+            "n_wins": 0,
+            "n_losses": 0,
+            "realized_wr": None,
+            "predicted_wr": None,
+            "calibration_delta_pp": None,
+            "total_profit_usdc": 0.0,
+            "total_stake_usdc": 0.0,
+            "taker_roi": None,
+            "mean_under_ask": None,
+        }
+    n_wins = 0
+    n_losses = 0
+    total_profit = 0.0
+    total_stake = 0.0
+    fv_sum = 0.0
+    fv_count = 0
+    ask_sum = 0.0
+    ask_count = 0
+    for b in settled_bets:
+        won = bool(b.get("won"))
+        if won:
+            n_wins += 1
+        else:
+            n_losses += 1
+        try:
+            total_profit += float(b.get("profit") or 0.0)
+        except (TypeError, ValueError):
+            pass
+        try:
+            total_stake += float(b.get("stake") or 0.0)
+        except (TypeError, ValueError):
+            pass
+        fv = b.get("fair_value")
+        if fv is not None:
+            try:
+                fv_sum += float(fv)
+                fv_count += 1
+            except (TypeError, ValueError):
+                pass
+        ask = b.get("entry_ask")
+        if ask is not None:
+            try:
+                ask_sum += float(ask)
+                ask_count += 1
+            except (TypeError, ValueError):
+                pass
+
+    realized_wr = n_wins / n
+    predicted_wr = (fv_sum / fv_count) if fv_count else None
+    calibration_delta_pp = (
+        round((realized_wr - predicted_wr) * 100.0, 2)
+        if predicted_wr is not None else None
+    )
+    taker_roi = (
+        round(total_profit / total_stake, 4)
+        if total_stake > 0 else None
+    )
+    return {
+        "n_settled": n,
+        "n_wins": n_wins,
+        "n_losses": n_losses,
+        "realized_wr": round(realized_wr, 4),
+        "predicted_wr": (
+            round(predicted_wr, 4) if predicted_wr is not None else None
+        ),
+        "calibration_delta_pp": calibration_delta_pp,
+        "total_profit_usdc": round(total_profit, 2),
+        "total_stake_usdc": round(total_stake, 2),
+        "taker_roi": taker_roi,
+        "mean_under_ask": (
+            round(ask_sum / ask_count, 4) if ask_count else None
+        ),
+    }
+
+
+def _count_persistent_under_drift_alerts(
+    *,
+    session_date: str,
+    output_root: Path,
+    lookback_days: int,
+) -> Dict[str, Any]:
+    """Walk the last N daily review JSONs for `under:` / `Under-`
+    prefixed alerts (the side-aware convention shipped 2026-05-19 +
+    extended through 2026-05-27).
+
+    Returns:
+      {
+        "lookback_days": int,
+        "days_scanned": int,
+        "days_with_alert": int,
+        "alert_days": List[str],
+      }
+    """
+    out: Dict[str, Any] = {
+        "lookback_days": lookback_days,
+        "days_scanned": 0,
+        "days_with_alert": 0,
+        "alert_days": [],
+    }
+    try:
+        anchor_dt = datetime.strptime(session_date, "%Y-%m-%d")
+    except ValueError:
+        return out
+
+    # Prefixes that mark a *drift* alert (B1 dimension family). The
+    # B4 milestone verdict alert uses prefix `under-b4:` and is
+    # explicitly excluded: it's a verdict, not a drift signal, and
+    # counting it as drift would create a self-loop where yesterday's
+    # B4 status alert pollutes today's drift count.
+    under_alert_include_prefixes = (
+        "under:",
+        "under-",
+    )
+    under_alert_exclude_prefixes = (
+        "under-b4:",
+    )
+
+    for offset in range(lookback_days):
+        dt = anchor_dt - timedelta(days=offset)
+        d_str = dt.strftime("%Y-%m-%d")
+        review_path = output_root / f"{d_str}_human_review.json"
+        if not review_path.exists():
+            continue
+        try:
+            with review_path.open("r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except (OSError, json.JSONDecodeError):
+            continue
+        out["days_scanned"] += 1
+        notes = payload.get("notes") or []
+        if not isinstance(notes, list):
+            continue
+        for note in notes:
+            note_str = str(note or "").strip().lower()
+            if any(
+                note_str.startswith(p)
+                for p in under_alert_exclude_prefixes
+            ):
+                continue
+            if any(
+                note_str.startswith(p)
+                for p in under_alert_include_prefixes
+            ):
+                out["days_with_alert"] += 1
+                out["alert_days"].append(d_str)
+                break  # one alert per day is enough to count
+    return out
+
+
+def _under_paper_b4_milestone_health(
+    *,
+    session_date: str,
+    paper_sessions_dir: Path = DEFAULT_PAPER_SESSIONS_DIR,
+    live_sessions_dir: Path = DEFAULT_SESSIONS_DIR,
+    output_root: Path = DEFAULT_OUTPUT_ROOT,
+    trailing_days: int = B4_MILESTONE_TRAILING_DAYS,
+    min_sessions: int = B4_MILESTONE_MIN_SESSIONS,
+    min_settled: int = B4_MILESTONE_MIN_SETTLED,
+    min_roi: float = B4_MILESTONE_MIN_ROI,
+    calibration_tolerance_pp: float = B4_MILESTONE_CALIBRATION_TOLERANCE_PP,
+    drift_lookback_days: int = B4_MILESTONE_DRIFT_ALERT_LOOKBACK_DAYS,
+    drift_persistence_threshold: int = B4_MILESTONE_DRIFT_PERSISTENCE_THRESHOLD,
+    min_n_for_failure_alert: int = B4_MILESTONE_MIN_N_FOR_FAILURE_ALERT,
+) -> Dict[str, Any]:
+    """Phase C-paper follow-up (2026-05-27): B4 milestone tracker.
+
+    Walks `paper_sessions_dir` + `live_sessions_dir` for the trailing
+    `trailing_days` dates, accumulates ACTUAL `side="under"` paper
+    bets, and reports verdict status across the 5 B4 conditions:
+
+    1. sessions_with_under_bets >= min_sessions
+    2. n_settled >= min_settled
+    3. taker_roi > min_roi
+    4. |calibration_delta_pp| <= calibration_tolerance_pp
+    5. UNDER drift alerts < drift_persistence_threshold in last
+       drift_lookback_days
+
+    Verdict ladder (one-line summary):
+      NOT_EMITTING -> INSUFFICIENT_SESSIONS -> INSUFFICIENT_OUTCOMES
+        -> SUB_ZERO_ROI -> CALIBRATION_OFF
+        -> DRIFT_ALERT_PERSISTENT -> READY
+
+    The block is descriptive; no decisions are taken. Operator reads
+    the daily-review JSON / Notes to see how close B4 is to clearing
+    and which condition is currently the limiter.
+    """
+    payload: Dict[str, Any] = {
+        "session_date": session_date,
+        "trailing_days": trailing_days,
+        "thresholds": {
+            "min_sessions": min_sessions,
+            "min_settled": min_settled,
+            "min_roi": min_roi,
+            "calibration_tolerance_pp": calibration_tolerance_pp,
+            "drift_alert_lookback_days": drift_lookback_days,
+            "drift_persistence_threshold": drift_persistence_threshold,
+            "min_n_for_failure_alert": min_n_for_failure_alert,
+        },
+        "alerts": [],
+    }
+
+    try:
+        anchor_dt = datetime.strptime(session_date, "%Y-%m-%d")
+    except ValueError:
+        payload["status"] = "check_error"
+        payload["error"] = f"unparseable session_date: {session_date!r}"
+        return payload
+
+    by_date: List[Dict[str, Any]] = []
+    all_settled: List[Dict[str, Any]] = []
+    n_sessions_scanned = 0
+    n_sessions_with_under_bets = 0
+    n_under_bets_total = 0
+    first_under_date: Optional[str] = None
+    last_under_date: Optional[str] = None
+
+    for offset in range(trailing_days):
+        dt = anchor_dt - timedelta(days=offset)
+        d_str = dt.strftime("%Y-%m-%d")
+        n_sessions_scanned += 1
+        day = _collect_paper_under_bets_for_date(
+            session_date=d_str,
+            paper_sessions_dir=paper_sessions_dir,
+            live_sessions_dir=live_sessions_dir,
+        )
+        if day["n_paper_under_bets"] == 0:
+            continue
+        n_sessions_with_under_bets += 1
+        n_under_bets_total += day["n_paper_under_bets"]
+        all_settled.extend(day["settled_under_bets"])
+        if first_under_date is None or d_str < first_under_date:
+            first_under_date = d_str
+        if last_under_date is None or d_str > last_under_date:
+            last_under_date = d_str
+        day_agg = _aggregate_paper_under_bets(day["settled_under_bets"])
+        by_date.append({
+            "date": d_str,
+            "n_paper_under_bets": day["n_paper_under_bets"],
+            "n_settled": day_agg["n_settled"],
+            "wins": day_agg["n_wins"],
+            "losses": day_agg["n_losses"],
+            "profit_usdc": day_agg["total_profit_usdc"],
+            "taker_roi": day_agg["taker_roi"],
+            "sources": day["sources"],
+        })
+
+    by_date.sort(key=lambda r: r["date"])
+    aggregate = _aggregate_paper_under_bets(all_settled)
+    aggregate.update({
+        "trailing_days": trailing_days,
+        "n_sessions_scanned": n_sessions_scanned,
+        "n_sessions_with_under_bets": n_sessions_with_under_bets,
+        "first_under_session_date": first_under_date,
+        "last_under_session_date": last_under_date,
+        "n_paper_under_bets_total": n_under_bets_total,
+    })
+    payload["aggregate"] = aggregate
+    payload["by_date"] = by_date
+
+    drift = _count_persistent_under_drift_alerts(
+        session_date=session_date,
+        output_root=output_root,
+        lookback_days=drift_lookback_days,
+    )
+    payload["drift_alerts"] = drift
+
+    # Per-condition status (computed regardless of verdict ladder so
+    # the operator can see all 5 in one place).
+    sessions_pass = n_sessions_with_under_bets >= min_sessions
+    settled_pass = aggregate["n_settled"] >= min_settled
+    roi_value = aggregate.get("taker_roi")
+    roi_pass = (
+        roi_value is not None and roi_value > min_roi
+    )
+    cal_value = aggregate.get("calibration_delta_pp")
+    cal_pass = (
+        cal_value is not None
+        and abs(cal_value) <= calibration_tolerance_pp
+    )
+    drift_pass = (
+        drift["days_with_alert"] < drift_persistence_threshold
+    )
+    payload["conditions"] = {
+        "sessions": {
+            "value": n_sessions_with_under_bets,
+            "target": min_sessions,
+            "remaining": max(
+                0, min_sessions - n_sessions_with_under_bets
+            ),
+            "pass": sessions_pass,
+        },
+        "n_settled": {
+            "value": aggregate["n_settled"],
+            "target": min_settled,
+            "remaining": max(0, min_settled - aggregate["n_settled"]),
+            "pass": settled_pass,
+        },
+        "roi": {
+            "value": roi_value,
+            "min_roi": min_roi,
+            "pass": roi_pass,
+        },
+        "calibration_delta_pp": {
+            "value": cal_value,
+            "tolerance_pp": calibration_tolerance_pp,
+            "pass": cal_pass,
+        },
+        "under_drift_alerts": {
+            "days_with_alert": drift["days_with_alert"],
+            "lookback_days": drift["lookback_days"],
+            "persistence_threshold": drift_persistence_threshold,
+            "pass": drift_pass,
+        },
+    }
+
+    # Verdict ladder. Each step is hit only when the prior conditions
+    # are NOT the current limiter, so the operator sees the highest-
+    # priority gap first.
+    if n_under_bets_total == 0:
+        status = "NOT_EMITTING"
+        summary = (
+            f"No paper UNDER bets in trailing {trailing_days}d. Run "
+            "`--under-mode paper` to start accumulating B4 evidence."
+        )
+    elif not sessions_pass:
+        status = "INSUFFICIENT_SESSIONS"
+        remaining = min_sessions - n_sessions_with_under_bets
+        summary = (
+            f"{n_sessions_with_under_bets}/{min_sessions} sessions "
+            f"({n_sessions_with_under_bets * 100 // min_sessions}%); "
+            f"need {remaining} more sessions with at least one paper "
+            "UNDER bet to clear the session milestone."
+        )
+    elif not settled_pass:
+        status = "INSUFFICIENT_OUTCOMES"
+        remaining = min_settled - aggregate["n_settled"]
+        summary = (
+            f"Sessions met ({n_sessions_with_under_bets}/{min_sessions}); "
+            f"need {remaining} more settled outcomes to hit "
+            f"{min_settled}."
+        )
+    elif not roi_pass:
+        status = "SUB_ZERO_ROI"
+        roi_str = (
+            f"{roi_value:+.1%}" if roi_value is not None else "n/a"
+        )
+        summary = (
+            f"All n thresholds met (sessions={n_sessions_with_under_bets}, "
+            f"settled={aggregate['n_settled']}) but UNDER taker ROI is "
+            f"{roi_str} (need > {min_roi:.0%}). Tune UNDER gates from "
+            "cohort data before any flip to live."
+        )
+    elif not cal_pass:
+        status = "CALIBRATION_OFF"
+        cal_str = (
+            f"{cal_value:+.2f}pp" if cal_value is not None else "n/a"
+        )
+        summary = (
+            f"n + ROI conditions met but UNDER calibration delta is "
+            f"{cal_str} (tolerance ±{calibration_tolerance_pp:.1f}pp). "
+            "Refit the UNDER calibrator on the accumulated sample."
+        )
+    elif not drift_pass:
+        status = "DRIFT_ALERT_PERSISTENT"
+        summary = (
+            f"Numeric thresholds met but UNDER drift alerts fired on "
+            f"{drift['days_with_alert']}/{drift['lookback_days']} of "
+            f"the last {drift_lookback_days}d "
+            f"(>= {drift_persistence_threshold} = persistent). "
+            "Investigate the UNDER drift source before flipping."
+        )
+    else:
+        status = "READY"
+        roi_str = (
+            f"{roi_value:+.1%}" if roi_value is not None else "n/a"
+        )
+        cal_str = (
+            f"{cal_value:+.2f}pp" if cal_value is not None else "n/a"
+        )
+        summary = (
+            f"B4 cleared: {n_sessions_with_under_bets}/{min_sessions} "
+            f"sessions, {aggregate['n_settled']}/{min_settled} settled, "
+            f"ROI={roi_str}, calibration {cal_str}, no persistent "
+            "UNDER drift. Operator can ship `--under-mode live` + "
+            "`--quote-engine-mode act` after a fresh design review."
+        )
+    payload["status"] = status
+    payload["verdict_summary"] = summary
+
+    # ------------------------------------------------------------------
+    # Alerts (Notes-feed emission). Only the actionable transitions
+    # fire; quiet states (NOT_EMITTING, INSUFFICIENT_*) stay silent in
+    # Notes because the milestone progress is already visible in the
+    # trailing-7d under_outcomes block.
+    # ------------------------------------------------------------------
+    if status == "READY":
+        payload["alerts"].append(
+            f"Under-B4: READY -- {summary}"
+        )
+    elif (
+        status in {"SUB_ZERO_ROI", "CALIBRATION_OFF",
+                   "DRIFT_ALERT_PERSISTENT"}
+        and aggregate["n_settled"] >= min_n_for_failure_alert
+    ):
+        payload["alerts"].append(
+            f"Under-B4: {status} -- {summary}"
+        )
+
     return payload

@@ -371,24 +371,37 @@ class SignalEngine(MLBPolymarketMonitor):
                 STAGE1_ALT_A_SCOPE_DEFAULT_ACTION,
             )
 
-        # Phase A5 (2026-05-19). UNDER candidate emission. Default
-        # `off`; operator opts in via `--under-emission-mode shadow`
-        # on live_engine_cli.py. When `shadow`, alongside every OVER
-        # candidate that reaches the FV phase, the engine emits a
-        # sibling UNDER candidate row (decision_reason = `shadow_under`
-        # when UNDER gates pass). NO UNDER bets are placed in either
-        # mode -- pure observability for the bidirectional pivot.
-        self._under_emission_mode = str(
-            getattr(trade_args, "under_emission_mode", "off") or "off"
-        ).strip().lower()
-        if self._under_emission_mode not in {"off", "shadow"}:
+        # Phase A5 (2026-05-19) -> Phase C-paper (2026-05-27). UNDER
+        # mode. Default `off`; operator opts in via `--under-mode
+        # {shadow, paper}`. `shadow`: emit sibling UNDER candidate
+        # rows but never place. `paper`: emit AND record a paper
+        # BetRecord(side=under) when all 5 symmetric UNDER gates pass
+        # so B4 60-session validation accumulates real per-bet
+        # evidence. Live UNDER trading + quote-engine act flip stay
+        # gated by the B4 verdict.
+        # Read the new attribute, falling back to the legacy attribute
+        # name for one transition cycle.
+        raw_mode = (
+            getattr(trade_args, "under_mode", None)
+            or getattr(trade_args, "under_emission_mode", "off")
+            or "off"
+        )
+        self._under_mode = str(raw_mode).strip().lower()
+        if self._under_mode not in {"off", "shadow", "paper", "live"}:
             LOGGER.warning(
-                "Unknown UNDER emission mode '%s'; forcing off.",
-                self._under_emission_mode,
+                "Unknown UNDER mode '%s'; forcing off.",
+                self._under_mode,
             )
-            self._under_emission_mode = "off"
+            self._under_mode = "off"
+        # Legacy alias retained on the engine for one transition cycle
+        # so any external reader of `_under_emission_mode` still works;
+        # collapses "paper"/"live" -> "shadow" since the legacy attribute
+        # only had off/shadow values.
+        self._under_emission_mode = (
+            "shadow" if self._under_mode in {"paper", "live"} else self._under_mode
+        )
         self._under_prob_calibrator: Optional[ProbabilityCalibrator] = None
-        if self._under_emission_mode == "shadow":
+        if self._under_mode in {"shadow", "paper", "live"}:
             under_cal_path = Path(
                 getattr(trade_args, "prob_calibration_under_path",
                         DEFAULT_PROB_CALIBRATION_UNDER_PATH)
@@ -398,18 +411,20 @@ class SignalEngine(MLBPolymarketMonitor):
                     under_cal_path,
                 )
                 LOGGER.warning(
-                    "UNDER emission mode: shadow -- UNDER CALIBRATOR IS "
-                    "UNRELIABLE. Loaded from %s (method=%s), but the "
-                    "2026-05-22 debut day showed FV severely off: "
-                    "DET@BAL O7.5 inn4 model said P(under)=0.73, game "
-                    "ended at 11 runs. All 17 emitted UNDER candidates "
-                    "would have lost full stake at $10/bet = $170. "
-                    "Treat shadow_under counterfactual P&L with extreme "
-                    "skepticism; do NOT promote to live until calibrator "
-                    "is refit on a much larger UNDER sample. Candidate "
-                    "rows stamped shadow_under_calibration_status="
+                    "UNDER mode: %s -- UNDER CALIBRATOR IS UNRELIABLE. "
+                    "Loaded from %s (method=%s), but the 2026-05-22 "
+                    "debut day showed FV severely off: DET@BAL O7.5 "
+                    "inn4 model said P(under)=0.73, game ended at 11 "
+                    "runs. All 17 emitted UNDER candidates would have "
+                    "lost full stake at $10/bet = $170. Treat "
+                    "shadow_under counterfactual P&L with extreme "
+                    "skepticism; do NOT promote to live until "
+                    "calibrator is refit on a much larger UNDER sample. "
+                    "Candidate rows stamped "
+                    "shadow_under_calibration_status="
                     "unreliable_pre_refit so downstream cohort blocks "
                     "can filter.",
+                    self._under_mode,
                     under_cal_path,
                     self._under_prob_calibrator.method,
                 )
@@ -633,7 +648,9 @@ class SignalEngine(MLBPolymarketMonitor):
             runs_needed=runs_needed,
         )
 
-    def _evaluate_correlated_line_cap(self, *, game, market) -> Optional[str]:
+    def _evaluate_correlated_line_cap(
+        self, *, game, market, side: str = "over",
+    ) -> Optional[str]:
         """Return a skip-reason string if a correlated-line cap would
         block this placement, else None. Paper-mode version; lives in
         SignalEngine so both paper and live inherit it. Live overrides
@@ -641,12 +658,17 @@ class SignalEngine(MLBPolymarketMonitor):
         accounting of pending/filled order states.
 
         Two independent rules (matching the live override's contract):
-          - **Count cap** (default 2): at most N over-side bets per game
-          - **Spacing cap** (default 1.5): every new over line must be
-            at least G runs away from already-placed over lines
+          - **Count cap** (default 2): at most N same-side bets per game
+          - **Spacing cap** (default 1.5): every new line must be
+            at least G runs away from already-placed same-side lines
 
-        Set either flag to 0 to disable that rule.
+        2026-05-28: caps now apply PER SIDE. OVER bets only count against
+        OVER exposure and UNDER against UNDER, so enabling live UNDER does
+        not let the two sides cannibalize each other's correlated-line
+        budget (they are different trade ideas). Set either flag to 0 to
+        disable that rule.
         """
+        want_side = str(side or "over").lower()
         max_lines_per_game = int(getattr(
             self.trade_args,
             "max_correlated_over_lines_per_game",
@@ -665,20 +687,20 @@ class SignalEngine(MLBPolymarketMonitor):
         except (TypeError, ValueError):
             this_line_value = None
 
-        # Paper version: every bet on the same game's over side counts
+        # Paper version: every bet on the same game's SAME side counts
         # as exposure. No order_status filter -- paper bets don't carry
         # one and any settled bet is effectively "placed."
         same_game_over_bets = [
             b for b in self._bets
             if getattr(b, "game_pk", None) == game.game_pk
-            and str(getattr(b, "side", "over")).lower() == "over"
+            and str(getattr(b, "side", "over")).lower() == want_side
         ]
         if max_lines_per_game > 0 and len(same_game_over_bets) >= max_lines_per_game:
             LOGGER.info(
-                "Correlated-line count cap (%d) hit for %s@%s -- "
+                "Correlated-line count cap (%d) hit for %s@%s %s -- "
                 "skipping line=%s (existing lines: %s)",
                 max_lines_per_game, game.away_abbrev, game.home_abbrev,
-                market.line,
+                want_side.upper(), market.line,
                 [getattr(b, "line", "?") for b in same_game_over_bets],
             )
             return "correlated_line_count_cap"
@@ -697,6 +719,38 @@ class SignalEngine(MLBPolymarketMonitor):
                     )
                     return "correlated_line_gap_cap"
         return None
+
+    def _place_under_bet(
+        self,
+        *,
+        ctx,
+        over_fv_phase,
+        over_candidate_payload,
+        under_fv: float,
+        under_fv_raw: float,
+        under_ask: float,
+        under_edge: float,
+    ):
+        """Place an UNDER bet. Paper-engine implementation: always records
+        a paper BetRecord (no CLOB). LiveTradingEngine overrides this to
+        post a REAL order on the under_no token when --under-mode live.
+
+        Kept as a method (rather than a direct free-function call in the
+        pipeline) so the OVER pattern is mirrored: SignalEngine._place_bet
+        is paper, LiveTradingEngine._place_bet is live; same for UNDER.
+        """
+        from signal_pipeline import _place_under_paper_bet  # lazy: avoid cycle
+
+        return _place_under_paper_bet(
+            engine=self,
+            ctx=ctx,
+            over_fv_phase=over_fv_phase,
+            over_candidate_payload=over_candidate_payload,
+            under_fv=under_fv,
+            under_fv_raw=under_fv_raw,
+            under_ask=under_ask,
+            under_edge=under_edge,
+        )
 
     def _calibrate_fair_value(
         self,
@@ -1455,7 +1509,14 @@ class SignalEngine(MLBPolymarketMonitor):
             final_home = game.score.home
             final_total = final_away + final_home
             line_val = float(bet.line)
-            counterfactual_won = final_total > line_val
+            # Phase C-paper (2026-05-27): UNDER wins iff
+            # final_total < line. OVER wins iff final_total > line.
+            # MLB OU lines end in .5 so no pushes are possible.
+            bet_side = str(getattr(bet, "side", "over") or "over").lower()
+            if bet_side == "under":
+                counterfactual_won = final_total < line_val
+            else:
+                counterfactual_won = final_total > line_val
 
             # Always record game outcome fields â€” useful for signal quality analysis
             # regardless of whether the bet was executed.
@@ -1521,10 +1582,11 @@ class SignalEngine(MLBPolymarketMonitor):
                 if hasattr(bet, "payout_usdc"):
                     bet.payout_usdc = payout
                 LOGGER.info(
-                    "SETTLED [%s] %s@%s O/U %s OVER  final=%d-%d (total=%d vs line=%.1f)  "
+                    "SETTLED [%s] %s@%s O/U %s %s  final=%d-%d (total=%d vs line=%.1f)  "
                     "%s  profit=$%.2f",
                     bet_id,
                     bet.away_abbrev, bet.home_abbrev, bet.line,
+                    bet_side.upper(),
                     final_away, final_home, final_total, line_val,
                     "WON" if counterfactual_won else "LOST", profit,
                 )
@@ -1537,10 +1599,11 @@ class SignalEngine(MLBPolymarketMonitor):
                 if hasattr(bet, "payout_usdc"):
                     bet.payout_usdc = 0.0
                 LOGGER.info(
-                    "MISSED  [%s] %s@%s O/U %s OVER  final=%d-%d (total=%d vs line=%.1f)  "
+                    "MISSED  [%s] %s@%s O/U %s %s  final=%d-%d (total=%d vs line=%.1f)  "
                     "counterfactual=%s  order never filled â€” zero P&L",
                     bet_id,
                     bet.away_abbrev, bet.home_abbrev, bet.line,
+                    bet_side.upper(),
                     final_away, final_home, final_total, line_val,
                     "WIN" if counterfactual_won else "LOSS",
                 )

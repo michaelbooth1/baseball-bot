@@ -39,16 +39,31 @@ DEFAULT_PROB_CALIBRATION_UNDER_PATH = (
     / "calibration"
     / "signal_win_calibration_under.json"
 )
-# Phase A5 (2026-05-19): UNDER candidate emission mode.
+# Phase A5 (2026-05-19) -> Phase C-paper (2026-05-27): UNDER mode.
+# Renamed from --under-emission-mode {off, shadow} to --under-mode
+# {off, shadow, paper}. The old flag is kept as a silent backward-
+# compat alias for one transition cycle.
 # `off` (default): the live engine does not emit UNDER candidates;
 # UNDER analysis runs only offline against the OVER candidate's
 # complement, which carries selection bias.
 # `shadow`: alongside every OVER candidate that reaches the FV phase,
 # the engine emits a sibling UNDER candidate row to the candidate
-# log. UNDER bets are NEVER placed (paper or live) -- pure logging
-# so the operator can validate UNDER signal quality before the
-# eventual paper-mode flip (B4 in the roadmap).
-DEFAULT_UNDER_EMISSION_MODE = "off"
+# log. UNDER bets are NEVER placed.
+# `paper` (Phase C-paper): emit UNDER row AND, when all 5 symmetric
+# UNDER gates pass (+ gate_min_edge), record a paper BetRecord with
+# side="under" so the B4 60-session validation milestone can
+# accumulate real per-bet evidence. UNDER paper bets settle as
+# `final_total < line`. Live UNDER trading + two-sided quote engine
+# act flip remain gated by the B4 verdict per ROADMAP.md.
+DEFAULT_UNDER_MODE = "off"
+# 2026-05-28: `live` added. Real-money UNDER trading (places limit BUY on
+# the under_no token via the same CLOB path as OVER). Only the live engine
+# acts on `live`; a paper SignalEngine treats it as `paper` (no CLOB) via
+# SignalEngine._place_under_bet. Operator opted into live UNDER for fill
+# data before the B4 verdict (accepted-loss data-gathering posture).
+UNDER_MODES = ("off", "shadow", "paper", "live")
+# Backward-compat aliases for the renamed flag.
+DEFAULT_UNDER_EMISSION_MODE = DEFAULT_UNDER_MODE
 UNDER_EMISSION_MODES = ("off", "shadow")
 DEFAULT_EDGE_THRESHOLD           = 0.15   # [TR10] raised from 0.12 â€” edge [0.12,0.15) zone: 9 bets 55.6% WR -20.6% ROI
 DEFAULT_EDGE_THRESHOLD_HIGH_LINE = 0.16   # [TR10] raised from 0.13 proportionally with standard threshold
@@ -141,6 +156,24 @@ DEFAULT_LINE_HIGH_FV_BLOCK_MIN_RAW_FV = 0.90
 # 5.5 is the only documented loser slice as of 2026-05-26; add more
 # only after fresh per-line audits.
 DEFAULT_LINE_HIGH_FV_BLOCK_LINES = "5.5"
+
+# Phase C-paper (2026-05-27): UNDER post-FV gate thresholds.
+# Only 5 SYMMETRIC OVER gates are mirrored here. Asymmetric OVER
+# gates (pace, runs_needed, close_game, inn5/6 dead zone, blowout,
+# S2 suppress, pitcher boost) work in the *opposite* direction for
+# UNDER (e.g. blowout suppresses scoring -- bad for OVER, good for
+# UNDER) and need explicit UNDER-specific design after paper data
+# accumulates. They are intentionally not gated for UNDER in Phase
+# C-paper. Each default mirrors the OVER value so a fresh operator
+# starts with parity; tune from paper-mode shadow data.
+DEFAULT_UNDER_MIN_INNING            = DEFAULT_MIN_INNING            # 4
+DEFAULT_UNDER_MIN_INNING_HIGH_LINE  = DEFAULT_MIN_INNING_HIGH_LINE  # 5
+DEFAULT_UNDER_MIN_ENTRY_ASK         = DEFAULT_MIN_ENTRY_ASK         # 0.55
+DEFAULT_UNDER_MIN_ENTRY_ASK_HIGH_LINE = DEFAULT_MIN_ENTRY_ASK_HIGH_LINE  # 0.60
+DEFAULT_UNDER_MAX_BASE_FV           = DEFAULT_MAX_BASE_FV           # 0.99
+DEFAULT_UNDER_FV_ASK_GAP_MAX        = DEFAULT_FV_ASK_GAP_MAX        # 0.26
+DEFAULT_UNDER_FV_ASK_GAP_MIN_INNING = DEFAULT_FV_ASK_GAP_MIN_INNING # 7
+DEFAULT_UNDER_EXTREME_EDGE_MAX      = DEFAULT_EXTREME_EDGE_MAX      # 0.22
 
 # [TR14] LTP-vs-ask shadow risk tag -- not an enforced gate. Historical examples
 # above 0.50 include winners/missed winners, so use this for diagnostics rather
@@ -727,26 +760,104 @@ def parse_trade_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace]
                    ))
     p.add_argument("--prob-calibration-path", type=Path, default=DEFAULT_PROB_CALIBRATION_PATH,
                    help=f"Path to probability calibration artifact JSON (default: {DEFAULT_PROB_CALIBRATION_PATH}).")
-    # Phase A5 (2026-05-19): UNDER candidate emission. paper-only at
-    # first; the eventual paper-mode flip is gated by B4 in the
-    # roadmap (60-session UNDER validation milestone).
+    # Phase A5 (2026-05-19) -> Phase C-paper (2026-05-27): UNDER mode.
     p.add_argument(
-        "--under-emission-mode",
+        "--under-mode",
         type=str,
-        choices=UNDER_EMISSION_MODES,
-        default=DEFAULT_UNDER_EMISSION_MODE,
+        choices=UNDER_MODES,
+        default=DEFAULT_UNDER_MODE,
         help=(
-            "UNDER candidate emission. `off` (default): no UNDER "
-            "candidates emitted by the live engine. `shadow`: alongside "
-            "every OVER candidate that reaches the FV phase, the engine "
-            "emits a sibling UNDER candidate row (decision_reason "
-            "tagged `shadow_under` when UNDER gates pass). NO UNDER "
-            "bets are placed in either mode -- this is observability "
-            "for Phase A5 of the bidirectional pivot; the eventual "
-            "UNDER paper-bet flip is a separate ship gated by B4 "
-            "validation."
+            "UNDER mode. `off` (default): no UNDER candidates emitted. "
+            "`shadow`: emit sibling UNDER candidate row alongside every "
+            "OVER candidate that reaches the FV phase (decision tagged "
+            "`shadow_under` when UNDER gates pass); NO UNDER bets "
+            "placed. `paper` (Phase C-paper): emit UNDER row AND, when "
+            "the 5 symmetric UNDER gates pass, record a paper "
+            "BetRecord with side=under so the B4 60-session validation "
+            "milestone accumulates real per-bet evidence. Live UNDER "
+            "trading + two-sided quote engine act flip remain gated by "
+            "the B4 verdict."
         ),
     )
+    # Backward-compat alias for the old flag name. Honors the old
+    # values {off, shadow} only; users wanting `paper` must use the
+    # new flag. If both are supplied, --under-mode wins.
+    p.add_argument(
+        "--under-emission-mode",
+        dest="under_emission_mode_legacy",
+        type=str,
+        choices=UNDER_EMISSION_MODES,
+        default=None,
+        help=(
+            "DEPRECATED: legacy alias for --under-mode. Accepts only "
+            "{off, shadow}. Use --under-mode for the new `paper` value."
+        ),
+    )
+    # Phase C-paper UNDER gate thresholds (5 symmetric gates only).
+    p.add_argument("--under-min-inning", type=int, default=DEFAULT_UNDER_MIN_INNING,
+                   help=(
+                       "UNDER gate: minimum inning for standard lines "
+                       "(< high_line_cutoff). Mirror of --min-inning. "
+                       f"(default: {DEFAULT_UNDER_MIN_INNING})"
+                   ))
+    p.add_argument("--under-min-inning-high-line", type=int,
+                   default=DEFAULT_UNDER_MIN_INNING_HIGH_LINE,
+                   help=(
+                       "UNDER gate: minimum inning for high lines "
+                       "(>= high_line_cutoff). Mirror of "
+                       "--min-inning-high-line. "
+                       f"(default: {DEFAULT_UNDER_MIN_INNING_HIGH_LINE})"
+                   ))
+    p.add_argument("--under-min-entry-ask", type=float,
+                   default=DEFAULT_UNDER_MIN_ENTRY_ASK,
+                   help=(
+                       "UNDER gate: minimum UNDER ask for standard "
+                       "lines. Thin-book guard. Mirror of "
+                       "--min-entry-ask. "
+                       f"(default: {DEFAULT_UNDER_MIN_ENTRY_ASK})"
+                   ))
+    p.add_argument("--under-min-entry-ask-high-line", type=float,
+                   default=DEFAULT_UNDER_MIN_ENTRY_ASK_HIGH_LINE,
+                   help=(
+                       "UNDER gate: minimum UNDER ask for high lines. "
+                       "Mirror of --min-entry-ask-high-line. "
+                       f"(default: {DEFAULT_UNDER_MIN_ENTRY_ASK_HIGH_LINE})"
+                   ))
+    p.add_argument("--under-max-base-fv", type=float,
+                   default=DEFAULT_UNDER_MAX_BASE_FV,
+                   help=(
+                       "UNDER gate: skip when UNDER base FV >= this "
+                       "(saturation / phantom no-score). Mirror of "
+                       "--max-base-fv. "
+                       f"(default: {DEFAULT_UNDER_MAX_BASE_FV})"
+                   ))
+    p.add_argument("--under-fv-ask-gap-max", type=float,
+                   default=DEFAULT_UNDER_FV_ASK_GAP_MAX,
+                   help=(
+                       "UNDER gate: skip when UNDER edge > this AND "
+                       "inning >= --under-fv-ask-gap-min-inning "
+                       "(large late-inning gap = market disagreement). "
+                       "Mirror of --fv-ask-gap-max. "
+                       f"(default: {DEFAULT_UNDER_FV_ASK_GAP_MAX})"
+                   ))
+    p.add_argument("--under-fv-ask-gap-min-inning", type=int,
+                   default=DEFAULT_UNDER_FV_ASK_GAP_MIN_INNING,
+                   help=(
+                       "UNDER gate: minimum inning for --under-fv-ask"
+                       "-gap-max to apply. Mirror of "
+                       "--fv-ask-gap-min-inning. "
+                       f"(default: {DEFAULT_UNDER_FV_ASK_GAP_MIN_INNING})"
+                   ))
+    p.add_argument("--under-extreme-edge-max", type=float,
+                   default=DEFAULT_UNDER_EXTREME_EDGE_MAX,
+                   help=(
+                       "UNDER gate: skip when UNDER edge > this in any "
+                       "inning. Symmetric application of the OVER-side "
+                       "empirical finding (TR19) that very-large edge "
+                       "= market is more informed than us. Mirror of "
+                       "--extreme-edge-max. "
+                       f"(default: {DEFAULT_UNDER_EXTREME_EDGE_MAX})"
+                   ))
     p.add_argument(
         "--prob-calibration-under-path",
         type=Path,
@@ -877,6 +988,34 @@ def parse_trade_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace]
         p.error("--shadow-no-score-drift-min-po-edge must be >= 0")
     if trade_args.shadow_no_score_drift_min_emp_edge < 0:
         p.error("--shadow-no-score-drift-min-emp-edge must be >= 0")
+
+    # Phase C-paper (2026-05-27): merge legacy --under-emission-mode
+    # alias into the new --under-mode. New flag wins if both were set;
+    # otherwise alias upgrades the default. Then mirror to the legacy
+    # attribute for one transition cycle so any downstream code still
+    # reading `under_emission_mode` keeps working.
+    legacy_under = getattr(trade_args, "under_emission_mode_legacy", None)
+    if legacy_under is not None and trade_args.under_mode == DEFAULT_UNDER_MODE:
+        trade_args.under_mode = legacy_under
+    trade_args.under_emission_mode = trade_args.under_mode
+
+    # Phase C-paper: validate UNDER gate thresholds.
+    if trade_args.under_min_inning < 1:
+        p.error("--under-min-inning must be >= 1")
+    if trade_args.under_min_inning_high_line < 1:
+        p.error("--under-min-inning-high-line must be >= 1")
+    if not (0.0 <= trade_args.under_min_entry_ask <= 1.0):
+        p.error("--under-min-entry-ask must be between 0 and 1")
+    if not (0.0 <= trade_args.under_min_entry_ask_high_line <= 1.0):
+        p.error("--under-min-entry-ask-high-line must be between 0 and 1")
+    if not (0.0 <= trade_args.under_max_base_fv <= 1.0):
+        p.error("--under-max-base-fv must be between 0 and 1")
+    if trade_args.under_fv_ask_gap_max < 0:
+        p.error("--under-fv-ask-gap-max must be >= 0")
+    if trade_args.under_fv_ask_gap_min_inning < 1:
+        p.error("--under-fv-ask-gap-min-inning must be >= 1")
+    if trade_args.under_extreme_edge_max < 0:
+        p.error("--under-extreme-edge-max must be >= 0")
 
     import sys as _sys
     old_argv = _sys.argv

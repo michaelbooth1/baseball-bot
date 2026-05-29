@@ -187,6 +187,12 @@ class LiveBetRecord(BetRecord):
     order_status: str = "pending"   # pending|live|filled|cancelled|expired|error
     clob_accept_status: Optional[str] = None  # raw CLOB status returned at placement
     over_token_id: str = ""         # Polymarket token ID for the OVER outcome
+    # Live UNDER trading (2026-05-28): the token actually traded for an
+    # UNDER bet is the under_no outcome token. over_token_id is still set
+    # on UNDER bets for cross-reference, but the CLOB order, fill polling,
+    # trade-history recovery, and orphan reconciliation must route on the
+    # side-correct token via `bet_traded_token_id(bet)`.
+    under_token_id: str = ""        # Polymarket token ID for the UNDER outcome
 
     # Placement provenance (shipped 2026-05-13 with wallet-aware paper
     # fallback). "live" = real CLOB order, real money. "paper_fallback" =
@@ -286,6 +292,23 @@ class TradeRecord:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def bet_traded_token_id(bet) -> str:
+    """Return the Polymarket token actually traded for this bet.
+
+    OVER bets trade the over outcome token; UNDER bets trade the under_no
+    outcome token. Every CLOB lifecycle path (placement, fill polling,
+    trade-history fill recovery, orphan reconciliation, book re-fetch for
+    cancel logic) must use this rather than reading ``over_token_id``
+    directly, or an UNDER order would be managed against the wrong token.
+    Falls back to over_token_id when the side-specific token is absent so
+    legacy OVER-only records keep working.
+    """
+    side = str(getattr(bet, "side", "over") or "over").lower()
+    if side == "under":
+        return str(getattr(bet, "under_token_id", "") or getattr(bet, "over_token_id", "") or "")
+    return str(getattr(bet, "over_token_id", "") or "")
+
 
 def _ts_to_iso(raw_ts) -> str:
     """Convert a raw timestamp (int seconds, int ms, or ISO string) to ISO UTC."""

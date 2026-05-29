@@ -44,6 +44,7 @@ from datetime import datetime, timezone
 from typing import Optional, TYPE_CHECKING
 
 from line_state import _now_iso, _now_ts
+from models import bet_traded_token_id
 from signal_config import DEFAULT_COOLDOWN_TICKS
 from stage2_run_env_model import RunEnvContext
 from weather_client import weather_v2_run_env_game_data
@@ -182,7 +183,7 @@ def try_recover_fill(
 
     try:
         trade = engine._clob.get_trades_for_order(
-            token_id=bet.over_token_id,
+            token_id=bet_traded_token_id(bet),
             order_id=order_id,
             placed_at_ts=placed_at_ts,
         )
@@ -299,6 +300,12 @@ def check_ask_reversal(engine: "LiveTradingEngine") -> None:
     for order_id, bet in list(engine._open_orders.items()):
         if not bet.order_placed_at:
             continue
+        # 2026-05-28: ask-reversal early-cancel is OVER-only. The UNDER
+        # exit-optimization (under-ask reversal) is not yet designed; live
+        # UNDER orders rest to fill / game-final / stale-timeout, which also
+        # maximizes the fill data we are gathering. Skip cleanly.
+        if str(getattr(bet, "side", "over") or "over").lower() == "under":
+            continue
 
         try:
             placed_ts = datetime.fromisoformat(
@@ -315,7 +322,7 @@ def check_ask_reversal(engine: "LiveTradingEngine") -> None:
 
         # Fetch current best ask -- one lightweight API call per young open order
         try:
-            book = engine._fetch_depth_snapshot(bet.over_token_id, 1)
+            book = engine._fetch_depth_snapshot(bet_traded_token_id(bet), 1)
             current_ask = book.get("best_ask")
         except Exception as exc:
             LOGGER.debug("Ask-reversal fetch failed [%s]: %s", bet.bet_id, exc)
@@ -500,6 +507,14 @@ def check_fv_decay(engine: "LiveTradingEngine") -> None:
     )
 
     for order_id, bet in list(engine._open_orders.items()):
+        # 2026-05-28: FV-decay early-cancel is OVER-only. recompute_fv below
+        # derives FV from the OVER model on the OVER book; applying it to an
+        # UNDER order would compare an OVER FV against an UNDER limit and
+        # mis-cancel. UNDER orders rest to fill / game-final / stale-timeout
+        # (also maximizes fill data). A side-aware UNDER FV-decay exit is a
+        # follow-up once UNDER has its own validated FV.
+        if str(getattr(bet, "side", "over") or "over").lower() == "under":
+            continue
         age_secs = None
         if bet.order_placed_at:
             try:
@@ -561,7 +576,7 @@ def check_fv_decay(engine: "LiveTradingEngine") -> None:
         current_ask = None
         ask_drop = None
         try:
-            book = engine._fetch_depth_snapshot(bet.over_token_id, 1)
+            book = engine._fetch_depth_snapshot(bet_traded_token_id(bet), 1)
             current_ask = book.get("best_ask")
             if current_ask is not None:
                 ask_drop = bet.entry_ask - current_ask
