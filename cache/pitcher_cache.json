@@ -1,5 +1,5 @@
 {
-  "built_at": "2026-05-28T15:15:17.235154+00:00",
+  "built_at": "2026-05-29T18:16:39.127141+00:00",
   "season": 2026,
   "min_ip_threshold": 5.0,
   "mlb_avg_era": 4.2,
@@ -29,12 +29,6 @@
       "ip": 64.0,
       "gs": 11
     },
-    "519242": {
-      "name": "Chris Sale",
-      "era": 1.89,
-      "ip": 62.0,
-      "gs": 10
-    },
     "695505": {
       "name": "Chase Burns",
       "era": 1.96,
@@ -43,9 +37,15 @@
     },
     "663436": {
       "name": "Davis Martin",
-      "era": 2.04,
-      "ip": 61.7,
-      "gs": 10
+      "era": 2.0,
+      "ip": 67.7,
+      "gs": 11
+    },
+    "519242": {
+      "name": "Chris Sale",
+      "era": 2.01,
+      "ip": 67.0,
+      "gs": 11
     },
     "800048": {
       "name": "Parker Messick",
@@ -107,6 +107,12 @@
       "ip": 64.7,
       "gs": 11
     },
+    "694973": {
+      "name": "Paul Skenes",
+      "era": 2.89,
+      "ip": 65.3,
+      "gs": 12
+    },
     "657746": {
       "name": "Joe Ryan",
       "era": 2.94,
@@ -123,12 +129,6 @@
       "name": "Michael McGreevy",
       "era": 2.98,
       "ip": 60.3,
-      "gs": 11
-    },
-    "694973": {
-      "name": "Paul Skenes",
-      "era": 3.0,
-      "ip": 60.0,
       "gs": 11
     },
     "656302": {
@@ -227,12 +227,6 @@
       "ip": 64.3,
       "gs": 11
     },
-    "543135": {
-      "name": "Nathan Eovaldi",
-      "era": 3.65,
-      "ip": 61.7,
-      "gs": 10
-    },
     "669302": {
       "name": "Logan Gilbert",
       "era": 3.69,
@@ -287,6 +281,12 @@
       "ip": 62.0,
       "gs": 11
     },
+    "543135": {
+      "name": "Nathan Eovaldi",
+      "era": 3.93,
+      "ip": 68.7,
+      "gs": 11
+    },
     "608372": {
       "name": "Tomoyuki Sugano",
       "era": 4.01,
@@ -327,12 +327,6 @@
       "name": "Nolan McLean",
       "era": 4.4,
       "ip": 61.3,
-      "gs": 11
-    },
-    "669022": {
-      "name": "MacKenzie Gore",
-      "era": 4.42,
-      "ip": 55.0,
       "gs": 11
     },
     "669358": {
@@ -382,6 +376,12 @@
       "era": 4.66,
       "ip": 75.3,
       "gs": 12
+    },
+    "607067": {
+      "name": "Colin Rea",
+      "era": 4.7,
+      "ip": 59.3,
+      "gs": 9
     },
     "683004": {
       "name": "Jack Leiter",

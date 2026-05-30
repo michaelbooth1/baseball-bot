@@ -627,8 +627,12 @@ class UnderModeFlagTests(unittest.TestCase):
         ta = self._parse()
         self.assertEqual(ta.under_min_inning, 4)
         self.assertEqual(ta.under_min_inning_high_line, 5)
-        self.assertAlmostEqual(ta.under_min_entry_ask, 0.55)
-        self.assertAlmostEqual(ta.under_min_entry_ask_high_line, 0.60)
+        # 2026-05-30: NOT mirrored to OVER. UNDER ask floor lives in
+        # the complementary-token price coordinate; mirroring 0.55/0.60
+        # blocked ~877/877 UNDER candidates on the 2026-05-29 paper
+        # session. See signal_config.py block above DEFAULT_UNDER_MIN_ENTRY_ASK.
+        self.assertAlmostEqual(ta.under_min_entry_ask, 0.30)
+        self.assertAlmostEqual(ta.under_min_entry_ask_high_line, 0.30)
         self.assertAlmostEqual(ta.under_max_base_fv, 0.99)
         self.assertAlmostEqual(ta.under_fv_ask_gap_max, 0.26)
         self.assertEqual(ta.under_fv_ask_gap_min_inning, 7)

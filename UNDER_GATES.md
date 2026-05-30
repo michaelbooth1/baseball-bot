@@ -5,7 +5,7 @@ applies. UNDER trading went **live for real money on 2026-05-28**
 (`--under-mode live`) as an operator-directed, **accepted-loss data-gathering
 posture** — it is NOT a validated edge. Read the caveats at the bottom.
 
-**Generated from code 2026-05-28.** Source of truth:
+**Generated from code 2026-05-30.** Source of truth:
 - `scripts/trading/signal_pipeline.py` — `_maybe_emit_under_candidate` (UNDER gates)
 - `scripts/trading/signal_config.py` — `DEFAULT_UNDER_*` thresholds
 - `scripts/trading/live_engine.py` — `_place_under_bet`, `_is_bet_executable`
@@ -60,17 +60,45 @@ stops UNDER for the tick.
 | # | reason | Fires when | Default(s) | Mirror of |
 |---|---|---|---|---|
 | U1 | `gate_under_min_inning` | line < 8.5: `inning < 4`; line ≥ 8.5: `inning < 5` | `under_min_inning=4`, `under_min_inning_high_line=5` | OVER gate 1 (variance reduction — symmetric) |
-| U2 | `gate_under_min_entry_ask` | `under_ask < 0.55` (std) / `< 0.60` (high line) | `under_min_entry_ask=0.55`, `under_min_entry_ask_high_line=0.60` | OVER gate 3 (thin-book guard) |
+| U2 | `gate_under_min_entry_ask` | `under_ask < 0.30` (std) / `< 0.30` (high line) | `under_min_entry_ask=0.30`, `under_min_entry_ask_high_line=0.30` | **NOT mirrored** — see post-mortem below |
 | U3 | `gate_under_max_base_fv` | `under_base_fv ≥ 0.99` | `under_max_base_fv=0.99` | OVER gate 8f (FV saturation / phantom no-score) |
 | U4 | `gate_under_extreme_edge` | `under_edge > 0.22` | `under_extreme_edge_max=0.22` | OVER `gate_extreme_edge` (TR19 phantom protection, symmetric) |
 | U5 | `gate_under_fv_ask_gap` | `under_edge > 0.26` AND `inning ≥ 7` | `under_fv_ask_gap_max=0.26`, `under_fv_ask_gap_min_inning=7` | OVER gate 8g (late large-gap = market disagreement) |
 | — | `gate_min_edge` | `under_edge < min_edge` | `min_edge = edge_threshold = 0.15` | OVER `gate_min_edge` (no ask-edge ramp applied to UNDER) |
 
-All UNDER thresholds default to their OVER counterpart (`DEFAULT_UNDER_* =
-DEFAULT_*`) and are independently overridable via `--under-min-inning`,
-`--under-min-entry-ask`, `--under-max-base-fv`, `--under-extreme-edge-max`,
-`--under-fv-ask-gap-max`, `--under-fv-ask-gap-min-inning`,
-`--under-min-inning-high-line`, `--under-min-entry-ask-high-line`.
+Most UNDER thresholds default to their OVER counterpart (`DEFAULT_UNDER_* =
+DEFAULT_*`). **The U2 ask floors are an exception** — they are NOT mirrored
+(see "2026-05-30 post-mortem" below). All are independently overridable via
+`--under-min-inning`, `--under-min-entry-ask`, `--under-max-base-fv`,
+`--under-extreme-edge-max`, `--under-fv-ask-gap-max`,
+`--under-fv-ask-gap-min-inning`, `--under-min-inning-high-line`,
+`--under-min-entry-ask-high-line`.
+
+### 2026-05-30 post-mortem: why U2 is not mirrored
+
+OVER's `min_entry_ask` (0.55 / 0.60 high-line) is a **price-side** floor on
+the YES token — its purpose is to skip thin / illiquid / over-pumped books.
+UNDER's ask, however, lives on the *complementary* NO token, whose price ≈
+`1 − OVER_bid`. So when OVER is in its operating zone (ask ~0.55–0.75,
+where OVER's own floor admits the bet), UNDER's ask sits at ~0.25–0.45 —
+**structurally below** a mirrored 0.55 floor.
+
+Evidence (2026-05-29 paper session, `--under-mode paper`):
+- 877 UNDER candidate rows emitted, 100% skipped at `gate_under_min_entry_ask`.
+- UNDER ask distribution: `min=0.04 median=0.23 p75=0.29 max=0.56`.
+- Exactly **1 of 877** would have passed the mirrored 0.55 floor.
+
+The U2 floor was lowered to 0.30 — still rejects sub-30¢ "UNDER is dead"
+books where noise dominates, but unblocks the realistic UNDER trading zone.
+The high-line variant intentionally does NOT bump up the way OVER's does
+(UNDER ask is not a clean monotonic function of line, and there is no
+empirical justification yet). Re-tune both floors from paper UNDER data,
+not by mirror.
+
+The `under_gate_bottleneck_audit` step in the daily refresh
+(`scripts/analysis/audit_under_gate_bottleneck.py`) now flags any session
+where ≥95% of UNDER skip rows hit a single gate (with n ≥ 100) so this
+class of single-gate bottleneck self-reports next time.
 
 ### Decision tags (candidate row `decision` / `decision_reason`)
 - `shadow_under` / `shadow_under_gates_pass` — `--under-mode shadow`; row logged, **no bet**.

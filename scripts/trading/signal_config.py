@@ -164,12 +164,32 @@ DEFAULT_LINE_HIGH_FV_BLOCK_LINES = "5.5"
 # UNDER (e.g. blowout suppresses scoring -- bad for OVER, good for
 # UNDER) and need explicit UNDER-specific design after paper data
 # accumulates. They are intentionally not gated for UNDER in Phase
-# C-paper. Each default mirrors the OVER value so a fresh operator
-# starts with parity; tune from paper-mode shadow data.
+# C-paper.
+#
+# 2026-05-30 (paper UNDER post-mortem): the "mirror OVER" defaults
+# are correct for inning/FV/edge knobs, which are line-state
+# coordinates (symmetric between sides). They are WRONG for any
+# price-side floor, because the two sides trade on COMPLEMENTARY
+# tokens: under_ask is approximately (1 - over_bid), so an UNDER
+# ask floor at 0.55 (mirror of OVER) sits on the wrong half of the
+# price range and structurally pre-blocks essentially every UNDER
+# candidate the engine emits. Evidence: 2026-05-29 paper session,
+# 877 emitted UNDER candidates, ask median=0.23 p75=0.29 max=0.56,
+# 1/877 passed the mirrored 0.55 floor -- 100% of UNDER skip rows
+# concentrated on gate_under_min_entry_ask.
+#
+# Resolution: DEFAULT_UNDER_MIN_ENTRY_ASK is set in UNDER's price
+# coordinates (NOT mirrored). 0.30 is a defensible starting floor
+# -- it still rejects sub-30c books (UNDER token priced near dead,
+# noise dominates) but unblocks the realistic UNDER trading zone.
+# DEFAULT_UNDER_MIN_ENTRY_ASK_HIGH_LINE deliberately does NOT bump
+# up the way OVER's does, because UNDER ask is not a clean
+# monotonic function of line and we have no empirical justification
+# to invent one. Re-tune both from paper UNDER data, not by mirror.
 DEFAULT_UNDER_MIN_INNING            = DEFAULT_MIN_INNING            # 4
 DEFAULT_UNDER_MIN_INNING_HIGH_LINE  = DEFAULT_MIN_INNING_HIGH_LINE  # 5
-DEFAULT_UNDER_MIN_ENTRY_ASK         = DEFAULT_MIN_ENTRY_ASK         # 0.55
-DEFAULT_UNDER_MIN_ENTRY_ASK_HIGH_LINE = DEFAULT_MIN_ENTRY_ASK_HIGH_LINE  # 0.60
+DEFAULT_UNDER_MIN_ENTRY_ASK           = 0.30   # NOT mirrored -- complementary-token coordinate, see block above
+DEFAULT_UNDER_MIN_ENTRY_ASK_HIGH_LINE = 0.30   # NOT mirrored -- no evidence for a high-line bump on UNDER yet
 DEFAULT_UNDER_MAX_BASE_FV           = DEFAULT_MAX_BASE_FV           # 0.99
 DEFAULT_UNDER_FV_ASK_GAP_MAX        = DEFAULT_FV_ASK_GAP_MAX        # 0.26
 DEFAULT_UNDER_FV_ASK_GAP_MIN_INNING = DEFAULT_FV_ASK_GAP_MIN_INNING # 7

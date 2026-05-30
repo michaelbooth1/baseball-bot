@@ -2687,6 +2687,25 @@ def build_refresh_steps(config: RefreshConfig, session_dates: Sequence[str], max
     ))
 
     steps.append(RefreshStep(
+        name="under_gate_bottleneck_audit",
+        description=(
+            "UNDER single-gate-bottleneck guardrail (2026-05-30). Scans "
+            "recent session JSON files and flags any session where >=95%% "
+            "of UNDER skip rows (n>=100) hit a single gate -- the "
+            "fingerprint of a misconfigured UNDER threshold like the "
+            "2026-05-29 gate_under_min_entry_ask incident (877/877 UNDER "
+            "candidates blocked by one mirrored OVER default). Cheap, "
+            "fail-open; outputs to "
+            "data/analysis_output/under_gate_bottleneck_audit/ and prints "
+            "WARN to stderr when triggered."
+        ),
+        command=[
+            _python(),
+            _script("scripts/analysis/audit_under_gate_bottleneck.py"),
+        ],
+    ))
+
+    steps.append(RefreshStep(
         name="feed_enrichment",
         description=(
             "Tier-3 offline feed enrichment (2026-05-29). Joins each "

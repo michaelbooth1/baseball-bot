@@ -137,6 +137,8 @@ def test_build_refresh_steps_includes_canonical_tables_and_research_outputs(tmp_
     fv_disagreement_wf = [step for step in steps if step.name == "walk_forward_fv_disagreement_quality"][0]
     assert "fv_disagreement_quality_walk_forward.py" in fv_disagreement_wf.command[1]
     assert fv_disagreement_wf.staleness_check is not None
+    # UNDER single-gate-bottleneck guardrail (2026-05-30).
+    assert "under_gate_bottleneck_audit" in names
     # End-of-refresh operator summary.
     assert "refresh_health_rollup" in names
 
