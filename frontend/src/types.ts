@@ -213,8 +213,11 @@ export type BetRow = {
   inning_state?: string;
   stake?: number | null;
   final_total?: number | null;
+  settled?: boolean | null;
   won?: boolean | null;
   profit?: number | null;
+  placed_at?: string | null;
+  settled_at?: string | null;
   inferred_state_base_empirical?: number | null;
   fair_value_alt_empirical?: number | null;
 };

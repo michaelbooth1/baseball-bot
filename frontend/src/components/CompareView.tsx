@@ -6,16 +6,34 @@ import {
   fmtMoney,
   fmtPct,
 } from "../api";
-import type { ParallelComparison } from "../types";
+import type { ParallelComparison, SessionFile } from "../types";
+import { AllSessionsBreakdown } from "./AllSessionsBreakdown";
 
 /**
- * Multi-engine comparison page (2026-05-25). Reads
- * `data/analysis_output/parallel_engine_comparison/parallel_engine_comparison_<range>.json`
- * via the new `/api/parallel-comparisons` endpoints and renders three
- * tables (headline / daily-read / disagreement). Tables-only MVP per
- * design decision; no charts.
+ * Multi-engine comparison page (2026-05-25). Renders two layers:
+ *
+ *   1. AllSessionsBreakdown (2026-05-30): cross-date per-model totals
+ *      computed client-side from every loaded session, so the operator
+ *      sees ALL bets each model has placed in one table. This is the
+ *      "main comparison" view the operator opens to read model
+ *      performance at a glance, no backend aggregation required.
+ *
+ *   2. The original parallel-comparison range tables (headline /
+ *      normalized / daily-read / shared-candidate disagreement),
+ *      sourced from
+ *      `data/analysis_output/parallel_engine_comparison/parallel_engine_comparison_<range>.json`.
+ *      These remain for windowed analysis (e.g., last-7d cohort
+ *      effects, shared-candidate disagreement which needs the
+ *      offline aggregator's funnel data).
  */
-export const CompareView: FC = () => {
+type CompareViewProps = {
+  /** All loaded session JSONs, stamped with `_configLabel` and
+   *  `_modeFolder` by App.tsx at load time. Used by the all-sessions
+   *  breakdown table at the top. */
+  sessions: SessionFile[];
+};
+
+export const CompareView: FC<CompareViewProps> = ({ sessions }) => {
   const [ranges, setRanges] = useState<string[]>([]);
   const [selectedRange, setSelectedRange] = useState<string | null>(null);
   const [report, setReport] = useState<ParallelComparison | null>(null);
@@ -51,7 +69,7 @@ export const CompareView: FC = () => {
       <header className="compare-header">
         <h2>Parallel Engine Comparison</h2>
         <div className="compare-range-picker">
-          <label htmlFor="compare-range-select">Date range:</label>
+          <label htmlFor="compare-range-select">Range report:</label>
           <select
             id="compare-range-select"
             value={selectedRange ?? ""}
@@ -66,6 +84,12 @@ export const CompareView: FC = () => {
           </select>
         </div>
       </header>
+
+      <AllSessionsBreakdown sessions={sessions} />
+
+      <h3 className="compare-section-divider">
+        Range report ({selectedRange ?? "—"})
+      </h3>
 
       {loading && <p>Loading…</p>}
       {error && (

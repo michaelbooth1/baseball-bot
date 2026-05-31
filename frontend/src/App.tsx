@@ -313,7 +313,7 @@ export default function App() {
           </div>
         </header>
         {topView === "compare" ? (
-          <CompareView />
+          <CompareView sessions={sessions} />
         ) : showMultiEngineDayView ? (
           <MultiEngineDayViewBody
             error={error}
