@@ -165,16 +165,19 @@ def test_build_refresh_steps_emits_paper_only_review_steps(tmp_path):
         run_walk_forward=False,
     )
 
-    # Monkeypatch the module-level paper roots so we don't probe the
-    # real repo's data dir from inside a tmp_path test.
-    orig_roots = rdr.DEFAULT_PAPER_REVIEW_ROOTS
-    rdr.DEFAULT_PAPER_REVIEW_ROOTS = (
+    # Monkeypatch the canonical paper roots so we don't probe the real
+    # repo's data dir from inside a tmp_path test. After the 2026-05-31
+    # refactor, the function reads from refresh.config directly, so the
+    # shim's name no longer aliases — patch the canonical module.
+    from scripts.analysis.refresh import config as _refresh_config
+    orig_roots = _refresh_config.DEFAULT_PAPER_REVIEW_ROOTS
+    _refresh_config.DEFAULT_PAPER_REVIEW_ROOTS = (
         (paper_legacy_sessions, paper_legacy_cand),
     )
     try:
         steps = rdr.build_refresh_steps(config, [], "2026-05-29")
     finally:
-        rdr.DEFAULT_PAPER_REVIEW_ROOTS = orig_roots
+        _refresh_config.DEFAULT_PAPER_REVIEW_ROOTS = orig_roots
 
     names = [s.name for s in steps]
     assert "daily_human_review_paper:2026-05-29" in names
@@ -964,7 +967,7 @@ def test_model_freshness_handler_alerts_on_stage2_brier_drift(tmp_path, monkeypa
         },
     }), encoding="utf-8")
 
-    monkeypatch.setattr(rdr, "PROJECT_DIR", tmp_path)
+    monkeypatch.setattr("scripts.analysis.refresh.config.PROJECT_DIR", tmp_path)
     config = _minimal_config(
         tmp_path,
         mlb_ou_cache_path=cache_dir / "mlb_ou_cache.json",  # missing -> WARNING
@@ -990,7 +993,7 @@ def test_model_freshness_handler_no_alert_when_within_tolerance(tmp_path, monkey
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(rdr, "PROJECT_DIR", tmp_path)
+    monkeypatch.setattr("scripts.analysis.refresh.config.PROJECT_DIR", tmp_path)
     config = _minimal_config(
         tmp_path,
         mlb_ou_cache_path=cache_dir / "mlb_ou_cache.json",
@@ -1153,7 +1156,7 @@ def test_model_freshness_handler_flags_missing_staging(tmp_path, monkeypatch):
     )
     # No staging file.
 
-    monkeypatch.setattr(rdr, "PROJECT_DIR", tmp_path)
+    monkeypatch.setattr("scripts.analysis.refresh.config.PROJECT_DIR", tmp_path)
     config = _minimal_config(
         tmp_path,
         mlb_ou_cache_path=cache_dir / "mlb_ou_cache.json",

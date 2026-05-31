@@ -1,6 +1,6 @@
 {
   "meta": {
-    "built": "2026-05-31T17:43:11.166711Z",
+    "built": "2026-05-31T18:57:12.175865Z",
     "sport": "mlb",
     "model_type": "stage2_run_environment_residual",
     "stage1_cache": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\cache\\mlb_ou_cache.json",
@@ -19979,19 +19979,19 @@
   },
   "lineage": {
     "schema_version": 1,
-    "built_at_utc": "2026-05-31T17:43:16.838722Z",
+    "built_at_utc": "2026-05-31T18:57:14.936943Z",
     "builder_path": "cache/build_mlb_stage2_run_env.py",
-    "git_sha": "2d36cfc56cfe",
+    "git_sha": "389c073293a6",
     "git_branch": "main",
     "git_dirty": true,
     "input_hashes": {
-      "cache/mlb_ou_cache.json": "sha256:7678a8dfeeb33055"
+      "cache/mlb_ou_cache.json": "sha256:e356dbb0bf84c5c7"
     },
     "input_dir_summaries": {
       "data/games/regular": {
         "n_files": 24142,
         "min_mtime_utc": "2026-04-04T18:16:10.668634Z",
-        "max_mtime_utc": "2026-05-31T16:38:13.737784Z"
+        "max_mtime_utc": "2026-05-31T18:16:17.627111Z"
       }
     },
     "python_version": "3.11.0",

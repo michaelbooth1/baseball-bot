@@ -150,7 +150,7 @@ class RefreshSmokeTests(unittest.TestCase):
         with patch("subprocess.run", side_effect=self._fake_subprocess):
             # Force PROJECT_DIR to tmp so model_freshness_health doesn't
             # leak into the real repo's analysis_output during age checks.
-            with patch.object(rdr, "PROJECT_DIR", self.tmp):
+            with patch("scripts.analysis.refresh.config.PROJECT_DIR", self.tmp):
                 payload = rdr.run_startup_refresh(config)
 
         # Manifest landed on disk.
@@ -195,7 +195,7 @@ class RefreshSmokeTests(unittest.TestCase):
         # Run the full smoke pipeline (paths routed to tmp via _config()).
         config = self._config()
         with patch("subprocess.run", side_effect=self._fake_subprocess):
-            with patch.object(rdr, "PROJECT_DIR", self.tmp):
+            with patch("scripts.analysis.refresh.config.PROJECT_DIR", self.tmp):
                 rdr.run_startup_refresh(config)
 
         # Canonical paths must be untouched.
@@ -224,7 +224,7 @@ class RefreshSmokeTests(unittest.TestCase):
         alert summary line drawn from the daily-review JSON we wrote."""
         config = self._config()
         with patch("subprocess.run", side_effect=self._fake_subprocess):
-            with patch.object(rdr, "PROJECT_DIR", self.tmp):
+            with patch("scripts.analysis.refresh.config.PROJECT_DIR", self.tmp):
                 payload = rdr.run_startup_refresh(config)
 
         rollup = next(
@@ -259,7 +259,7 @@ class RefreshSmokeTests(unittest.TestCase):
 
         config = self._config()
         with patch("subprocess.run", side_effect=self._fake_subprocess):
-            with patch.object(rdr, "PROJECT_DIR", self.tmp):
+            with patch("scripts.analysis.refresh.config.PROJECT_DIR", self.tmp):
                 payload = rdr.run_startup_refresh(config)
 
         stage2 = next(
@@ -282,7 +282,7 @@ class RefreshSmokeTests(unittest.TestCase):
         config = self._config(refresh_stage1_cache=True)
         # Build the steps under the patched PROJECT_DIR so the StalenessCheck
         # paths reflect the same root the rest of the pipeline uses.
-        with patch.object(rdr, "PROJECT_DIR", self.tmp):
+        with patch("scripts.analysis.refresh.config.PROJECT_DIR", self.tmp):
             steps = rdr.build_refresh_steps(config, ["2026-05-09"], "2026-05-09")
             expected_staging = self.tmp / "cache" / "mlb_ou_cache.staging.json"
             expected_games_root = self.tmp / "data" / "games" / "regular"
@@ -325,7 +325,7 @@ class RefreshSmokeTests(unittest.TestCase):
 
         config = self._config(refresh_stage1_cache=True)
         with patch("subprocess.run", side_effect=self._fake_subprocess):
-            with patch.object(rdr, "PROJECT_DIR", self.tmp):
+            with patch("scripts.analysis.refresh.config.PROJECT_DIR", self.tmp):
                 payload = rdr.run_startup_refresh(config)
 
         stage1 = next(
@@ -357,7 +357,7 @@ class RefreshSmokeTests(unittest.TestCase):
 
         config = self._config(force_retrain=True)
         with patch("subprocess.run", side_effect=self._fake_subprocess):
-            with patch.object(rdr, "PROJECT_DIR", self.tmp):
+            with patch("scripts.analysis.refresh.config.PROJECT_DIR", self.tmp):
                 payload = rdr.run_startup_refresh(config)
 
         stage2 = next(
@@ -379,7 +379,7 @@ class RefreshSmokeTests(unittest.TestCase):
 
         config = self._config()
         with patch("subprocess.run", side_effect=fake_run):
-            with patch.object(rdr, "PROJECT_DIR", self.tmp):
+            with patch("scripts.analysis.refresh.config.PROJECT_DIR", self.tmp):
                 payload = rdr.run_startup_refresh(config)
 
         failed = [s for s in payload["steps"] if s["status"] == "failed"]
