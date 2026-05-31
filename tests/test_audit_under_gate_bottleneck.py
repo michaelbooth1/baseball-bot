@@ -194,5 +194,43 @@ class AnalyzeSessionTests(unittest.TestCase):
             self.assertIn("STATUS:", md)
 
 
+class DefaultSessionRootsTests(unittest.TestCase):
+    """2026-05-31: the discovery function must include per-preset
+    paper_<label>/sessions/ dirs (multi-engine fleet) in addition to
+    the legacy paper_trading/ + live_trading/ roots. The 2026-05-30
+    audit was blind to per-preset roots and missed a real bottleneck
+    in paper_M_under_paper/sessions/."""
+
+    def test_discovery_picks_up_per_preset_paper_dirs(self):
+        with tempfile.TemporaryDirectory() as td:
+            project_dir = Path(td)
+            data = project_dir / "data"
+            # Legacy roots.
+            (data / "paper_trading" / "sessions").mkdir(parents=True)
+            (data / "live_trading" / "sessions").mkdir(parents=True)
+            # Multi-engine per-preset roots.
+            (data / "paper_A_current" / "sessions").mkdir(parents=True)
+            (data / "paper_M_under_paper" / "sessions").mkdir(parents=True)
+            # A paper_<label>/ directory WITHOUT a sessions/ subdir must be ignored.
+            (data / "paper_no_sessions").mkdir(parents=True)
+            # A non-`paper_` directory must be ignored.
+            (data / "analysis_output").mkdir(parents=True)
+
+            orig = agb.PROJECT_DIR
+            agb.PROJECT_DIR = project_dir
+            try:
+                roots = agb._discover_default_session_roots()
+            finally:
+                agb.PROJECT_DIR = orig
+
+            root_names = {Path(r).parent.name for r in roots}
+            self.assertIn("paper_trading", root_names)
+            self.assertIn("live_trading", root_names)
+            self.assertIn("paper_A_current", root_names)
+            self.assertIn("paper_M_under_paper", root_names)
+            self.assertNotIn("paper_no_sessions", root_names)
+            self.assertNotIn("analysis_output", root_names)
+
+
 if __name__ == "__main__":
     unittest.main()

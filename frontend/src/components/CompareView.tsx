@@ -301,7 +301,7 @@ const DisagreementTable: FC<{ report: ParallelComparison }> = ({ report }) => {
   const gameLine = sd?.game_line;
   if (!gameLine) return null;
   const counts = gameLine.counts ?? {};
-  const splits = gameLine.splits ?? [];
+  const splits = gameLine.split_examples ?? [];
   return (
     <section className="compare-section">
       <h3>Shared-candidate disagreement (game-line level)</h3>

@@ -42,6 +42,24 @@ PROJECT_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_SESSIONS_DIR = PROJECT_DIR / "data" / "live_trading" / "sessions"
 DEFAULT_CANDIDATE_DIR = PROJECT_DIR / "data" / "live_trading" / "candidate_universe"
 DEFAULT_LOG_DIR = PROJECT_DIR / "logs" / "real-logs"
+
+# 2026-05-31: paper-only daily_human_review support. When a date has
+# only paper session(s) (no live), the daily-review step builds
+# against one of these paper roots so the operator still gets the
+# rich health-block JSON instead of just session-only fallback.
+# Probe order: legacy single-engine `paper_trading/` first, then the
+# multi-engine production-mirror `paper_A_current/`. The first root
+# that has a session for the date wins.
+DEFAULT_PAPER_REVIEW_ROOTS: Tuple[Tuple[Path, Path], ...] = (
+    (
+        PROJECT_DIR / "data" / "paper_trading" / "sessions",
+        PROJECT_DIR / "data" / "paper_trading" / "candidate_universe",
+    ),
+    (
+        PROJECT_DIR / "data" / "paper_A_current" / "sessions",
+        PROJECT_DIR / "data" / "paper_A_current" / "candidate_universe",
+    ),
+)
 DEFAULT_OUTPUT_ROOT = PROJECT_DIR / "data" / "analysis_output" / "startup_refresh"
 DEFAULT_PITCHER_CACHE_PATH = PROJECT_DIR / "cache" / "pitcher_cache.json"
 DEFAULT_STADIUM_WEATHER_METADATA_PATH = PROJECT_DIR / "data" / "reference" / "mlb_stadium_weather_metadata.json"
@@ -324,6 +342,56 @@ def daily_review_dates_needing_refresh(
         ):
             out.append(date_str)
     return out
+
+
+def discover_paper_only_review_targets(
+    *,
+    live_session_dates: Iterable[str],
+    max_date: str,
+    review_dir: Path,
+    log_dir: Path,
+    paper_roots: Optional[Tuple[Tuple[Path, Path], ...]] = None,
+) -> List[Tuple[str, Path, Path]]:
+    """Return (date, sessions_dir, candidate_dir) tuples for dates
+    that have a paper session but NO live session. The first paper
+    root in `paper_roots` that holds a session for a given date wins
+    -- giving the legacy `paper_trading/` root priority over the
+    multi-engine production-mirror `paper_A_current/`.
+
+    The 2026-05-31 frontend handles paper-only dates with a fallback
+    session-only view, but a full daily_human_review JSON gives the
+    operator the rich cohort/calibration health blocks that
+    paper-only sessions would otherwise miss out on.
+    """
+    if paper_roots is None:
+        # Resolve at call time so tests + future operator-overrides
+        # can patch DEFAULT_PAPER_REVIEW_ROOTS at module level.
+        paper_roots = DEFAULT_PAPER_REVIEW_ROOTS
+    live_set = {d for d in live_session_dates}
+    targets: List[Tuple[str, Path, Path]] = []
+    seen: set = set()
+    for sessions_dir, candidate_dir in paper_roots:
+        if not sessions_dir.exists():
+            continue
+        for path in sessions_dir.glob("*_session.json"):
+            date_str = path.name[: len("YYYY-MM-DD")]
+            if len(date_str) != 10 or date_str[4] != "-" or date_str[7] != "-":
+                continue
+            if date_str > max_date or date_str in live_set or date_str in seen:
+                continue
+            if _daily_review_is_current(
+                date_str=date_str,
+                sessions_dir=sessions_dir,
+                candidate_dir=candidate_dir,
+                log_dir=log_dir,
+                review_dir=review_dir,
+            ):
+                seen.add(date_str)
+                continue
+            targets.append((date_str, sessions_dir, candidate_dir))
+            seen.add(date_str)
+    targets.sort(key=lambda t: t[0])
+    return targets
 
 
 # ---------------------------------------------------------------------------
@@ -1755,6 +1823,38 @@ def build_refresh_steps(config: RefreshConfig, session_dates: Sequence[str], max
                         _script("scripts/analysis/build_daily_human_review_report.py"),
                         "--session-date",
                         date_str,
+                    ],
+                )
+            )
+        # 2026-05-31: paper-only days (no live session) also get a
+        # daily_human_review built so the rich cohort/calibration
+        # health blocks aren't dark on paper-only days. The legacy
+        # `paper_trading/` root wins when present; otherwise the
+        # multi-engine production-mirror `paper_A_current/` is used.
+        for date_str, paper_sessions_dir, paper_candidate_dir in (
+            discover_paper_only_review_targets(
+                live_session_dates=session_dates,
+                max_date=max_date,
+                review_dir=review_dir,
+                log_dir=config.log_dir,
+            )
+        ):
+            steps.append(
+                RefreshStep(
+                    name=f"daily_human_review_paper:{date_str}",
+                    description=(
+                        "Refresh compact daily human-review JSON/Markdown "
+                        "for a paper-only day (no live session)."
+                    ),
+                    command=[
+                        _python(),
+                        _script("scripts/analysis/build_daily_human_review_report.py"),
+                        "--session-date",
+                        date_str,
+                        "--sessions-dir",
+                        str(paper_sessions_dir),
+                        "--candidate-dir",
+                        str(paper_candidate_dir),
                     ],
                 )
             )

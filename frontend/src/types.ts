@@ -124,13 +124,18 @@ export type ParallelDisagreementBlock = {
     split?: number;
     partial_coverage?: number;
   };
-  splits?: Array<{
+  /** 2026-05-31: renamed from `splits` to match what the aggregator
+   *  actually emits in the JSON (`split_examples`). The pre-rename
+   *  type read `splits` and showed an empty table even when
+   *  `counts.split` was non-zero. */
+  split_examples?: Array<{
     key: string;
     decisions?: Record<string, string>;
     outcome?: {
       final_away?: number | null;
       final_home?: number | null;
       final_total?: number | null;
+      over_hit?: boolean | null;
       won?: boolean | null;
     };
   }>;

@@ -30,10 +30,34 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
-DEFAULT_SESSION_ROOTS = [
-    PROJECT_DIR / "data" / "paper_trading" / "sessions",
-    PROJECT_DIR / "data" / "live_trading" / "sessions",
-]
+
+
+def _discover_default_session_roots() -> List[Path]:
+    """Default session roots include the legacy single-engine paths
+    (data/paper_trading/, data/live_trading/) PLUS every multi-engine
+    per-preset paper root (data/paper_<label>/) discovered at call
+    time. The 2026-05-30 audit revealed the bottleneck guardrail was
+    blind to per-preset roots, so an M_under_paper bottleneck went
+    unflagged. Globbing per-call keeps new presets covered without
+    a config change."""
+    roots: List[Path] = [
+        PROJECT_DIR / "data" / "paper_trading" / "sessions",
+        PROJECT_DIR / "data" / "live_trading" / "sessions",
+    ]
+    data_dir = PROJECT_DIR / "data"
+    if data_dir.exists():
+        for sub in sorted(data_dir.glob("paper_*")):
+            if not sub.is_dir():
+                continue
+            if sub.name == "paper_trading":
+                continue  # already in the legacy list above
+            sess = sub / "sessions"
+            if sess.exists():
+                roots.append(sess)
+    return roots
+
+
+DEFAULT_SESSION_ROOTS = _discover_default_session_roots()
 DEFAULT_OUTPUT_DIR = PROJECT_DIR / "data" / "analysis_output" / "under_gate_bottleneck_audit"
 DEFAULT_OUTPUT_STEM = "under_gate_bottleneck_audit"
 

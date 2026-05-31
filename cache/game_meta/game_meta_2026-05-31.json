@@ -1,0 +1,411 @@
+{
+  "schema_version": 1,
+  "date": "2026-05-31",
+  "generated_at_utc": "2026-05-31T18:28:21Z",
+  "coverage": {
+    "scheduled_games": 15,
+    "games_with_umpire": 14
+  },
+  "warnings": [],
+  "games": [
+    {
+      "game_pk": 824832,
+      "hp_umpire_id": 429805,
+      "hp_umpire_name": "Todd Tichenor",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 429805,
+          "name": "Todd Tichenor"
+        },
+        {
+          "type": "First Base",
+          "id": 658325,
+          "name": "Tyler Jones"
+        },
+        {
+          "type": "Second Base",
+          "id": 623949,
+          "name": "Clint Vondrak"
+        },
+        {
+          "type": "Third Base",
+          "id": 503077,
+          "name": "Adam Hamari"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 822729,
+      "hp_umpire_id": 605670,
+      "hp_umpire_name": "Dan Merzel",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 605670,
+          "name": "Dan Merzel"
+        },
+        {
+          "type": "First Base",
+          "id": 483564,
+          "name": "Dan Bellino"
+        },
+        {
+          "type": "Second Base",
+          "id": 483919,
+          "name": "Mark Ripperger"
+        },
+        {
+          "type": "Third Base",
+          "id": 658292,
+          "name": "Derek Thomas"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823373,
+      "hp_umpire_id": 490319,
+      "hp_umpire_name": "Jordan Baker",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 490319,
+          "name": "Jordan Baker"
+        },
+        {
+          "type": "First Base",
+          "id": 691042,
+          "name": "Willie Traynor"
+        },
+        {
+          "type": "Second Base",
+          "id": 596740,
+          "name": "Jansen Visconti"
+        },
+        {
+          "type": "Third Base",
+          "id": 605673,
+          "name": "Alex Tosi"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824430,
+      "hp_umpire_id": 658536,
+      "hp_umpire_name": "Austin Jones",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 658536,
+          "name": "Austin Jones"
+        },
+        {
+          "type": "First Base",
+          "id": 521251,
+          "name": "Ben May"
+        },
+        {
+          "type": "Second Base",
+          "id": 483630,
+          "name": "John Tumpane"
+        },
+        {
+          "type": "Third Base",
+          "id": 639723,
+          "name": "Brennan Miller"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 822976,
+      "hp_umpire_id": 482631,
+      "hp_umpire_name": "Mike Estabrook",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 482631,
+          "name": "Mike Estabrook"
+        },
+        {
+          "type": "First Base",
+          "id": 485856,
+          "name": "Jonathan Parra"
+        },
+        {
+          "type": "Second Base",
+          "id": 483561,
+          "name": "Lance Barrett"
+        },
+        {
+          "type": "Third Base",
+          "id": 427315,
+          "name": "Alfonso M\u00e1rquez"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824512,
+      "hp_umpire_id": 521051,
+      "hp_umpire_name": "Nick Mahrley",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 521051,
+          "name": "Nick Mahrley"
+        },
+        {
+          "type": "First Base",
+          "id": 503586,
+          "name": "Tripp Gibson"
+        },
+        {
+          "type": "Second Base",
+          "id": 503502,
+          "name": "Ryan Blakney"
+        },
+        {
+          "type": "Third Base",
+          "id": 427243,
+          "name": "Marvin Hudson"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823621,
+      "hp_umpire_id": 605674,
+      "hp_umpire_name": "Ryan Wills",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 605674,
+          "name": "Ryan Wills"
+        },
+        {
+          "type": "First Base",
+          "id": 427013,
+          "name": "Lance Barksdale"
+        },
+        {
+          "type": "Second Base",
+          "id": 504381,
+          "name": "Will Little"
+        },
+        {
+          "type": "Third Base",
+          "id": 596809,
+          "name": "Ryan Additon"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824592,
+      "hp_umpire_id": 544728,
+      "hp_umpire_name": "Nic Lentz",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 544728,
+          "name": "Nic Lentz"
+        },
+        {
+          "type": "First Base",
+          "id": 554242,
+          "name": "Edwin Moscoso"
+        },
+        {
+          "type": "Second Base",
+          "id": 427537,
+          "name": "Hunter Wendelstedt"
+        },
+        {
+          "type": "Third Base",
+          "id": 483569,
+          "name": "Vic Carapazza"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824187,
+      "hp_umpire_id": 623946,
+      "hp_umpire_name": "Malachi Moore",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 623946,
+          "name": "Malachi Moore"
+        },
+        {
+          "type": "First Base",
+          "id": 427113,
+          "name": "Laz Diaz"
+        },
+        {
+          "type": "Second Base",
+          "id": 676581,
+          "name": "James Jean"
+        },
+        {
+          "type": "Third Base",
+          "id": 623938,
+          "name": "Erich Bacchus"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 822895,
+      "hp_umpire_id": 608158,
+      "hp_umpire_name": "Nate Tomlinson",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 608158,
+          "name": "Nate Tomlinson"
+        },
+        {
+          "type": "First Base",
+          "id": 427533,
+          "name": "Mark Wegner"
+        },
+        {
+          "type": "Second Base",
+          "id": 427129,
+          "name": "Bruce Dreckman"
+        },
+        {
+          "type": "Third Base",
+          "id": 547380,
+          "name": "Carlos Torres"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824354,
+      "hp_umpire_id": 621660,
+      "hp_umpire_name": "Emil Jimenez",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 621660,
+          "name": "Emil Jimenez"
+        },
+        {
+          "type": "First Base",
+          "id": 573597,
+          "name": "Gabe Morales"
+        },
+        {
+          "type": "Second Base",
+          "id": 427139,
+          "name": "Doug Eddings"
+        },
+        {
+          "type": "Third Base",
+          "id": 483912,
+          "name": "Mike Muchlinski"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 825001,
+      "hp_umpire_id": 668921,
+      "hp_umpire_name": "Jen Pawol",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 668921,
+          "name": "Jen Pawol"
+        },
+        {
+          "type": "First Base",
+          "id": 605672,
+          "name": "Jeremie Rehak"
+        },
+        {
+          "type": "Second Base",
+          "id": 427248,
+          "name": "Dan Iassogna"
+        },
+        {
+          "type": "Third Base",
+          "id": 644760,
+          "name": "Adam Beck"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823133,
+      "hp_umpire_id": 598411,
+      "hp_umpire_name": "Nestor Ceja",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 598411,
+          "name": "Nestor Ceja"
+        },
+        {
+          "type": "First Base",
+          "id": 665299,
+          "name": "Louie Krupa"
+        },
+        {
+          "type": "Second Base",
+          "id": 427197,
+          "name": "Chris Guccione"
+        },
+        {
+          "type": "Third Base",
+          "id": 482663,
+          "name": "David Rackley"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823944,
+      "hp_umpire_id": 503493,
+      "hp_umpire_name": "Sean Barber",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 503493,
+          "name": "Sean Barber"
+        },
+        {
+          "type": "First Base",
+          "id": 482666,
+          "name": "D.J. Reyburn"
+        },
+        {
+          "type": "Second Base",
+          "id": 676580,
+          "name": "Steven Jaschinski"
+        },
+        {
+          "type": "Third Base",
+          "id": 428442,
+          "name": "James Hoye"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823053,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    }
+  ]
+}

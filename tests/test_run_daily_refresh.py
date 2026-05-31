@@ -84,6 +84,110 @@ def test_daily_review_refresh_detects_missing_and_stale_outputs(tmp_path):
     ) == []
 
 
+def test_discover_paper_only_review_targets(tmp_path):
+    """2026-05-31: paper-only days (no live session) get their own
+    daily_human_review_paper:DATE step. Legacy paper_trading/ root
+    wins over multi-engine paper_A_current/ when both have the same
+    date."""
+    paper_legacy_sessions = tmp_path / "paper_trading" / "sessions"
+    paper_legacy_cand = tmp_path / "paper_trading" / "candidate_universe"
+    paper_a_sessions = tmp_path / "paper_A_current" / "sessions"
+    paper_a_cand = tmp_path / "paper_A_current" / "candidate_universe"
+    reviews = tmp_path / "reviews"
+    logs = tmp_path / "logs"
+
+    # 2026-05-29 has only the legacy paper root (single-engine run).
+    _touch(paper_legacy_sessions / "2026-05-29_session.json")
+    _touch(paper_legacy_cand / "2026-05-29_candidate_rollup.json")
+    # 2026-05-30 has only the multi-engine paper_A_current root.
+    _touch(paper_a_sessions / "2026-05-30_session.json")
+    _touch(paper_a_cand / "2026-05-30_candidate_rollup.json")
+    # 2026-05-28 has BOTH paper roots; legacy must win.
+    _touch(paper_legacy_sessions / "2026-05-28_session.json")
+    _touch(paper_legacy_cand / "2026-05-28_candidate_rollup.json")
+    _touch(paper_a_sessions / "2026-05-28_session.json")
+    _touch(paper_a_cand / "2026-05-28_candidate_rollup.json")
+    # 2026-05-27 has a live session, so the helper must skip it.
+    _touch(reviews / "2026-05-27_human_review.json")  # noop in helper
+
+    paper_roots = (
+        (paper_legacy_sessions, paper_legacy_cand),
+        (paper_a_sessions, paper_a_cand),
+    )
+    targets = rdr.discover_paper_only_review_targets(
+        live_session_dates=["2026-05-27"],
+        max_date="2026-05-30",
+        review_dir=reviews,
+        log_dir=logs,
+        paper_roots=paper_roots,
+    )
+
+    by_date = {t[0]: (t[1], t[2]) for t in targets}
+    assert "2026-05-27" not in by_date  # excluded because live exists
+    assert by_date["2026-05-29"] == (paper_legacy_sessions, paper_legacy_cand)
+    assert by_date["2026-05-30"] == (paper_a_sessions, paper_a_cand)
+    # Legacy paper wins over paper_A_current when both have the date.
+    assert by_date["2026-05-28"] == (paper_legacy_sessions, paper_legacy_cand)
+    # Ordered by date ascending.
+    assert [t[0] for t in targets] == [
+        "2026-05-28", "2026-05-29", "2026-05-30",
+    ]
+
+
+def test_discover_paper_only_review_targets_skips_max_date(tmp_path):
+    paper_legacy_sessions = tmp_path / "paper_trading" / "sessions"
+    paper_legacy_cand = tmp_path / "paper_trading" / "candidate_universe"
+    _touch(paper_legacy_sessions / "2026-06-01_session.json")
+    _touch(paper_legacy_cand / "2026-06-01_candidate_rollup.json")
+    targets = rdr.discover_paper_only_review_targets(
+        live_session_dates=[],
+        max_date="2026-05-31",  # 2026-06-01 is past max
+        review_dir=tmp_path / "reviews",
+        log_dir=tmp_path / "logs",
+        paper_roots=((paper_legacy_sessions, paper_legacy_cand),),
+    )
+    assert targets == []
+
+
+def test_build_refresh_steps_emits_paper_only_review_steps(tmp_path):
+    """End-to-end: a paper-only date with no live session produces a
+    `daily_human_review_paper:DATE` step in the refresh plan."""
+    live_sessions = tmp_path / "live_sessions"
+    paper_legacy_sessions = tmp_path / "paper_trading" / "sessions"
+    paper_legacy_cand = tmp_path / "paper_trading" / "candidate_universe"
+    _touch(paper_legacy_sessions / "2026-05-29_session.json")
+    _touch(paper_legacy_cand / "2026-05-29_candidate_rollup.json")
+
+    config = _minimal_config(
+        tmp_path,
+        sessions_dir=live_sessions,
+        refresh_daily_reviews=True,
+        run_walk_forward=False,
+    )
+
+    # Monkeypatch the module-level paper roots so we don't probe the
+    # real repo's data dir from inside a tmp_path test.
+    orig_roots = rdr.DEFAULT_PAPER_REVIEW_ROOTS
+    rdr.DEFAULT_PAPER_REVIEW_ROOTS = (
+        (paper_legacy_sessions, paper_legacy_cand),
+    )
+    try:
+        steps = rdr.build_refresh_steps(config, [], "2026-05-29")
+    finally:
+        rdr.DEFAULT_PAPER_REVIEW_ROOTS = orig_roots
+
+    names = [s.name for s in steps]
+    assert "daily_human_review_paper:2026-05-29" in names
+    [step] = [s for s in steps if s.name == "daily_human_review_paper:2026-05-29"]
+    cmd = step.command
+    # --sessions-dir + --candidate-dir must be passed so the build
+    # script reads the paper sessions instead of falling back to live.
+    assert "--sessions-dir" in cmd
+    assert "--candidate-dir" in cmd
+    assert str(paper_legacy_sessions) in cmd
+    assert str(paper_legacy_cand) in cmd
+
+
 def test_build_refresh_steps_includes_canonical_tables_and_research_outputs(tmp_path):
     sessions = tmp_path / "sessions"
     candidates = tmp_path / "candidates"
