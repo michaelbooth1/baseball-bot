@@ -45,6 +45,7 @@ def _make_fake_engine(
     under_calibrator_returns: float | None = None,
     edge_threshold: float = 0.10,
     under_gate_overrides: Dict[str, Any] | None = None,
+    under_calibration_mode: str = "enforce",
 ) -> Any:
     """Build a duck-typed engine for the helper.
 
@@ -72,6 +73,11 @@ def _make_fake_engine(
             calibrate=lambda raw, model_family=None: under_calibrator_returns,
         )
     engine._under_prob_calibrator = under_cal
+    # 2026-05-30: UNDER calibration mode. `enforce` mirrors prior
+    # default behavior (apply calibrator if loaded); `off` skips and
+    # uses raw (1 - over_fv_raw); `shadow` computes calibrated for
+    # logging but uses raw for decisions.
+    engine._under_calibration_mode = under_calibration_mode
 
     # Permissive UNDER gate defaults: tuned so the existing tests
     # (which only assert on gate_min_edge / no_liquidity) are not
@@ -349,6 +355,113 @@ class UnderCandidateEmissionTests(unittest.TestCase):
         # No calibrator -> fair_value == fair_value_raw == 1 - 0.78
         self.assertAlmostEqual(under["fair_value"], 0.22)
         self.assertAlmostEqual(under["fair_value_raw"], 0.22)
+
+
+class UnderCalibrationModeTests(unittest.TestCase):
+    """2026-05-30: --under-calibration-mode {enforce, shadow, off} controls
+    whether the (degenerate) UNDER calibrator's value or the raw complement
+    drives `fair_value`. The mode tag is persisted on every UNDER row."""
+
+    def test_enforce_mode_uses_calibrator_value(self):
+        # over_fv_raw=0.78 -> raw under=0.22. Calibrator returns 0.55.
+        # enforce: fair_value should be the calibrated value (0.55).
+        engine = _make_fake_engine(
+            mode="shadow",
+            under_calibrator_returns=0.55,
+            under_calibration_mode="enforce",
+        )
+        ctx = _make_fake_ctx(under_best_ask=0.35)
+        sp._maybe_emit_under_candidate(
+            engine, ctx, _make_fv_phase(fair_value_raw=0.78), {"bet_id": "x"},
+        )
+        under = engine.recorded_decisions[0]
+        self.assertAlmostEqual(under["fair_value_raw"], 0.22)
+        self.assertAlmostEqual(under["fair_value"], 0.55)
+        self.assertEqual(under["under_calibration_mode"], "enforce")
+        self.assertAlmostEqual(
+            under["fair_value_under_calibrated_shadow"], 0.55,
+        )
+
+    def test_off_mode_skips_calibrator_and_uses_raw(self):
+        # enforce would return 0.55, but mode=off means we should never
+        # consult the calibrator at all -- fair_value = 1 - over_fv_raw.
+        engine = _make_fake_engine(
+            mode="shadow",
+            under_calibrator_returns=0.55,
+            under_calibration_mode="off",
+        )
+        ctx = _make_fake_ctx(under_best_ask=0.35)
+        sp._maybe_emit_under_candidate(
+            engine, ctx, _make_fv_phase(fair_value_raw=0.78), {"bet_id": "x"},
+        )
+        under = engine.recorded_decisions[0]
+        self.assertAlmostEqual(under["fair_value_raw"], 0.22)
+        self.assertAlmostEqual(under["fair_value"], 0.22)  # raw, not 0.55
+        self.assertEqual(under["under_calibration_mode"], "off")
+        # Production wiring loads no calibrator in off mode -> no shadow
+        # field. The helper tolerates a calibrator being present in
+        # tests but still must not apply it; the shadow value MAY be
+        # present (computed for free) but must not affect fair_value.
+        self.assertAlmostEqual(under["fair_value"], under["fair_value_raw"])
+
+    def test_shadow_mode_logs_calibrated_but_uses_raw(self):
+        # Calibrator returns 0.55 but mode=shadow keeps fair_value
+        # equal to raw (0.22) and logs the calibrated value alongside.
+        engine = _make_fake_engine(
+            mode="shadow",
+            under_calibrator_returns=0.55,
+            under_calibration_mode="shadow",
+        )
+        ctx = _make_fake_ctx(under_best_ask=0.35)
+        sp._maybe_emit_under_candidate(
+            engine, ctx, _make_fv_phase(fair_value_raw=0.78), {"bet_id": "x"},
+        )
+        under = engine.recorded_decisions[0]
+        self.assertAlmostEqual(under["fair_value_raw"], 0.22)
+        self.assertAlmostEqual(under["fair_value"], 0.22)
+        self.assertEqual(under["under_calibration_mode"], "shadow")
+        self.assertAlmostEqual(
+            under["fair_value_under_calibrated_shadow"], 0.55,
+        )
+
+    def test_off_mode_unblocks_min_edge_when_calibrator_would_pancake(self):
+        """The whole point of off-mode: when the calibrator would
+        collapse every FV to ~0.30 (today's degenerate Platt), the off
+        path uses raw (1 - over_fv_raw) so a real edge signal makes it
+        through gate_min_edge."""
+        # over_fv_raw=0.50 -> raw under FV=0.50. ask=0.30 -> edge=0.20.
+        # Calibrator pancakes to 0.30 -> edge=0.00 (below 0.10) -> SKIP.
+        # off-mode should ignore that and produce a shadow_under pass.
+        engine = _make_fake_engine(
+            mode="shadow",
+            under_calibrator_returns=0.30,  # the pancake value
+            under_calibration_mode="off",
+            edge_threshold=0.10,
+        )
+        ctx = _make_fake_ctx(under_best_ask=0.30)
+        sp._maybe_emit_under_candidate(
+            engine, ctx, _make_fv_phase(fair_value_raw=0.50), {"bet_id": "x"},
+        )
+        under = engine.recorded_decisions[0]
+        self.assertEqual(under["decision"], "shadow_under")
+        self.assertAlmostEqual(under["edge"], 0.20, places=5)
+
+    def test_enforce_mode_blocks_at_min_edge_when_calibrator_pancakes(self):
+        """Same configuration as the off-mode test, but in enforce mode
+        the pancake'd 0.30 FV produces zero edge -> gate_min_edge."""
+        engine = _make_fake_engine(
+            mode="shadow",
+            under_calibrator_returns=0.30,
+            under_calibration_mode="enforce",
+            edge_threshold=0.10,
+        )
+        ctx = _make_fake_ctx(under_best_ask=0.30)
+        sp._maybe_emit_under_candidate(
+            engine, ctx, _make_fv_phase(fair_value_raw=0.50), {"bet_id": "x"},
+        )
+        under = engine.recorded_decisions[0]
+        self.assertEqual(under["decision"], "skip")
+        self.assertEqual(under["decision_reason"], "gate_min_edge")
 
 
 class LiveEngineUnderEmissionBridgeTests(unittest.TestCase):

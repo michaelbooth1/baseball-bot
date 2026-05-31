@@ -188,8 +188,14 @@ DEFAULT_LINE_HIGH_FV_BLOCK_LINES = "5.5"
 # to invent one. Re-tune both from paper UNDER data, not by mirror.
 DEFAULT_UNDER_MIN_INNING            = DEFAULT_MIN_INNING            # 4
 DEFAULT_UNDER_MIN_INNING_HIGH_LINE  = DEFAULT_MIN_INNING_HIGH_LINE  # 5
-DEFAULT_UNDER_MIN_ENTRY_ASK           = 0.30   # NOT mirrored -- complementary-token coordinate, see block above
-DEFAULT_UNDER_MIN_ENTRY_ASK_HIGH_LINE = 0.30   # NOT mirrored -- no evidence for a high-line bump on UNDER yet
+DEFAULT_UNDER_MIN_ENTRY_ASK           = 0.20   # NOT mirrored -- complementary-token coordinate, see block above
+DEFAULT_UNDER_MIN_ENTRY_ASK_HIGH_LINE = 0.20   # NOT mirrored -- no evidence for a high-line bump on UNDER yet
+# 2026-05-30 (post-paper-day audit): tightened from 0.30 -> 0.20. The
+# 2026-05-30 M_under_paper distribution had median ask 0.26 / p25 0.20,
+# so 0.30 still blocked ~65% of UNDER candidates structurally. 0.20
+# rejects truly thin sub-20c books but admits the realistic UNDER
+# trading zone. Paired with --under-calibration-mode off in
+# M_under_paper to unblock paper UNDER bet placement for data-gathering.
 DEFAULT_UNDER_MAX_BASE_FV           = DEFAULT_MAX_BASE_FV           # 0.99
 DEFAULT_UNDER_FV_ASK_GAP_MAX        = DEFAULT_FV_ASK_GAP_MAX        # 0.26
 DEFAULT_UNDER_FV_ASK_GAP_MIN_INNING = DEFAULT_FV_ASK_GAP_MIN_INNING # 7
@@ -248,6 +254,32 @@ DEFAULT_GATE_RELAX_AB_FRACTION = 0.50
 
 # Probability calibration rollout (artifact fitted from unified dataset).
 DEFAULT_PROB_CALIBRATION_MODE = "enforce"  # off|shadow|enforce
+
+# 2026-05-30: UNDER probability-calibration mode. Distinct from
+# DEFAULT_PROB_CALIBRATION_MODE (which is OVER-only). The UNDER
+# calibrator is flagged `unreliable_pre_refit`, and the 2026-05-30
+# audit found its `score_event_transition` Platt fit is in fact
+# *degenerate*: slope a=0.043, intercept b=-0.829 -> sigmoid
+# collapses to ~0.30 regardless of input. Effect: ~0 UNDER paper
+# bets clear `gate_min_edge` because every FV pancakes to 0.30.
+#
+#   `enforce`: apply the UNDER calibrator to (1 - over_fv_raw).
+#              Current production semantics; correct once the
+#              calibrator is refit on enough labeled UNDER outcomes.
+#   `shadow`:  load + compute the calibrated value, log it on the
+#              candidate row as `fair_value_under_calibrated_shadow`,
+#              but use the raw (1 - over_fv_raw) for `fair_value` /
+#              edge / gates. Use this to observe calibrator output
+#              without letting it block trades.
+#   `off`:     do NOT load the calibrator. UNDER FV = 1 - over_fv_raw.
+#              The data-gathering stop-gap until the UNDER calibrator
+#              can be refit on the post-2026-05-30 outcomes.
+#
+# The default stays `enforce` for back-compat. M_under_paper preset
+# flips it to `off` so paper UNDER bets actually fire and accumulate
+# the outcome data we need to refit the calibrator.
+DEFAULT_UNDER_CALIBRATION_MODE = "enforce"  # off|shadow|enforce
+UNDER_CALIBRATION_MODES = ("off", "shadow", "enforce")
 # Band-gated enforce: only overwrite raw FV when raw >= this threshold.
 # Below the threshold, the calibrator is still scored (for observability)
 # but raw FV is kept (shadow-like behavior). 2026-05-19 audit found the
@@ -641,6 +673,24 @@ def parse_trade_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace]
                    help=f"Gate 1 shadow: relax min_inning_high_line by this many innings (default: {DEFAULT_SHADOW_RELAXED_MIN_INNING_HIGH_LINE_OFFSET}).")
     p.add_argument("--prob-calibration-mode", choices=["off", "shadow", "enforce"], default=DEFAULT_PROB_CALIBRATION_MODE,
                    help=f"Probability calibration mode for fair_value (default: {DEFAULT_PROB_CALIBRATION_MODE}).")
+    p.add_argument(
+        "--under-calibration-mode",
+        choices=list(UNDER_CALIBRATION_MODES),
+        default=DEFAULT_UNDER_CALIBRATION_MODE,
+        help=(
+            "UNDER probability calibration mode. `enforce` (default): "
+            "apply the UNDER calibrator to (1 - over_fv_raw). `shadow`: "
+            "load + compute the calibrated value, log it on the "
+            "candidate row as fair_value_under_calibrated_shadow, but "
+            "use the raw (1 - over_fv_raw) for fair_value / edge / "
+            "gates. `off`: do NOT load the UNDER calibrator; UNDER FV "
+            "= 1 - over_fv_raw uncalibrated. Use `off` when the UNDER "
+            "calibrator is degenerate (2026-05-30 audit: Platt slope "
+            "a=0.043 pancakes every FV to ~0.30 -> 0 paper UNDER bets "
+            "clear gate_min_edge). M_under_paper preset sets `off` so "
+            "paper UNDER bets fire and accumulate refit-evidence."
+        ),
+    )
     # 2026-05-21: paper-mode startup refresh wiring. Live engine has
     # had startup-refresh since 2026-05-08, but paper (signal_engine.main)
     # never triggered it -- so when the operator ran paper-only for 2+

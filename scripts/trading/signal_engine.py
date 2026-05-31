@@ -409,8 +409,28 @@ class SignalEngine(MLBPolymarketMonitor):
         self._under_emission_mode = (
             "shadow" if self._under_mode in {"paper", "live"} else self._under_mode
         )
+        # 2026-05-30: UNDER calibration mode. `enforce` (default) loads
+        # and applies the calibrator. `shadow` loads, computes the
+        # calibrated value for logging, but uses raw FV for decisions.
+        # `off` skips loading entirely -- UNDER FV = 1 - over_fv_raw.
+        # The `off` path is the data-gathering stop-gap until the
+        # UNDER calibrator can be refit on a non-degenerate sample.
+        raw_under_cal_mode = (
+            getattr(trade_args, "under_calibration_mode", "enforce") or "enforce"
+        )
+        self._under_calibration_mode = str(raw_under_cal_mode).strip().lower()
+        if self._under_calibration_mode not in {"off", "shadow", "enforce"}:
+            LOGGER.warning(
+                "Unknown UNDER calibration mode '%s'; forcing enforce.",
+                self._under_calibration_mode,
+            )
+            self._under_calibration_mode = "enforce"
+
         self._under_prob_calibrator: Optional[ProbabilityCalibrator] = None
-        if self._under_mode in {"shadow", "paper", "live"}:
+        if (
+            self._under_mode in {"shadow", "paper", "live"}
+            and self._under_calibration_mode != "off"
+        ):
             under_cal_path = Path(
                 getattr(trade_args, "prob_calibration_under_path",
                         DEFAULT_PROB_CALIBRATION_UNDER_PATH)
@@ -420,20 +440,20 @@ class SignalEngine(MLBPolymarketMonitor):
                     under_cal_path,
                 )
                 LOGGER.warning(
-                    "UNDER mode: %s -- UNDER CALIBRATOR IS UNRELIABLE. "
-                    "Loaded from %s (method=%s), but the 2026-05-22 "
-                    "debut day showed FV severely off: DET@BAL O7.5 "
-                    "inn4 model said P(under)=0.73, game ended at 11 "
-                    "runs. All 17 emitted UNDER candidates would have "
-                    "lost full stake at $10/bet = $170. Treat "
-                    "shadow_under counterfactual P&L with extreme "
-                    "skepticism; do NOT promote to live until "
-                    "calibrator is refit on a much larger UNDER sample. "
-                    "Candidate rows stamped "
+                    "UNDER mode: %s (calibration: %s) -- UNDER "
+                    "CALIBRATOR IS UNRELIABLE. Loaded from %s "
+                    "(method=%s), but the 2026-05-22 debut day showed "
+                    "FV severely off: DET@BAL O7.5 inn4 model said "
+                    "P(under)=0.73, game ended at 11 runs. The "
+                    "2026-05-30 audit further found the Platt fit is "
+                    "degenerate (slope a~0.04, pancakes every FV to "
+                    "~0.30). Use --under-calibration-mode off to "
+                    "bypass. Candidate rows stamped "
                     "shadow_under_calibration_status="
                     "unreliable_pre_refit so downstream cohort blocks "
                     "can filter.",
                     self._under_mode,
+                    self._under_calibration_mode,
                     under_cal_path,
                     self._under_prob_calibrator.method,
                 )
@@ -448,6 +468,15 @@ class SignalEngine(MLBPolymarketMonitor):
                     under_cal_path, exc,
                 )
                 self._under_prob_calibrator = None
+        elif self._under_mode in {"shadow", "paper", "live"}:
+            LOGGER.warning(
+                "UNDER mode: %s; --under-calibration-mode=off -- "
+                "skipping UNDER calibrator load. UNDER FV = "
+                "1 - over_fv_raw (uncalibrated). This is the 2026-05-30 "
+                "data-gathering stop-gap; switch back to enforce once "
+                "the UNDER calibrator is refit.",
+                self._under_mode,
+            )
 
         # Phase C C1+C2+C3+C4 shadow (2026-05-17). Two-sided quote
         # engine. Default `off`; operator opts in via

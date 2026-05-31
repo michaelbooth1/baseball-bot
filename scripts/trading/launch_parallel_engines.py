@@ -221,6 +221,13 @@ PRESETS: Dict[str, List[str]] = {
         "--stage1-alt-a-scope-mode", "enforce",
         "--quote-engine-mode", "shadow",
         "--under-mode", "paper",
+        # 2026-05-30: UNDER calibrator is degenerate (Platt slope ~0.04
+        # collapses every FV to ~0.30 -> 0 UNDER paper bets clear
+        # gate_min_edge). Run with calibration off so UNDER FV =
+        # 1 - over_fv_raw varies with game state and bets actually
+        # fire. Flip back to `enforce` once the calibrator is refit on
+        # post-2026-05-30 outcomes.
+        "--under-calibration-mode", "off",
     ],
 }
 

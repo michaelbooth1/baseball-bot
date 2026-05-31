@@ -1,9 +1,9 @@
 {
-  "built_at": "2026-05-29T18:16:39.127141+00:00",
+  "built_at": "2026-05-30T18:57:51.199719+00:00",
   "season": 2026,
   "min_ip_threshold": 5.0,
   "mlb_avg_era": 4.2,
-  "pitcher_count": 71,
+  "pitcher_count": 73,
   "pitchers": {
     "650911": {
       "name": "Cristopher S\u00e1nchez",
@@ -19,9 +19,9 @@
     },
     "607259": {
       "name": "Nick Martinez",
-      "era": 1.51,
-      "ip": 59.7,
-      "gs": 10
+      "era": 1.62,
+      "ip": 66.7,
+      "gs": 11
     },
     "694819": {
       "name": "Jacob Misiorowski",
@@ -65,12 +65,6 @@
       "ip": 72.0,
       "gs": 12
     },
-    "676974": {
-      "name": "Max Meyer",
-      "era": 2.52,
-      "ip": 60.7,
-      "gs": 11
-    },
     "667755": {
       "name": "Jos\u00e9 Soriano",
       "era": 2.65,
@@ -107,6 +101,12 @@
       "ip": 64.7,
       "gs": 11
     },
+    "680736": {
+      "name": "Justin Wrobleski",
+      "era": 2.87,
+      "ip": 62.7,
+      "gs": 9
+    },
     "694973": {
       "name": "Paul Skenes",
       "era": 2.89,
@@ -124,6 +124,12 @@
       "era": 2.95,
       "ip": 61.0,
       "gs": 11
+    },
+    "676974": {
+      "name": "Max Meyer",
+      "era": 2.97,
+      "ip": 66.7,
+      "gs": 12
     },
     "700241": {
       "name": "Michael McGreevy",
@@ -187,27 +193,15 @@
     },
     "642547": {
       "name": "Freddy Peralta",
-      "era": 3.52,
-      "ip": 61.3,
-      "gs": 11
-    },
-    "669923": {
-      "name": "George Kirby",
-      "era": 3.54,
-      "ip": 68.7,
-      "gs": 11
+      "era": 3.55,
+      "ip": 66.0,
+      "gs": 12
     },
     "701542": {
       "name": "Will Warren",
       "era": 3.55,
       "ip": 58.3,
       "gs": 11
-    },
-    "676282": {
-      "name": "Joey Cantillo",
-      "era": 3.57,
-      "ip": 58.0,
-      "gs": 12
     },
     "676917": {
       "name": "Cade Cavalli",
@@ -239,11 +233,11 @@
       "ip": 65.0,
       "gs": 11
     },
-    "669467": {
-      "name": "Andre Pallante",
-      "era": 3.76,
-      "ip": 55.0,
-      "gs": 10
+    "669923": {
+      "name": "George Kirby",
+      "era": 3.77,
+      "ip": 74.0,
+      "gs": 12
     },
     "594798": {
       "name": "Jacob deGrom",
@@ -287,16 +281,16 @@
       "ip": 68.7,
       "gs": 11
     },
+    "669022": {
+      "name": "MacKenzie Gore",
+      "era": 3.96,
+      "ip": 61.3,
+      "gs": 12
+    },
     "608372": {
       "name": "Tomoyuki Sugano",
       "era": 4.01,
       "ip": 58.3,
-      "gs": 11
-    },
-    "684007": {
-      "name": "Shota Imanaga",
-      "era": 4.04,
-      "ip": 64.7,
       "gs": 11
     },
     "605488": {
@@ -307,15 +301,21 @@
     },
     "622663": {
       "name": "Luis Severino",
-      "era": 4.23,
-      "ip": 61.7,
+      "era": 4.16,
+      "ip": 62.7,
+      "gs": 12
+    },
+    "669467": {
+      "name": "Andre Pallante",
+      "era": 4.19,
+      "ip": 58.0,
       "gs": 11
     },
-    "664285": {
-      "name": "Framber Valdez",
-      "era": 4.28,
-      "ip": 61.0,
-      "gs": 11
+    "684007": {
+      "name": "Shota Imanaga",
+      "era": 4.37,
+      "ip": 70.0,
+      "gs": 12
     },
     "666200": {
       "name": "Jes\u00fas Luzardo",
@@ -328,6 +328,12 @@
       "era": 4.4,
       "ip": 61.3,
       "gs": 11
+    },
+    "664285": {
+      "name": "Framber Valdez",
+      "era": 4.41,
+      "ip": 63.3,
+      "gs": 12
     },
     "669358": {
       "name": "Shane Baz",
@@ -407,6 +413,18 @@
       "ip": 61.3,
       "gs": 11
     },
+    "668678": {
+      "name": "Zac Gallen",
+      "era": 5.16,
+      "ip": 59.3,
+      "gs": 12
+    },
+    "677944": {
+      "name": "Slade Cecconi",
+      "era": 5.25,
+      "ip": 61.7,
+      "gs": 12
+    },
     "592791": {
       "name": "Jameson Taillon",
       "era": 5.37,
@@ -419,17 +437,11 @@
       "ip": 63.3,
       "gs": 11
     },
-    "605400": {
-      "name": "Aaron Nola",
-      "era": 5.72,
-      "ip": 56.7,
-      "gs": 11
-    },
-    "641816": {
-      "name": "Tyler Mahle",
-      "era": 6.04,
-      "ip": 56.7,
-      "gs": 11
+    "678394": {
+      "name": "Brayan Bello",
+      "era": 5.63,
+      "ip": 56.0,
+      "gs": 7
     }
   }
 }

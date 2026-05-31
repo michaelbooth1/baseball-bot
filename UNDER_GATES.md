@@ -46,10 +46,26 @@ entirely, so UNDER never sees blowout spots. OVER's post-FV gates
 
 ## UNDER's own gate stack · `_maybe_emit_under_candidate`
 
-UNDER FV is the complement of the OVER raw FV run through the **UNDER
-calibrator**: `under_fv = under_calibrator(1 − over_fv_raw)`. The UNDER ask /
-bid come from the paired `under_no` book; `under_edge = under_fv − under_ask`.
-Stage-2 / Stage-3 deltas and base FV are the negated / complemented OVER values.
+UNDER FV is the complement of the OVER raw FV optionally run through the
+**UNDER calibrator**, depending on `--under-calibration-mode`:
+
+| mode | `under_fv` | notes |
+|---|---|---|
+| `enforce` (default) | `under_calibrator(1 − over_fv_raw)` | Current production semantics. Correct once the calibrator is refit. |
+| `shadow` | `1 − over_fv_raw` (raw used for decisions) | Calibrated value is computed and logged as `fair_value_under_calibrated_shadow` for observability. |
+| `off` | `1 − over_fv_raw` | Calibrator is not loaded. No shadow logging. Data-gathering stop-gap. |
+
+The UNDER ask / bid come from the paired `under_no` book;
+`under_edge = under_fv − under_ask`. Stage-2 / Stage-3 deltas and base FV are
+the negated / complemented OVER values.
+
+**2026-05-30 audit:** the UNDER calibrator's dominant `score_event_transition`
+Platt fit is **degenerate** (slope `a ≈ 0.04`), so under `enforce` every UNDER
+FV pancakes to ~0.30 regardless of game state. Effect: ~0 UNDER paper bets
+clear `gate_min_edge`. The `M_under_paper` preset is shipped with
+`--under-calibration-mode off` until the calibrator can be refit on
+post-2026-05-30 outcomes. See [signal_config.py](scripts/trading/signal_config.py)
+for the full reasoning.
 
 If the `under_no` book has no ask at the tick → `gate_no_under_liquidity`
 (skip, coverage tracking).
@@ -60,7 +76,7 @@ stops UNDER for the tick.
 | # | reason | Fires when | Default(s) | Mirror of |
 |---|---|---|---|---|
 | U1 | `gate_under_min_inning` | line < 8.5: `inning < 4`; line ≥ 8.5: `inning < 5` | `under_min_inning=4`, `under_min_inning_high_line=5` | OVER gate 1 (variance reduction — symmetric) |
-| U2 | `gate_under_min_entry_ask` | `under_ask < 0.30` (std) / `< 0.30` (high line) | `under_min_entry_ask=0.30`, `under_min_entry_ask_high_line=0.30` | **NOT mirrored** — see post-mortem below |
+| U2 | `gate_under_min_entry_ask` | `under_ask < 0.20` (std) / `< 0.20` (high line) | `under_min_entry_ask=0.20`, `under_min_entry_ask_high_line=0.20` | **NOT mirrored** — see post-mortem below |
 | U3 | `gate_under_max_base_fv` | `under_base_fv ≥ 0.99` | `under_max_base_fv=0.99` | OVER gate 8f (FV saturation / phantom no-score) |
 | U4 | `gate_under_extreme_edge` | `under_edge > 0.22` | `under_extreme_edge_max=0.22` | OVER `gate_extreme_edge` (TR19 phantom protection, symmetric) |
 | U5 | `gate_under_fv_ask_gap` | `under_edge > 0.26` AND `inning ≥ 7` | `under_fv_ask_gap_max=0.26`, `under_fv_ask_gap_min_inning=7` | OVER gate 8g (late large-gap = market disagreement) |
@@ -88,12 +104,14 @@ Evidence (2026-05-29 paper session, `--under-mode paper`):
 - UNDER ask distribution: `min=0.04 median=0.23 p75=0.29 max=0.56`.
 - Exactly **1 of 877** would have passed the mirrored 0.55 floor.
 
-The U2 floor was lowered to 0.30 — still rejects sub-30¢ "UNDER is dead"
-books where noise dominates, but unblocks the realistic UNDER trading zone.
-The high-line variant intentionally does NOT bump up the way OVER's does
-(UNDER ask is not a clean monotonic function of line, and there is no
-empirical justification yet). Re-tune both floors from paper UNDER data,
-not by mirror.
+The U2 floor was lowered to **0.20** (2026-05-30, tightened from the
+initial 0.30 fix after the M_under_paper day-1 distribution showed median
+ask 0.26 / p25 0.20 — 0.30 still blocked ~65% structurally). Still rejects
+sub-20¢ "UNDER is dead" books where noise dominates, but admits the
+realistic UNDER trading zone. The high-line variant intentionally does NOT
+bump up the way OVER's does (UNDER ask is not a clean monotonic function
+of line, and there is no empirical justification yet). Re-tune both floors
+from paper UNDER data, not by mirror.
 
 The `under_gate_bottleneck_audit` step in the daily refresh
 (`scripts/analysis/audit_under_gate_bottleneck.py`) now flags any session

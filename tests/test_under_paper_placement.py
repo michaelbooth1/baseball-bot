@@ -630,13 +630,23 @@ class UnderModeFlagTests(unittest.TestCase):
         # 2026-05-30: NOT mirrored to OVER. UNDER ask floor lives in
         # the complementary-token price coordinate; mirroring 0.55/0.60
         # blocked ~877/877 UNDER candidates on the 2026-05-29 paper
-        # session. See signal_config.py block above DEFAULT_UNDER_MIN_ENTRY_ASK.
-        self.assertAlmostEqual(ta.under_min_entry_ask, 0.30)
-        self.assertAlmostEqual(ta.under_min_entry_ask_high_line, 0.30)
+        # session. Lowered 0.30 -> 0.20 after the M_under_paper day-1
+        # distribution still pancaked at 0.30 (median ask 0.26 / p25 0.20).
+        # See signal_config.py block above DEFAULT_UNDER_MIN_ENTRY_ASK.
+        self.assertAlmostEqual(ta.under_min_entry_ask, 0.20)
+        self.assertAlmostEqual(ta.under_min_entry_ask_high_line, 0.20)
         self.assertAlmostEqual(ta.under_max_base_fv, 0.99)
         self.assertAlmostEqual(ta.under_fv_ask_gap_max, 0.26)
         self.assertEqual(ta.under_fv_ask_gap_min_inning, 7)
         self.assertAlmostEqual(ta.under_extreme_edge_max, 0.22)
+        # 2026-05-30: UNDER calibration mode defaults to `enforce` for
+        # back-compat; M_under_paper preset overrides to `off`.
+        self.assertEqual(ta.under_calibration_mode, "enforce")
+
+    def test_under_calibration_mode_flag_accepts_three_modes(self):
+        for mode in ("off", "shadow", "enforce"):
+            ta = self._parse("--under-calibration-mode", mode)
+            self.assertEqual(ta.under_calibration_mode, mode)
 
     def test_under_mode_live_is_accepted(self):
         """2026-05-28: real-money UNDER trading."""

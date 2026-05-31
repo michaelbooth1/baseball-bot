@@ -371,20 +371,27 @@ def _maybe_emit_under_candidate(
             over_fv_raw_f = float(over_fv_raw)
         except (TypeError, ValueError):
             return
-        # UNDER raw = 1 - OVER raw (pre-calibration). Run through the
-        # UNDER calibrator if loaded; otherwise pass through
-        # untouched (logged as identity).
+        # UNDER raw = 1 - OVER raw (pre-calibration). Apply the UNDER
+        # calibrator based on under_calibration_mode:
+        #   enforce: calibrated value is used as under_fv (when calibrator loaded).
+        #   shadow:  calibrated value is computed + logged but raw is used.
+        #   off:     calibrator is not loaded; under_fv = under_fv_raw.
         under_fv_raw = 1.0 - over_fv_raw_f
         under_cal = getattr(engine, "_under_prob_calibrator", None)
+        under_cal_mode = getattr(engine, "_under_calibration_mode", "enforce")
+        under_fv_calibrated_shadow: Optional[float] = None
         if under_cal is not None:
             try:
-                under_fv = float(under_cal.calibrate(
+                under_fv_calibrated_shadow = float(under_cal.calibrate(
                     under_fv_raw,
                     model_family=SCORE_EVENT_TRANSITION,
                 ))
             except Exception:  # noqa: BLE001
-                under_fv = under_fv_raw
+                under_fv_calibrated_shadow = None
+        if under_cal_mode == "enforce" and under_fv_calibrated_shadow is not None:
+            under_fv = under_fv_calibrated_shadow
         else:
+            # shadow + off + (enforce with calibrator load failure)
             under_fv = under_fv_raw
 
         under_best_ask = book.get("under_best_ask")
@@ -431,6 +438,14 @@ def _maybe_emit_under_candidate(
         # UNDER FV chain (mirrors OVER but on the complement side).
         under_payload["fair_value_raw"] = under_fv_raw
         under_payload["fair_value"] = under_fv
+        # 2026-05-30: record which calibration mode produced this FV.
+        # shadow + off both leave fair_value = fair_value_raw, but the
+        # mode tag lets downstream analysis bucket the two cleanly.
+        under_payload["under_calibration_mode"] = under_cal_mode
+        if under_fv_calibrated_shadow is not None:
+            under_payload["fair_value_under_calibrated_shadow"] = (
+                under_fv_calibrated_shadow
+            )
         under_payload["base_fair_value"] = 1.0 - float(
             over_fv_phase.base_fair_value
         )
