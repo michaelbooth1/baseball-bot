@@ -246,6 +246,8 @@ def test_build_refresh_steps_includes_canonical_tables_and_research_outputs(tmp_
     assert fv_disagreement_wf.staleness_check is not None
     # UNDER single-gate-bottleneck guardrail (2026-05-30).
     assert "under_gate_bottleneck_audit" in names
+    # Fleet correlation diagnostic (2026-06-01).
+    assert "fleet_correlation_diagnostic" in names
     # End-of-refresh operator summary.
     assert "refresh_health_rollup" in names
 

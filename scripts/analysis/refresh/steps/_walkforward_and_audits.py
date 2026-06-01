@@ -291,6 +291,28 @@ def build_audit_research_steps(
     ))
 
     steps.append(RefreshStep(
+        name="fleet_correlation_diagnostic",
+        description=(
+            "Fleet correlation diagnostic (2026-06-01). For each recent "
+            "day, computes (a) split_density: the fraction of compared "
+            "game-line keys where the parallel paper presets disagreed "
+            "(the actual A/B signal density), and (b) "
+            "max_correlated_loss_share: the worst-day concentration of "
+            "losing bets onto a single game (e.g. 2026-05-27 had 11/12 "
+            "models lose on 824270 OVER 4.5 -> 4, a 92% correlated "
+            "loss). Surfaces both as single numbers per day so the "
+            "operator can read the multi-engine A/B's actual evidence "
+            "density at a glance. Outputs to "
+            "data/analysis_output/fleet_correlation/ and prints WARN to "
+            "stderr when max_correlated_loss_share crosses the threshold."
+        ),
+        command=[
+            _python(),
+            _script("scripts/analysis/fleet_correlation_diagnostic.py"),
+        ],
+    ))
+
+    steps.append(RefreshStep(
         name="feed_enrichment",
         description=(
             "Tier-3 offline feed enrichment (2026-05-29). Joins each "

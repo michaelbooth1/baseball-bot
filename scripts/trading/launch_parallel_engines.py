@@ -229,6 +229,26 @@ PRESETS: Dict[str, List[str]] = {
         # post-2026-05-30 outcomes.
         "--under-calibration-mode", "off",
     ],
+    # 2026-06-01: N_extreme_edge_022 A/B-tests re-enabling the TR17/TR18
+    # gate_extreme_edge=0.22 cap against today's gate-disabled production
+    # default. Live + 12 of 13 paper presets currently run with
+    # `--extreme-edge-max 1.0` (disabled, 2026-05-28 operator decision
+    # for data-gathering). The 2026-05-27 day showed 15 losses
+    # concentrated in 3 games with finals exactly 0.5 below the line
+    # (824270 OVER 4.5 -> 4; 824432 OVER 5.5 -> 5; 823626 OVER 6.5 -> 6)
+    # -- the textbook phantom-run cliff cohort the original gate was
+    # built to filter. This preset enforces the original 0.22 cap;
+    # everything else is A_current. After 30 days of paper outcomes,
+    # compare $/Bet + ROI vs A_current to decide whether to re-enable
+    # the cap in live.
+    "N_extreme_edge_022": [
+        "--prob-calibration-mode", "enforce",
+        "--stage1-shadow-empirical-mode", "shadow",
+        "--stage1-alt-a-scope-mode", "enforce",
+        "--under-emission-mode", "shadow",
+        "--quote-engine-mode", "shadow",
+        "--extreme-edge-max", "0.22",
+    ],
 }
 
 PRESET_ALIASES = {
@@ -1177,11 +1197,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # edge-shaving recommendation (enforce_min_raw 0.90 -> 0.95).
     # 2026-05-28: M_under_paper (13) -- no-risk paper mirror of live UNDER;
     # accumulates the B4 paper-UNDER validation evidence.
+    # 2026-06-01: N_extreme_edge_022 (14) -- A/B-tests re-enabling the
+    # TR17/TR18 extreme_edge_max=0.22 cap (disabled live since 2026-05-28
+    # for data-gathering posture). The 2026-05-27 paper day had 15 losses
+    # concentrated in 3 phantom-run-cliff games (finals exactly line-0.5):
+    # 824270 OVER 4.5->4, 824432 OVER 5.5->5, 823626 OVER 6.5->6. Compare
+    # vs A_current after ~30 days to decide whether to re-enable in live.
     raw_configs = args.config or [
         "A_current", "B_cal_only", "C_raw", "D_scope_only", "E_tight_edge",
         "F_no_dedup", "G_loose_edge", "H_late_innings",
         "I_extreme_018", "J_no_phantom_filter", "K_line5p5_block",
-        "L_enforce_min_raw_095", "M_under_paper",
+        "L_enforce_min_raw_095", "M_under_paper", "N_extreme_edge_022",
     ]
     configs = [_resolve_config(raw, Path(args.paper_root_prefix)) for raw in raw_configs]
 

@@ -111,18 +111,38 @@ class ParallelEnginesMvpTests(unittest.TestCase):
         self.assertEqual(e_flags[e_cal_idx + 1], "enforce")
         self.assertEqual(e_flags[e_scope_idx + 1], "enforce")
 
-    def test_thirteen_preset_default_includes_k_l_m(self):
+    def test_fourteen_preset_default_includes_k_l_m_n(self):
         """2026-05-26: K_line5p5_block. 2026-05-28: L_enforce_min_raw_095 +
-        M_under_paper; default = 13 configs."""
+        M_under_paper. 2026-06-01: N_extreme_edge_022 (A/B vs the
+        gate_extreme_edge-disabled live default). Default = 14 configs."""
         self.assertEqual(
             set(lpe.PRESETS.keys()),
             {
                 "A_current", "B_cal_only", "C_raw", "D_scope_only", "E_tight_edge",
                 "F_no_dedup", "G_loose_edge", "H_late_innings",
                 "I_extreme_018", "J_no_phantom_filter", "K_line5p5_block",
-                "L_enforce_min_raw_095", "M_under_paper",
+                "L_enforce_min_raw_095", "M_under_paper", "N_extreme_edge_022",
             },
         )
+
+    def test_n_extreme_edge_022_preset_flags(self):
+        """N_extreme_edge_022: A_current baseline + --extreme-edge-max 0.22
+        (re-enables the TR17/TR18 cap disabled in live since 2026-05-28).
+        No live-only flags; pure paper A/B."""
+        flags = lpe.PRESETS["N_extreme_edge_022"]
+        self.assertEqual(flags[flags.index("--extreme-edge-max") + 1], "0.22")
+        # Sanity: must mirror A_current's other lever choices.
+        self.assertEqual(flags[flags.index("--prob-calibration-mode") + 1], "enforce")
+        self.assertEqual(flags[flags.index("--stage1-alt-a-scope-mode") + 1], "enforce")
+        self.assertEqual(flags[flags.index("--under-emission-mode") + 1], "shadow")
+        # Must NOT carry any live-only flag.
+        for f in flags:
+            if not f.startswith("--"):
+                continue
+            self.assertNotIn(
+                f, lpe.LIVE_ONLY_ENGINE_FLAGS,
+                f"N_extreme_edge_022 contains LIVE_ONLY flag {f}",
+            )
 
     def test_m_under_paper_preset_flags(self):
         """M_under_paper: A_current baseline + --under-mode paper (paper
