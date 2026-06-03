@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-05-31T18:32:21.845588Z",
+  "generated_at_utc": "2026-06-02T11:34:27.783884Z",
   "season_type": "regular",
   "seasons_scanned": [
     "2021",
@@ -17,7 +17,7 @@
     "2023": 2.4148,
     "2024": 2.2414,
     "2025": 2.3312,
-    "2026": 2.1551
+    "2026": 2.1678
   },
   "by_park": {
     "American Family Field": {
@@ -62,12 +62,12 @@
         "shrunk_factor": 0.9195
       },
       "2026": {
-        "games": 30,
-        "hrs": 51,
-        "raw_hr_per_game": 1.7,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 0.7888,
-        "shrunk_factor": 0.8944
+        "games": 31,
+        "hrs": 52,
+        "raw_hr_per_game": 1.6774,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 0.7738,
+        "shrunk_factor": 0.885
       }
     },
     "Angel Stadium": {
@@ -112,12 +112,12 @@
         "shrunk_factor": 1.1437
       },
       "2026": {
-        "games": 27,
-        "hrs": 47,
-        "raw_hr_per_game": 1.7407,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 0.8077,
-        "shrunk_factor": 0.9089
+        "games": 28,
+        "hrs": 50,
+        "raw_hr_per_game": 1.7857,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 0.8237,
+        "shrunk_factor": 0.9149
       }
     },
     "BB&T Ballpark": {
@@ -182,12 +182,12 @@
         "shrunk_factor": 0.8197
       },
       "2026": {
-        "games": 28,
-        "hrs": 56,
-        "raw_hr_per_game": 2.0,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 0.928,
-        "shrunk_factor": 0.9653
+        "games": 30,
+        "hrs": 58,
+        "raw_hr_per_game": 1.9333,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 0.8918,
+        "shrunk_factor": 0.9459
       }
     },
     "Chase Field": {
@@ -232,12 +232,12 @@
         "shrunk_factor": 0.9775
       },
       "2026": {
-        "games": 25,
-        "hrs": 47,
-        "raw_hr_per_game": 1.88,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 0.8724,
-        "shrunk_factor": 0.942
+        "games": 26,
+        "hrs": 50,
+        "raw_hr_per_game": 1.9231,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 0.8871,
+        "shrunk_factor": 0.9476
       }
     },
     "Citi Field": {
@@ -282,12 +282,12 @@
         "shrunk_factor": 1.02
       },
       "2026": {
-        "games": 30,
-        "hrs": 55,
-        "raw_hr_per_game": 1.8333,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 0.8507,
-        "shrunk_factor": 0.9253
+        "games": 31,
+        "hrs": 58,
+        "raw_hr_per_game": 1.871,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 0.8631,
+        "shrunk_factor": 0.9304
       }
     },
     "Citizens Bank Park": {
@@ -335,9 +335,9 @@
         "games": 31,
         "hrs": 69,
         "raw_hr_per_game": 2.2258,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 1.0328,
-        "shrunk_factor": 1.0167
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 1.0268,
+        "shrunk_factor": 1.0136
       }
     },
     "Comerica Park": {
@@ -385,9 +385,9 @@
         "games": 27,
         "hrs": 41,
         "raw_hr_per_game": 1.5185,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 0.7046,
-        "shrunk_factor": 0.8601
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 0.7005,
+        "shrunk_factor": 0.8581
       }
     },
     "Coors Field": {
@@ -432,12 +432,12 @@
         "shrunk_factor": 1.0931
       },
       "2026": {
-        "games": 27,
-        "hrs": 63,
-        "raw_hr_per_game": 2.3333,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 1.0827,
-        "shrunk_factor": 1.0392
+        "games": 28,
+        "hrs": 66,
+        "raw_hr_per_game": 2.3571,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 1.0873,
+        "shrunk_factor": 1.0422
       }
     },
     "Daikin Park": {
@@ -450,12 +450,12 @@
         "shrunk_factor": 1.0239
       },
       "2026": {
-        "games": 28,
-        "hrs": 82,
-        "raw_hr_per_game": 2.9286,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 1.3589,
-        "shrunk_factor": 1.1733
+        "games": 29,
+        "hrs": 83,
+        "raw_hr_per_game": 2.8621,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 1.3203,
+        "shrunk_factor": 1.1574
       }
     },
     "Dodger Stadium": {
@@ -521,9 +521,9 @@
         "games": 2,
         "hrs": 9,
         "raw_hr_per_game": 4.5,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 2.0881,
-        "shrunk_factor": 1.068
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 2.0758,
+        "shrunk_factor": 1.0672
       }
     },
     "Fenway Park": {
@@ -571,9 +571,9 @@
         "games": 27,
         "hrs": 40,
         "raw_hr_per_game": 1.4815,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 0.6874,
-        "shrunk_factor": 0.8519
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 0.6834,
+        "shrunk_factor": 0.85
       }
     },
     "Field of Dreams": {
@@ -646,12 +646,12 @@
         "shrunk_factor": 0.85
       },
       "2026": {
-        "games": 26,
-        "hrs": 53,
-        "raw_hr_per_game": 2.0385,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 0.9459,
-        "shrunk_factor": 0.9749
+        "games": 27,
+        "hrs": 54,
+        "raw_hr_per_game": 2.0,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 0.9226,
+        "shrunk_factor": 0.9633
       }
     },
     "Gocheok Sky Dome": {
@@ -706,12 +706,12 @@
         "shrunk_factor": 1.0262
       },
       "2026": {
-        "games": 29,
-        "hrs": 94,
-        "raw_hr_per_game": 3.2414,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 1.5041,
-        "shrunk_factor": 1.2478
+        "games": 31,
+        "hrs": 101,
+        "raw_hr_per_game": 3.2581,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 1.5029,
+        "shrunk_factor": 1.2556
       }
     },
     "Guaranteed Rate Field": {
@@ -811,9 +811,9 @@
         "games": 30,
         "hrs": 62,
         "raw_hr_per_game": 2.0667,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 0.959,
-        "shrunk_factor": 0.9795
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 0.9534,
+        "shrunk_factor": 0.9767
       }
     },
     "London Stadium": {
@@ -928,12 +928,12 @@
         "shrunk_factor": 0.9668
       },
       "2026": {
-        "games": 27,
-        "hrs": 82,
-        "raw_hr_per_game": 3.037,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 1.4092,
-        "shrunk_factor": 1.1938
+        "games": 29,
+        "hrs": 88,
+        "raw_hr_per_game": 3.0345,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 1.3998,
+        "shrunk_factor": 1.1965
       }
     },
     "Oakland Coliseum": {
@@ -1015,9 +1015,9 @@
         "games": 27,
         "hrs": 46,
         "raw_hr_per_game": 1.7037,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 0.7905,
-        "shrunk_factor": 0.9008
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 0.7859,
+        "shrunk_factor": 0.8986
       }
     },
     "Oriole Park at Camden Yards": {
@@ -1062,12 +1062,12 @@
         "shrunk_factor": 1.1663
       },
       "2026": {
-        "games": 35,
-        "hrs": 79,
-        "raw_hr_per_game": 2.2571,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 1.0474,
-        "shrunk_factor": 1.0255
+        "games": 36,
+        "hrs": 81,
+        "raw_hr_per_game": 2.25,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 1.0379,
+        "shrunk_factor": 1.0207
       }
     },
     "PNC Park": {
@@ -1112,12 +1112,12 @@
         "shrunk_factor": 0.7186
       },
       "2026": {
-        "games": 31,
-        "hrs": 67,
-        "raw_hr_per_game": 2.1613,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 1.0029,
-        "shrunk_factor": 1.0015
+        "games": 32,
+        "hrs": 71,
+        "raw_hr_per_game": 2.2188,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 1.0235,
+        "shrunk_factor": 1.0121
       }
     },
     "Petco Park": {
@@ -1165,9 +1165,9 @@
         "games": 32,
         "hrs": 62,
         "raw_hr_per_game": 1.9375,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 0.899,
-        "shrunk_factor": 0.9479
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 0.8938,
+        "shrunk_factor": 0.9452
       }
     },
     "Progressive Field": {
@@ -1212,12 +1212,12 @@
         "shrunk_factor": 0.9037
       },
       "2026": {
-        "games": 30,
-        "hrs": 56,
-        "raw_hr_per_game": 1.8667,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 0.8662,
-        "shrunk_factor": 0.9331
+        "games": 31,
+        "hrs": 57,
+        "raw_hr_per_game": 1.8387,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 0.8482,
+        "shrunk_factor": 0.9229
       }
     },
     "Rate Field": {
@@ -1230,12 +1230,12 @@
         "shrunk_factor": 0.9792
       },
       "2026": {
-        "games": 30,
-        "hrs": 70,
-        "raw_hr_per_game": 2.3333,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 1.0827,
-        "shrunk_factor": 1.0414
+        "games": 31,
+        "hrs": 71,
+        "raw_hr_per_game": 2.2903,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 1.0565,
+        "shrunk_factor": 1.0287
       }
     },
     "Rickwood Field": {
@@ -1293,9 +1293,9 @@
         "games": 30,
         "hrs": 63,
         "raw_hr_per_game": 2.1,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 0.9744,
-        "shrunk_factor": 0.9872
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 0.9687,
+        "shrunk_factor": 0.9844
       }
     },
     "Sahlen Field": {
@@ -1318,12 +1318,12 @@
         "shrunk_factor": 1.1591
       },
       "2026": {
-        "games": 26,
-        "hrs": 73,
-        "raw_hr_per_game": 2.8077,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 1.3028,
-        "shrunk_factor": 1.1406
+        "games": 27,
+        "hrs": 75,
+        "raw_hr_per_game": 2.7778,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 1.2814,
+        "shrunk_factor": 1.1333
       }
     },
     "T-Mobile Park": {
@@ -1368,12 +1368,12 @@
         "shrunk_factor": 1.02
       },
       "2026": {
-        "games": 31,
-        "hrs": 74,
-        "raw_hr_per_game": 2.3871,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 1.1077,
-        "shrunk_factor": 1.0547
+        "games": 33,
+        "hrs": 80,
+        "raw_hr_per_game": 2.4242,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 1.1183,
+        "shrunk_factor": 1.062
       }
     },
     "TD Ballpark": {
@@ -1428,12 +1428,12 @@
         "shrunk_factor": 0.9602
       },
       "2026": {
-        "games": 28,
-        "hrs": 50,
-        "raw_hr_per_game": 1.7857,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 0.8286,
-        "shrunk_factor": 0.9173
+        "games": 29,
+        "hrs": 54,
+        "raw_hr_per_game": 1.8621,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 0.859,
+        "shrunk_factor": 0.9307
       }
     },
     "Tokyo Dome": {
@@ -1480,12 +1480,12 @@
         "shrunk_factor": 0.9696
       },
       "2026": {
-        "games": 26,
-        "hrs": 55,
-        "raw_hr_per_game": 2.1154,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 0.9816,
-        "shrunk_factor": 0.9914
+        "games": 28,
+        "hrs": 64,
+        "raw_hr_per_game": 2.2857,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 1.0544,
+        "shrunk_factor": 1.0263
       }
     },
     "Truist Park": {
@@ -1533,19 +1533,19 @@
         "games": 27,
         "hrs": 51,
         "raw_hr_per_game": 1.8889,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 0.8765,
-        "shrunk_factor": 0.9415
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 0.8713,
+        "shrunk_factor": 0.9391
       }
     },
     "UNIQLO Field at Dodger Stadium": {
       "2026": {
-        "games": 30,
-        "hrs": 75,
-        "raw_hr_per_game": 2.5,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 1.16,
-        "shrunk_factor": 1.08
+        "games": 31,
+        "hrs": 79,
+        "raw_hr_per_game": 2.5484,
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 1.1756,
+        "shrunk_factor": 1.0892
       }
     },
     "Wrigley Field": {
@@ -1593,9 +1593,9 @@
         "games": 29,
         "hrs": 70,
         "raw_hr_per_game": 2.4138,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 1.12,
-        "shrunk_factor": 1.059
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 1.1135,
+        "shrunk_factor": 1.0558
       }
     },
     "Yankee Stadium": {
@@ -1643,9 +1643,9 @@
         "games": 25,
         "hrs": 68,
         "raw_hr_per_game": 2.72,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 1.2621,
-        "shrunk_factor": 1.1191
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 1.2547,
+        "shrunk_factor": 1.1158
       }
     },
     "loanDepot park": {
@@ -1693,9 +1693,9 @@
         "games": 33,
         "hrs": 52,
         "raw_hr_per_game": 1.5758,
-        "league_hr_per_game": 2.1551,
-        "raw_factor": 0.7312,
-        "shrunk_factor": 0.8592
+        "league_hr_per_game": 2.1678,
+        "raw_factor": 0.7269,
+        "shrunk_factor": 0.8569
       }
     }
   }

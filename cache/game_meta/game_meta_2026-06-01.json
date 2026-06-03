@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "date": "2026-06-01",
+  "generated_at_utc": "2026-06-01T19:53:40Z",
+  "coverage": {
+    "scheduled_games": 9,
+    "games_with_umpire": 4
+  },
+  "warnings": [],
+  "games": [
+    {
+      "game_pk": 822974,
+      "hp_umpire_id": 483564,
+      "hp_umpire_name": "Dan Bellino",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 483564,
+          "name": "Dan Bellino"
+        },
+        {
+          "type": "First Base",
+          "id": 483919,
+          "name": "Mark Ripperger"
+        },
+        {
+          "type": "Second Base",
+          "id": 658292,
+          "name": "Derek Thomas"
+        },
+        {
+          "type": "Third Base",
+          "id": 605670,
+          "name": "Dan Merzel"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 822730,
+      "hp_umpire_id": 427554,
+      "hp_umpire_name": "Jim Wolf",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 427554,
+          "name": "Jim Wolf"
+        },
+        {
+          "type": "First Base",
+          "id": 623945,
+          "name": "Alex MacKay"
+        },
+        {
+          "type": "Second Base",
+          "id": 484198,
+          "name": "Alan Porter"
+        },
+        {
+          "type": "Third Base",
+          "id": 577468,
+          "name": "Roberto Ortiz"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824510,
+      "hp_umpire_id": 691042,
+      "hp_umpire_name": "Willie Traynor",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 691042,
+          "name": "Willie Traynor"
+        },
+        {
+          "type": "First Base",
+          "id": 427164,
+          "name": "Andy Fletcher"
+        },
+        {
+          "type": "Second Base",
+          "id": 484183,
+          "name": "Cory Blaser"
+        },
+        {
+          "type": "Third Base",
+          "id": 605673,
+          "name": "Alex Tosi"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823702,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823781,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823050,
+      "hp_umpire_id": 427292,
+      "hp_umpire_name": "Ron Kulpa",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 427292,
+          "name": "Ron Kulpa"
+        },
+        {
+          "type": "First Base",
+          "id": 482608,
+          "name": "Scott Barry"
+        },
+        {
+          "type": "Second Base",
+          "id": 484499,
+          "name": "Manny Gonzalez"
+        },
+        {
+          "type": "Third Base",
+          "id": 665297,
+          "name": "Tom Hanahan"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824027,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 825078,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823131,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    }
+  ]
+}

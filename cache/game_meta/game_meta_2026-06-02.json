@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "date": "2026-06-02",
+  "generated_at_utc": "2026-06-02T11:30:36Z",
+  "coverage": {
+    "scheduled_games": 15,
+    "games_with_umpire": 0
+  },
+  "warnings": [],
+  "games": [
+    {
+      "game_pk": 822971,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823460,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824754,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 822728,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823541,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824511,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824918,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823700,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823782,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823052,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824675,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824189,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824026,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 825079,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823129,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    }
+  ]
+}
