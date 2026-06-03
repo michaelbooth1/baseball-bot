@@ -278,6 +278,135 @@ class UnderPaperPlacementTests(unittest.TestCase):
         self.assertEqual(engine.recorded_decisions[0]["decision"], "skip")
         self.assertEqual(engine._bets, [])
 
+    def test_paper_mode_dedup_blocks_rapid_refire_same_game_line(self):
+        """Regression: 2026-06-02 M_under_paper fired 5 UNDER bets on
+        TEX@STL 10.5 within 17s. The UNDER pipeline had no dedup state
+        check. Fix mirrors OVER's Gate 9 (same-event window) + Gate 10
+        (cross-inning same-line). First bet should place; rapid follow-
+        ups with the same edge should record skips, not BetRecords.
+        Tracked on the parallel _last_under_bet_* dicts so OVER state
+        is untouched."""
+        engine = _make_fake_engine(
+            mode="paper", under_calibrator_returns=0.65,
+        )
+        # Engines created in production have these dicts; the fake-
+        # engine helper does not, so seed them here. The dedup code in
+        # _maybe_emit_under_candidate uses getattr-with-default but
+        # writes through whatever dict references it resolved, so
+        # placing them on the engine lets us assert on them.
+        engine._last_under_bet_ts = {}
+        engine._last_under_bet_edge = {}
+        engine._last_under_bet_inning = {}
+        engine._last_under_bet_edge_by_line = {}
+        # Tight dedup so the test is fast.
+        engine.trade_args.event_dedup_secs = 60.0
+        engine.trade_args.inning_dedup_gap = 3
+        engine.trade_args.inning_dedup_edge_gap = 0.02
+        ctx = _make_fake_ctx(
+            inning=9, line="10.5", under_best_ask=0.33, game_pk=823052,
+        )
+
+        # First bet: dedup state empty -> places.
+        sp._maybe_emit_under_candidate(
+            engine, ctx, _make_fv_phase(), {"bet_id": "first"},
+        )
+        self.assertEqual(engine.recorded_decisions[-1]["decision"], "paper_under")
+        self.assertEqual(len(engine._bets), 1)
+        self.assertIn(823052, engine._last_under_bet_ts)
+
+        # Four rapid follow-ups with same edge: each should be dedup-
+        # skipped, no new BetRecord, dedup state unchanged.
+        for i in range(4):
+            sp._maybe_emit_under_candidate(
+                engine, ctx, _make_fv_phase(),
+                {"bet_id": f"followup_{i}"},
+            )
+        self.assertEqual(len(engine._bets), 1)  # still just the first
+        skip_reasons = [
+            d["decision_reason"]
+            for d in engine.recorded_decisions
+            if d["decision"] == "skip"
+        ]
+        self.assertEqual(len(skip_reasons), 4)
+        # Either event-window or inning-window dedup is fine; both
+        # apply for follow-ups within the same tick at the same edge.
+        for r in skip_reasons:
+            self.assertIn(
+                r,
+                {"gate_under_event_dedup", "gate_under_inning_dedup"},
+            )
+
+    def test_paper_mode_dedup_unlocks_on_edge_improvement(self):
+        """OVER's dedup is "same edge -> skip, materially better edge
+        -> allow". UNDER inherits the same logic. A second bet with
+        edge > prior + inning_dedup_edge_gap (0.02) on the same
+        (game, line) inside the same inning should be allowed."""
+        engine = _make_fake_engine(
+            mode="paper", under_calibrator_returns=0.65,
+        )
+        engine._last_under_bet_ts = {}
+        engine._last_under_bet_edge = {}
+        engine._last_under_bet_inning = {}
+        engine._last_under_bet_edge_by_line = {}
+        engine.trade_args.event_dedup_secs = 60.0
+        engine.trade_args.inning_dedup_gap = 3
+        engine.trade_args.inning_dedup_edge_gap = 0.02
+
+        # First bet at edge ~0.15 (fv 0.65 - ask 0.50).
+        ctx1 = _make_fake_ctx(
+            inning=9, line="10.5", under_best_ask=0.50, game_pk=823052,
+        )
+        sp._maybe_emit_under_candidate(
+            engine, ctx1, _make_fv_phase(), {"bet_id": "first"},
+        )
+        self.assertEqual(len(engine._bets), 1)
+
+        # Second tick on the same game/line/inning with a much better
+        # ask (0.30 -> edge 0.35). Edge improvement = 0.20, way above
+        # the 0.02 dedup_edge_gap -> dedup should unlock.
+        ctx2 = _make_fake_ctx(
+            inning=9, line="10.5", under_best_ask=0.30, game_pk=823052,
+        )
+        sp._maybe_emit_under_candidate(
+            engine, ctx2, _make_fv_phase(), {"bet_id": "better"},
+        )
+        self.assertEqual(len(engine._bets), 2)
+
+    def test_under_dedup_does_not_cross_block_with_over_state(self):
+        """The fix uses parallel _last_under_bet_* dicts so an OVER
+        bet on the same (game, line) does NOT block a subsequent
+        UNDER. This keeps the two sides independent (they are economic
+        opposites, not duplicates)."""
+        engine = _make_fake_engine(
+            mode="paper", under_calibrator_returns=0.65,
+        )
+        engine._last_under_bet_ts = {}
+        engine._last_under_bet_edge = {}
+        engine._last_under_bet_inning = {}
+        engine._last_under_bet_edge_by_line = {}
+        # Seed OVER-side state to simulate an OVER bet that just fired
+        # on the same (game, line) at the same inning. UNDER must
+        # ignore this.
+        engine._last_bet_ts = {823052: 9_999_999_999.0}
+        engine._last_bet_edge = {823052: 0.30}
+        engine._last_bet_inning = {(823052, "10.5"): 9}
+        engine._last_bet_edge_by_line = {(823052, "10.5"): 0.30}
+        engine.trade_args.event_dedup_secs = 60.0
+        engine.trade_args.inning_dedup_gap = 3
+        engine.trade_args.inning_dedup_edge_gap = 0.02
+
+        ctx = _make_fake_ctx(
+            inning=9, line="10.5", under_best_ask=0.50, game_pk=823052,
+        )
+        sp._maybe_emit_under_candidate(
+            engine, ctx, _make_fv_phase(), {"bet_id": "after_over"},
+        )
+        # UNDER bet was allowed; OVER state did not block it.
+        self.assertEqual(len(engine._bets), 1)
+        self.assertEqual(
+            engine.recorded_decisions[-1]["decision"], "paper_under",
+        )
+
     def test_paper_bet_record_carries_inferred_state_from_payload(self):
         engine = _make_fake_engine(
             mode="paper", under_calibrator_returns=0.65,

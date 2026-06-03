@@ -1,0 +1,13 @@
+{
+  "_audit": {
+    "last_modified_by": "manual_ship_alt_a_and_gate_extreme_edge_retune",
+    "last_modified_utc": "2026-06-03T00:00:00Z",
+    "last_promotion_event_at": "2026-06-03T00:00:00Z",
+    "notes": "Ship Alt A runtime-shadow + gate_extreme_edge 0.22 -> 0.30 retune per 2026-06-02 walk-forward + daily review. Alt A: computes fair_value_alt_empirical per tick (scope-mode at enforce already filters inning>=8 regression cohort). gate_extreme_edge: walk-forward verdict RETUNE confidence=medium, blocked cohort ROI +10.3% vs kept +2.3% on 197-bet sample (gate currently filtering profitable bets)."
+  },
+  "gate_thresholds": {
+    "gate_extreme_edge": 0.3
+  },
+  "stage1_shadow_empirical_mode": "shadow",
+  "version": 1
+}

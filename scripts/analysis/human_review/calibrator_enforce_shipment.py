@@ -240,13 +240,67 @@ def _calibrator_enforce_shipment_health(
     else:
         outcomes_status = "missing"
 
+    # 2026-06-03 fix: dedup blocked_rows to one entry per
+    # (game_pk, line, side) before computing outcomes / counterfactual
+    # P&L. Without this, a single game that stays in the band-gated
+    # range for 100 ticks contributes 100 "blocks" sharing the same
+    # final outcome, inflating both the muting-winners WR alert and
+    # the counterfactual saved dollars by 10-100x. The OVER pipeline
+    # caps real placements at one per (game, line, side) via Gate 9
+    # (same-event 60s) + Gate 10 (cross-inning same-line), so the
+    # truthful counterfactual is also one bet per group.
+    #
+    # Example from the 2026-06-01 audit: report showed 533 blocks /
+    # 533 would-win / saved=-$1106.53. Dedup-corrected: 15 unique
+    # opportunities / 15 would-win / saved=-$36 -- same WR (100%) but
+    # ~30x smaller counterfactual P&L.
+    #
+    # Picking strategy: for each (game, line, side) group, keep the
+    # row with the largest raw_edge (raw_fv - decision_ask). That's
+    # the moment the bot would have most wanted to fire, matching
+    # OVER's "edge improvement unlocks dedup" semantics.
+    raw_blocked_count = blocked
+    deduped_best: Dict[Tuple[Any, str, str], Dict[str, Any]] = {}
+    for br in blocked_rows:
+        key = (
+            br.get("game_pk"),
+            str(br.get("line") or ""),
+            str(br.get("side") or "over").lower(),
+        )
+        try:
+            cand_edge = (
+                float(br.get("raw_fv") or 0.0)
+                - float(br.get("decision_ask") or 0.0)
+            )
+        except (TypeError, ValueError):
+            cand_edge = float("-inf")
+        cur = deduped_best.get(key)
+        if cur is None:
+            deduped_best[key] = br
+            continue
+        try:
+            cur_edge = (
+                float(cur.get("raw_fv") or 0.0)
+                - float(cur.get("decision_ask") or 0.0)
+            )
+        except (TypeError, ValueError):
+            cur_edge = float("-inf")
+        if cand_edge > cur_edge:
+            deduped_best[key] = br
+    deduped_blocked_rows = list(deduped_best.values())
+    unique_blocked_count = len(deduped_blocked_rows)
+    blocks_per_opportunity = (
+        raw_blocked_count / unique_blocked_count
+        if unique_blocked_count else None
+    )
+
     settled = 0
     would_win = 0
     would_lose = 0
     undecided = 0
     saved_dollars = 0.0
     stake = CALIBRATOR_ENFORCE_BLOCKED_OUTCOMES_DEFAULT_STAKE
-    for br in blocked_rows:
+    for br in deduped_blocked_rows:
         side = str(br.get("side") or "over").lower()
         key = (br.get("game_pk"), str(br.get("line") or ""), side)
         ov = outcome_lookup.get(key)
@@ -272,6 +326,15 @@ def _calibrator_enforce_shipment_health(
         "blocked_count": blocked,
         "blocked_rate": block_rate,
         "blocked_by_raw_fv_bucket": blocked_bucket,
+        # 2026-06-03: dedup transparency. `unique_blocked_opportunities`
+        # is the count after dedup-by-(game,line,side); the outcomes /
+        # counterfactual P&L below are computed on this set. The raw
+        # `blocked_count` is preserved above for backward-compat and
+        # for diagnosing how many tick-rows the gate fired on (a high
+        # blocks_per_opportunity ratio means the bot would have been
+        # heavily dedup-suppressed even without calibrator-enforce).
+        "unique_blocked_opportunities": unique_blocked_count,
+        "blocks_per_opportunity": blocks_per_opportunity,
         "preserved_trades_with_calibrator_applied": (
             preserved_trades_cal_applied
         ),
@@ -286,6 +349,7 @@ def _calibrator_enforce_shipment_health(
             "counterfactual_pnl": {
                 "saved_dollars": round(saved_dollars, 2),
                 "default_stake": stake,
+                "computed_on": "unique_opportunities_dedup_by_game_line_side",
             },
         },
     }
@@ -332,9 +396,20 @@ def _calibrator_enforce_shipment_health(
     ):
         payload["status"] = "alert"
         label = "would_block" if decision_mode == "shadow" else "blocked"
+        # The pool_size + blocked counts are TICK-ROWS (many per game).
+        # Surface the dedup-corrected unique-opportunity count alongside
+        # so the operator can see both: the high block_rate is real (the
+        # gate fires on a lot of evaluations) but the actual betting
+        # opportunities affected is smaller.
+        bpo_clause = (
+            f", spanning {unique_blocked_count} unique "
+            f"(game,line,side) opportunities"
+            f" (avg {blocks_per_opportunity:.1f} ticks/opportunity)"
+            if unique_blocked_count else ""
+        )
         payload["alerts"].append(
             f"calibrator-enforce {label} {blocked}/{pool_size} "
-            f"({block_rate:.0%}) of candidates today (>= "
+            f"({block_rate:.0%}) of candidates today{bpo_clause} (>= "
             f"{CALIBRATOR_ENFORCE_HIGH_BLOCK_RATE_ALERT:.0%} alert "
             "threshold); gate may be too aggressive for the current "
             "regime. Cross-check concept_drift_health -- if PSI is "
@@ -366,12 +441,13 @@ def _calibrator_enforce_shipment_health(
         and wr_settled >= CALIBRATOR_ENFORCE_BLOCKED_WR_MUTING_WINNERS
     ):
         payload["alerts"].append(
-            f"calibrator-enforce may be muting winners: "
-            f"would-block WR is {would_win}/{settled} ({wr_settled:.0%}) "
-            f">= {CALIBRATOR_ENFORCE_BLOCKED_WR_MUTING_WINNERS:.0%} "
-            "alert threshold. The gate is blocking bets that win at a "
-            "rate close to the post-calibrated break-even, suggesting "
-            "the Platt fit is too aggressive at the current regime "
+            f"calibrator-enforce may be muting winners: would-block WR "
+            f"is {would_win}/{settled} ({wr_settled:.0%}) on unique "
+            f"(game,line,side) opportunities >= "
+            f"{CALIBRATOR_ENFORCE_BLOCKED_WR_MUTING_WINNERS:.0%} alert "
+            "threshold. The gate is blocking bets that win at a rate "
+            "close to the post-calibrated break-even, suggesting the "
+            "Platt fit is too aggressive at the current regime "
             "(consider band-gate raise or per-line refit)."
         )
     if (
@@ -381,9 +457,10 @@ def _calibrator_enforce_shipment_health(
         payload["alerts"].append(
             f"calibrator-enforce blocking is net-NEGATIVE on outcomes: "
             f"counterfactual saved=${saved_dollars:+.2f} over "
-            f"{settled} settled blocks (would-win={would_win}, "
-            f"would-lose={would_lose}). The blocked set was profitable "
-            "in expectation; the gate's blocking the wrong tail."
+            f"{settled} unique (game,line,side) opportunities "
+            f"(would-win={would_win}, would-lose={would_lose}). The "
+            "blocked set was profitable in expectation; the gate's "
+            "blocking the wrong tail."
         )
 
     return payload

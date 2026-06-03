@@ -602,6 +602,68 @@ def _maybe_emit_under_candidate(
             engine._record_candidate_decision(under_payload)
             return
 
+        # 2026-06-03 fix: UNDER-side dedup. Mirrors OVER's Gate 9 (same-
+        # event 60s window) + Gate 10 (cross-inning same-line) but on the
+        # parallel _last_under_bet_* dicts, so an OVER bet on the same
+        # (game, line) does not block UNDER and vice versa. Without this,
+        # M_under_paper fired 5 paper UNDER bets on TEX@STL 10.5 in 17
+        # seconds on 2026-06-02 (all lost). Reuses OVER's thresholds
+        # (event_dedup_secs, inning_dedup_gap, inning_dedup_edge_gap)
+        # because the same temporal logic applies regardless of side.
+        # Uses getattr-with-default lookups so duck-typed test engines
+        # (and any external callers built before this fix) don't need
+        # to know about the new attributes.
+        now_ts = _now_ts()
+        line_inning_key_under = (game.game_pk, market.line)
+        event_dedup_secs = float(getattr(
+            engine.trade_args, "event_dedup_secs", 60.0,
+        ))
+        inning_dedup_gap = int(getattr(
+            engine.trade_args, "inning_dedup_gap", 3,
+        ))
+        inning_dedup_edge_gap = float(getattr(
+            engine.trade_args, "inning_dedup_edge_gap", 0.02,
+        ))
+        # Resolve dedup dicts via getattr with a None sentinel + lazy
+        # init on the engine. The `or {}` shortcut would mis-fire here
+        # because an empty dict is falsy and would alias to a fresh
+        # dict, severing the write-back to the engine.
+        def _ensure_dict(attr: str) -> Dict:
+            d = getattr(engine, attr, None)
+            if d is None:
+                d = {}
+                setattr(engine, attr, d)
+            return d
+        last_under_ts_dict = _ensure_dict("_last_under_bet_ts")
+        last_under_edge_dict = _ensure_dict("_last_under_bet_edge")
+        last_under_inning_dict = _ensure_dict("_last_under_bet_inning")
+        last_under_edge_by_line_dict = _ensure_dict(
+            "_last_under_bet_edge_by_line",
+        )
+        under_dedup_skip_reason: Optional[str] = None
+        last_under_ts = last_under_ts_dict.get(game.game_pk, 0.0)
+        if (now_ts - last_under_ts) < event_dedup_secs:
+            last_under_edge = last_under_edge_dict.get(game.game_pk, 0.0)
+            if under_edge <= last_under_edge:
+                under_dedup_skip_reason = "gate_under_event_dedup"
+        if under_dedup_skip_reason is None:
+            last_under_inning = last_under_inning_dict.get(
+                line_inning_key_under, -1,
+            )
+            if last_under_inning >= 0:
+                innings_elapsed = inning_int - last_under_inning
+                if innings_elapsed < inning_dedup_gap:
+                    last_line_edge = last_under_edge_by_line_dict.get(
+                        line_inning_key_under, 0.0,
+                    )
+                    if (under_edge - last_line_edge) <= inning_dedup_edge_gap:
+                        under_dedup_skip_reason = "gate_under_inning_dedup"
+        if under_dedup_skip_reason is not None:
+            under_payload["decision"] = "skip"
+            under_payload["decision_reason"] = under_dedup_skip_reason
+            engine._record_candidate_decision(under_payload)
+            return
+
         # All UNDER gates passed. Decision tag distinguishes shadow
         # (no bet) from paper/live (BetRecord recorded / order placed).
         if mode == "paper":
@@ -622,7 +684,7 @@ def _maybe_emit_under_candidate(
                 # CLOB order on the under_no token when mode == "live".
                 placer = getattr(engine, "_place_under_bet", None)
                 if callable(placer):
-                    placer(
+                    placed = placer(
                         ctx=ctx,
                         over_fv_phase=over_fv_phase,
                         over_candidate_payload=over_candidate_payload,
@@ -632,7 +694,7 @@ def _maybe_emit_under_candidate(
                         under_edge=under_edge,
                     )
                 else:  # back-compat: older engines without the method
-                    _place_under_paper_bet(
+                    placed = _place_under_paper_bet(
                         engine=engine,
                         ctx=ctx,
                         over_fv_phase=over_fv_phase,
@@ -642,6 +704,23 @@ def _maybe_emit_under_candidate(
                         under_ask=under_ask_f,
                         under_edge=under_edge,
                     )
+                # Update UNDER dedup state only on successful placement so
+                # a rejected/skipped placer call leaves the window open for
+                # the next genuine signal (parity with OVER's behavior:
+                # _last_bet_* writes are gated on a non-None _place_bet
+                # return upstream). Tolerates fake engines that don't carry
+                # the dedup dicts by mutating the dict objects we already
+                # resolved above (real SignalEngine + LiveTradingEngine
+                # share the same dicts via their __init__).
+                if placed is not None:
+                    last_under_ts_dict[game.game_pk] = now_ts
+                    last_under_edge_dict[game.game_pk] = under_edge
+                    last_under_inning_dict[line_inning_key_under] = (
+                        inning_int
+                    )
+                    last_under_edge_by_line_dict[
+                        line_inning_key_under
+                    ] = under_edge
             except Exception as exc:  # noqa: BLE001
                 LOGGER.warning(
                     "UNDER %s bet failed for game_pk=%s line=%s: %r "

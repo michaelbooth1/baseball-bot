@@ -461,13 +461,32 @@ function sessionToReviewShape(session: SessionFile): DailyReview {
   const losses = bets.filter((b) => b.won === false).length;
   const decided = wins + losses;
   const summary = session.summary ?? {};
+  // Prefer the engine's own placed/filled counts from the session
+  // summary: live sessions distinguish placed (orders submitted) from
+  // filled (orders matched) and a cancellation -- e.g. game_final
+  // before the order took -- must not be counted as a fill. If the
+  // summary doesn't carry these (older sessions, paper mode), fall
+  // back to bets.length for placed and to bets with
+  // order_status === "filled" for filled. When order_status is absent
+  // entirely (paper sessions never write it), every bet is a synthetic
+  // fill so we count the whole array.
+  const summaryPlaced =
+    typeof summary.orders_placed === "number" ? summary.orders_placed : null;
+  const summaryFilled =
+    typeof summary.orders_filled === "number" ? summary.orders_filled : null;
+  const hasOrderStatus = bets.some((b) => typeof b.order_status === "string");
+  const filledFromBets = hasOrderStatus
+    ? bets.filter((b) => b.order_status === "filled").length
+    : bets.length;
+  const orders_placed = summaryPlaced ?? bets.length;
+  const orders_filled = summaryFilled ?? filledFromBets;
   return {
     schema_version: 1,
     session_date: session.date,
     mode: session.mode,
     session_summary: {
-      orders_placed: bets.length,
-      orders_filled: bets.length,
+      orders_placed,
+      orders_filled,
       wins,
       losses,
       total_profit: typeof summary.total_profit === "number" ? summary.total_profit : null,
@@ -481,8 +500,8 @@ function sessionToReviewShape(session: SessionFile): DailyReview {
           : null,
     },
     bet_totals: {
-      count: bets.length,
-      filled: bets.length,
+      count: orders_placed,
+      filled: orders_filled,
       wins,
       losses,
       profit: typeof summary.total_profit === "number" ? summary.total_profit : 0,

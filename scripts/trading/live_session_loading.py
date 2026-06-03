@@ -129,17 +129,33 @@ def load_existing_session(engine: "LiveTradingEngine") -> None:
             # Rebuild dedup state only from real placed exposure. Failed
             # placements and unfilled cancellations remain in _bets for audit,
             # but must not suppress future valid candidates after a restart.
+            # 2026-06-03: route UNDER bets to the parallel UNDER dedup
+            # dicts (added alongside the original OVER ones to fix the
+            # M_under_paper 5x-fire bug on 2026-06-02). Paper UNDER bets
+            # always pass _should_restore_dedup_state since they are
+            # filled-at-limit by construction.
             key = (bet.game_pk, bet.line)
+            bet_side = str(getattr(bet, "side", "over") or "over").lower()
             if _should_restore_dedup_state(bet):
-                prev_ts = engine._last_bet_ts.get(bet.game_pk)
+                if bet_side == "under":
+                    ts_dict = engine._last_under_bet_ts
+                    edge_dict = engine._last_under_bet_edge
+                    inning_dict = engine._last_under_bet_inning
+                    line_edge_dict = engine._last_under_bet_edge_by_line
+                else:
+                    ts_dict = engine._last_bet_ts
+                    edge_dict = engine._last_bet_edge
+                    inning_dict = engine._last_bet_inning
+                    line_edge_dict = engine._last_bet_edge_by_line
+                prev_ts = ts_dict.get(bet.game_pk)
                 if prev_ts is None or dedup_ts >= prev_ts:
-                    engine._last_bet_ts[bet.game_pk] = dedup_ts
-                    engine._last_bet_edge[bet.game_pk] = bet.edge
+                    ts_dict[bet.game_pk] = dedup_ts
+                    edge_dict[bet.game_pk] = bet.edge
 
-                prev_inning = engine._last_bet_inning.get(key, -1)
+                prev_inning = inning_dict.get(key, -1)
                 if int(getattr(bet, "inning", -1)) >= int(prev_inning):
-                    engine._last_bet_inning[key] = bet.inning
-                    engine._last_bet_edge_by_line[key] = bet.edge
+                    inning_dict[key] = bet.inning
+                    line_edge_dict[key] = bet.edge
 
             # Re-register open orders for monitoring
             if _is_exposure_counted_status(bet.order_status) and bet.order_id:

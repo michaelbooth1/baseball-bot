@@ -520,6 +520,19 @@ class SignalEngine(MLBPolymarketMonitor):
         # from one line incorrectly gating or unlocking another line's dedup window
         self._last_bet_edge_by_line: Dict[Tuple[int, str], float] = {}
 
+        # 2026-06-03 fix: parallel UNDER-side dedup state. Kept separate from
+        # the OVER dicts above so the UNDER pipeline can dedup itself without
+        # cross-blocking OVER signals on the same (game, line). Before this
+        # fix, _maybe_emit_under_candidate had no dedup checks at all, which
+        # let M_under_paper fire 5 paper UNDER bets on TEX@STL 10.5 in 17
+        # seconds on 2026-06-02 (all lost, -$50). Mirrors OVER's structure:
+        # game-level timestamp dict + per-line inning dict, both with edge
+        # to support the "edge-improvement unlocks dedup" logic.
+        self._last_under_bet_ts: Dict[int, float] = {}
+        self._last_under_bet_edge: Dict[int, float] = {}
+        self._last_under_bet_inning: Dict[Tuple[int, str], int] = {}
+        self._last_under_bet_edge_by_line: Dict[Tuple[int, str], float] = {}
+
         # All bets placed this session
         self._bets: List[BetRecord] = []
         self._bet_counter = 0

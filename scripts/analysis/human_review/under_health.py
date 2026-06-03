@@ -295,10 +295,58 @@ def _collect_under_settled_rows(
         if isinstance(gpk, int) and ln is not None and isinstance(tot, int):
             final_total_by_key[(int(gpk), str(ln))] = int(tot)
 
+    # 2026-06-03: dedup shadow_under tick-rows by (game_pk, line, side)
+    # before counting them as settled counterfactual bets. Same fix
+    # pattern as _calibrator_enforce_shipment_health: each game ticks
+    # through the engine many times while in the shadow-emission
+    # range, and each tick emits an independent shadow_under row that
+    # shares the same final game total. Counting all of them inflates
+    # n_settled / counterfactual_roi by 10-100x, which produced the
+    # persistent "-100% ROI on 229 settled" alert from earlier this
+    # window (true unique count is more like 5-15 / day).
+    #
+    # Picking strategy: keep the row with the largest UNDER raw_edge
+    # (under_fv - under_ask) per (game, line, side) group -- the
+    # moment the bot would have most wanted to fire under-mode-shadow
+    # had paper UNDER not yet been enabled. Mirrors the calibrator-
+    # enforce fix.
+    n_dedup_collapsed = 0
+    best_by_key: Dict[Tuple[int, str, str], Dict[str, Any]] = {}
+    for r in shadow_under:
+        gpk = r.get("game_pk")
+        ln = r.get("line")
+        if not isinstance(gpk, int) or ln is None:
+            continue
+        side = str(r.get("side") or "under").lower()
+        key = (int(gpk), str(ln), side)
+        try:
+            cand_edge = (
+                float(r.get("fair_value") or 0.0)
+                - float(r.get("entry_ask") or 0.0)
+            )
+        except (TypeError, ValueError):
+            cand_edge = float("-inf")
+        cur = best_by_key.get(key)
+        if cur is None:
+            best_by_key[key] = r
+            continue
+        n_dedup_collapsed += 1
+        try:
+            cur_edge = (
+                float(cur.get("fair_value") or 0.0)
+                - float(cur.get("entry_ask") or 0.0)
+            )
+        except (TypeError, ValueError):
+            cur_edge = float("-inf")
+        if cand_edge > cur_edge:
+            best_by_key[key] = r
+    deduped_shadow_under = list(best_by_key.values())
+    out["n_dedup_collapsed_tick_rows"] = n_dedup_collapsed
+
     settled_rows: List[Dict[str, Any]] = []
     n_missing_outcome = 0
     n_missing_ask = 0
-    for r in shadow_under:
+    for r in deduped_shadow_under:
         gpk = r.get("game_pk")
         ln = r.get("line")
         if not isinstance(gpk, int) or ln is None:
@@ -460,7 +508,14 @@ def _under_outcomes_counterfactual_health(
     payload["outcomes_path"] = today.get("outcomes_path")
     payload["status"] = today["status"]
     payload["n_shadow_under_candidates"] = today["n_shadow_under_candidates"]
+    # 2026-06-03 dedup-bias fix: n_settled is computed on the
+    # (game_pk, line, side)-deduped set, not the raw tick-rows.
+    # n_dedup_collapsed_tick_rows exposes how many tick-rows were
+    # collapsed so the operator can audit the inflation factor.
     payload["n_settled"] = len(today["settled_rows"])
+    payload["n_dedup_collapsed_tick_rows"] = today.get(
+        "n_dedup_collapsed_tick_rows", 0,
+    )
     payload["n_missing_outcome"] = today["n_missing_outcome"]
     payload["n_missing_ask"] = today["n_missing_ask"]
     if "error" in today:

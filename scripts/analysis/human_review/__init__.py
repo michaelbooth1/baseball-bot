@@ -68,6 +68,9 @@ from .under_health import (
     _aggregate_paper_under_bets,
     _count_persistent_under_drift_alerts,
 )
+from .same_game_multi_fire import (
+    _same_game_multi_fire_health,
+)
 
 __all__ = [
     "_load_trailing_reviews",
@@ -126,5 +129,6 @@ __all__ = [
     "_collect_paper_under_bets_for_date",
     "_aggregate_paper_under_bets",
     "_count_persistent_under_drift_alerts",
+    "_same_game_multi_fire_health",
 ]
 

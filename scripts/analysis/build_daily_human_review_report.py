@@ -64,6 +64,7 @@ from scripts.analysis.human_review import (
     _under_emission_health,
     _under_outcomes_counterfactual_health,
     _under_paper_b4_milestone_health,
+    _same_game_multi_fire_health,
     _wilson_upper_bound,
     _shift_date,
     _parse_iso_to_epoch_safe,
@@ -368,6 +369,14 @@ def build_report(
         candidate_dir=candidate_dir,
         trailing_reviews=trailing_reviews,
     )
+    # 2026-06-03 plumbing add: catch dedup-leak bugs the same day they
+    # happen instead of via P&L pattern-spotting in audits. Reads raw
+    # session bets (not the summarized rows from _summarize_bets) so it
+    # has access to game_pk, placed_at, and inning directly.
+    same_game_multi_fire_health = _same_game_multi_fire_health(
+        session_date=session_date,
+        bets=session.get("bets", []),
+    )
     signal_quality_health = _signal_quality_health(
         today_bet_totals=bet_totals,
         trailing_reviews=trailing_reviews,
@@ -574,6 +583,7 @@ def build_report(
         "calibrator_enforce_shipment_health": (
             calibrator_enforce_shipment_health
         ),
+        "same_game_multi_fire_health": same_game_multi_fire_health,
         "fill_rate_health": fill_rate_health,
         "signal_quality_health": signal_quality_health,
         "regime_mix_health": regime_mix_health,

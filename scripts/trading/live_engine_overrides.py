@@ -76,6 +76,22 @@ _TOP_LEVEL_ROUTES: Dict[str, Tuple[str, str, str]] = {
     "calibrated_stake_scale_mode": (
         "live", "calibrated_stake_scale_mode", "--calibrated-stake-scale-mode",
     ),
+    # 2026-06-03: Alt A (empirical-when-available) runtime-shadow
+    # promotion. Setting this to "shadow" makes SignalEngine compute
+    # fair_value_alt_empirical alongside the production fair_value on
+    # every candidate, so the offline shadow-override report keeps
+    # accumulating evidence per-tick without any decision change. The
+    # daily review has been recommending this lever since 2026-05-27
+    # (alt_a_empirical_when_available: promote_to_runtime_shadow). The
+    # scope-mode lever (--stage1-alt-a-scope-mode) is already at
+    # `enforce` per the 2026-05-22 promotion event and already excludes
+    # the regressing inning>=8 cohort, so this shadow flip is the only
+    # remaining step before any future enforce promotion.
+    "stage1_shadow_empirical_mode": (
+        "trade",
+        "stage1_shadow_empirical_mode",
+        "--stage1-shadow-empirical-mode",
+    ),
 }
 
 _GATE_THRESHOLD_ROUTES: Dict[str, Tuple[str, str, str]] = {

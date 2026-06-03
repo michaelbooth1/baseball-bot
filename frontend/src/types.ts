@@ -221,6 +221,12 @@ export type BetRow = {
   settled?: boolean | null;
   won?: boolean | null;
   profit?: number | null;
+  /** Order lifecycle terminal state written by the live engine.
+   *  `"filled"` = match took. `"cancelled"` = order timed out / game
+   *  finalized / fv-decay / ask-reversal. Paper sessions omit it
+   *  (every signal is treated as a synthetic fill). */
+  order_status?: string | null;
+  cancel_reason?: string | null;
   placed_at?: string | null;
   settled_at?: string | null;
   inferred_state_base_empirical?: number | null;
@@ -261,6 +267,7 @@ export type DailyReview = {
   // Health blocks (all optional; presence varies by ship date)
   calibration_health?: HealthBlock;
   fill_rate_health?: HealthBlock;
+  same_game_multi_fire_health?: HealthBlock;
   signal_quality_health?: HealthBlock;
   regime_mix_health?: HealthBlock;
   cohort_roi_health?: HealthBlock;

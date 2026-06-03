@@ -4461,6 +4461,115 @@ class UnderOutcomesCounterfactualHealthTests(unittest.TestCase):
                 agg["counterfactual_roi"], 1.5, places=2,
             )
 
+    def test_shadow_under_dedups_tick_rows_by_game_line_side(self):
+        """2026-06-03 fix: each game ticks through the engine many
+        times while in the shadow-emission range, emitting one
+        shadow_under candidate row per tick. They all share the same
+        final game total -- counting them independently inflates
+        n_settled / counterfactual_roi by 10-100x. Fix dedups by
+        (game_pk, line, side) before counting.
+
+        Setup:
+          - 50 shadow_under rows on game 1 line 8.5 (all same outcome
+            -- final 5 < 8.5 -> WIN)
+          - 50 shadow_under rows on game 2 line 8.5 (all -> LOSE)
+          - 1 shadow_under row on game 3 line 7.5 (-> WIN)
+
+        Pre-fix: 101 settled, 51 wins, 50 losses (the 100-tick
+        inflation).
+        Post-fix: 3 settled (3 unique opportunities), 2W / 1L. The
+        raw shadow_under count (101) is still surfaced as
+        n_shadow_under_candidates; the new
+        n_dedup_collapsed_tick_rows shows 98 tick-rows collapsed.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            candidates = []
+            for i in range(50):
+                candidates.append(self._under(
+                    game_pk=1, line="8.5", entry_ask=0.30, fair_value=0.55,
+                ))
+            for i in range(50):
+                candidates.append(self._under(
+                    game_pk=2, line="8.5", entry_ask=0.30, fair_value=0.55,
+                ))
+            candidates.append(self._under(
+                game_pk=3, line="7.5", entry_ask=0.40, fair_value=0.60,
+            ))
+            outcomes = [
+                self._outcome_row(game_pk=1, line="8.5", final_total=5),   # win
+                self._outcome_row(game_pk=2, line="8.5", final_total=11),  # lose
+                self._outcome_row(game_pk=3, line="7.5", final_total=6),   # win
+            ]
+            self._write_jsonl(
+                Path(td) / "2026-05-18_candidates.jsonl", candidates,
+            )
+            self._write_jsonl(
+                Path(td) / "2026-05-18_outcomes.jsonl", outcomes,
+            )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+                stake_usdc=10.0,
+            )
+            # Raw tick-row count preserved for transparency.
+            self.assertEqual(out["n_shadow_under_candidates"], 101)
+            # 98 tick-rows collapsed (101 raw - 3 unique).
+            self.assertEqual(out["n_dedup_collapsed_tick_rows"], 98)
+            # Settled is the dedup count, NOT 101.
+            self.assertEqual(out["n_settled"], 3)
+            agg = out["aggregate"]
+            self.assertEqual(agg["n"], 3)
+            self.assertEqual(agg["n_won"], 2)
+            self.assertEqual(agg["n_lost"], 1)
+            # Counterfactual pnl:
+            #   game 1 win at ask 0.30 -> 10*(1/0.30 - 1) = 23.33
+            #   game 3 win at ask 0.40 -> 10*(1/0.40 - 1) = 15.00
+            #   game 2 lose at ask 0.30 -> -10.00
+            # Total = +28.33 (NOT 51*23.33 - 50*10 = ~$691 like pre-fix).
+            self.assertAlmostEqual(
+                agg["total_counterfactual_pnl"], 28.33, places=2,
+            )
+
+    def test_shadow_under_dedup_picks_largest_under_edge(self):
+        """When multiple tick-rows share (game, line, side), dedup
+        keeps the row with the largest under raw_edge (fair_value -
+        entry_ask). Matches the calibrator-enforce fix's picking
+        strategy: the moment the UNDER pipeline would most have
+        wanted to fire."""
+        with tempfile.TemporaryDirectory() as td:
+            candidates = [
+                # ask 0.45 fv 0.50 edge 0.05
+                self._under(game_pk=1, line="8.5", entry_ask=0.45, fair_value=0.50),
+                # ask 0.30 fv 0.55 edge 0.25  <- best raw_edge, should be picked
+                self._under(game_pk=1, line="8.5", entry_ask=0.30, fair_value=0.55),
+                # ask 0.40 fv 0.50 edge 0.10
+                self._under(game_pk=1, line="8.5", entry_ask=0.40, fair_value=0.50),
+            ]
+            outcomes = [
+                self._outcome_row(game_pk=1, line="8.5", final_total=5),  # win
+            ]
+            self._write_jsonl(
+                Path(td) / "2026-05-18_candidates.jsonl", candidates,
+            )
+            self._write_jsonl(
+                Path(td) / "2026-05-18_outcomes.jsonl", outcomes,
+            )
+            out = bdhr._under_outcomes_counterfactual_health(
+                session_date="2026-05-18",
+                candidate_dir=Path(td),
+                stake_usdc=10.0,
+            )
+            self.assertEqual(out["n_shadow_under_candidates"], 3)
+            self.assertEqual(out["n_dedup_collapsed_tick_rows"], 2)
+            self.assertEqual(out["n_settled"], 1)
+            agg = out["aggregate"]
+            self.assertEqual(agg["n_won"], 1)
+            # Best raw_edge moment was ask 0.30 -> profit = 10*(1/0.30 - 1) = 23.33
+            self.assertAlmostEqual(
+                agg["total_counterfactual_pnl"], 23.33, places=2,
+            )
+            self.assertAlmostEqual(agg["mean_under_ask"], 0.30, places=4)
+
     def test_under_loses_when_final_total_above_or_equal_line(self):
         """UNDER loses when final_total >= line. final_total=10, line=8.5 -> lost."""
         with tempfile.TemporaryDirectory() as td:
@@ -6228,6 +6337,299 @@ class CalibratorEnforceShipmentHealthTests(unittest.TestCase):
             )
             joined = " || ".join(out.get("alerts") or [])
             self.assertIn("muting winners", joined)
+
+    def test_blocked_outcomes_dedup_by_game_line_side(self) -> None:
+        """2026-06-03 fix: blocked_outcomes must dedup tick-rows by
+        (game_pk, line, side) before computing WR / saved_dollars.
+        Otherwise a single game that ticks 100 times in the band-gated
+        range contributes 100 'blocks' all sharing the same final game
+        outcome, inflating both counters by 100x. The OVER pipeline's
+        Gate 9 + Gate 10 dedup means the bot would have placed AT MOST
+        ONE bet per (game, line, side).
+
+        Test setup:
+          - 50 ticks of game 1 line 9.5 over (all WOULD BLOCK; over_hit=True)
+          - 50 ticks of game 2 line 9.5 over (all WOULD BLOCK; over_hit=False)
+          - 1 tick of game 3 line 7.5 over  (WOULD BLOCK; over_hit=True)
+
+        Pre-fix: 101 settled blocks, 51 wins, 50 losses, pnl reflecting
+        the 100-tick inflation.
+        Post-fix: 3 settled blocks (3 unique opportunities), 2 wins, 1
+        loss, pnl on the deduped set. The raw `blocked_count` should
+        still show 101 (transparency).
+        """
+        with tempfile.TemporaryDirectory() as td:
+            cdir = Path(td) / "cu"
+            rows = []
+            for _ in range(50):
+                rows.append(dict(self._trade_row(
+                    raw_fv=0.98, cal_fv=0.73,
+                    decision_ask=0.80, line=9.5,
+                ), game_pk=1, side="over"))
+            for _ in range(50):
+                rows.append(dict(self._trade_row(
+                    raw_fv=0.97, cal_fv=0.72,
+                    decision_ask=0.82, line=9.5,
+                ), game_pk=2, side="over"))
+            rows.append(dict(self._trade_row(
+                raw_fv=0.96, cal_fv=0.74,
+                decision_ask=0.78, line=7.5,
+            ), game_pk=3, side="over"))
+            outcomes = [
+                {"game_pk": 1, "line": "9.5", "over_hit": True},
+                {"game_pk": 2, "line": "9.5", "over_hit": False},
+                {"game_pk": 3, "line": "7.5", "over_hit": True},
+            ]
+            self._write_candidates(cdir, "2026-05-19", rows)
+            self._write_outcomes(cdir, "2026-05-19", outcomes)
+            out = bdhr._calibrator_enforce_shipment_health(
+                session_date="2026-05-19",
+                candidate_dir=cdir,
+                trailing_reviews=[],
+            )
+            eff = out["today"]["enforce_effect"]
+            # Raw tick-row counts preserved for diagnostic transparency.
+            self.assertEqual(eff["blocked_count"], 101)
+            # Deduped to one per (game, line, side).
+            self.assertEqual(eff["unique_blocked_opportunities"], 3)
+            self.assertAlmostEqual(
+                eff["blocks_per_opportunity"], 101.0 / 3.0, places=2,
+            )
+            bo = eff["blocked_outcomes"]
+            # Outcomes computed on the DEDUPED set: 3 settled, 2 wins,
+            # 1 loss -- NOT 101 / 51 / 50.
+            self.assertEqual(bo["settled_count"], 3)
+            self.assertEqual(bo["would_have_won"], 2)
+            self.assertEqual(bo["would_have_lost"], 1)
+            self.assertAlmostEqual(
+                bo["win_rate_among_settled"], 2.0 / 3.0, places=4,
+            )
+            # Counterfactual pnl on deduped set:
+            #   game 1: would-win at ask 0.80 -> lost profit (10/0.80 - 10) = 2.50
+            #   game 3: would-win at ask 0.78 -> lost profit (10/0.78 - 10) = 2.82
+            #   game 2: would-lose -> saved $10
+            # Saved = +10 - 2.50 - 2.82 = +4.68 (rounded)
+            self.assertAlmostEqual(
+                bo["counterfactual_pnl"]["saved_dollars"], 4.68, places=2,
+            )
+            self.assertEqual(
+                bo["counterfactual_pnl"]["computed_on"],
+                "unique_opportunities_dedup_by_game_line_side",
+            )
+
+    def test_dedup_picks_highest_raw_edge_per_group(self) -> None:
+        """When multiple tick-rows share (game, line, side) but differ
+        in ask, dedup keeps the row with the largest raw_edge (raw_fv
+        - decision_ask). This matches OVER's 'edge improvement unlocks
+        dedup' semantics -- if the bot had been able to fire, it would
+        have fired at the best moment.
+
+        Test: 3 ticks for game 1 with asks 0.85, 0.70, 0.90. Best
+        raw_edge is at ask=0.70. game ends OVER. Expected lost profit
+        uses ask 0.70: (10/0.70 - 10) = $4.29 -> saved = -$4.29.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            cdir = Path(td) / "cu"
+            rows = [
+                dict(self._trade_row(raw_fv=0.96, cal_fv=0.73,
+                                     decision_ask=0.85, line=9.5),
+                     game_pk=1, side="over"),
+                dict(self._trade_row(raw_fv=0.96, cal_fv=0.73,
+                                     decision_ask=0.70, line=9.5),  # best
+                     game_pk=1, side="over"),
+                dict(self._trade_row(raw_fv=0.96, cal_fv=0.73,
+                                     decision_ask=0.90, line=9.5),
+                     game_pk=1, side="over"),
+            ]
+            outcomes = [
+                {"game_pk": 1, "line": "9.5", "over_hit": True},
+            ]
+            self._write_candidates(cdir, "2026-05-19", rows)
+            self._write_outcomes(cdir, "2026-05-19", outcomes)
+            out = bdhr._calibrator_enforce_shipment_health(
+                session_date="2026-05-19",
+                candidate_dir=cdir,
+                trailing_reviews=[],
+            )
+            eff = out["today"]["enforce_effect"]
+            self.assertEqual(eff["blocked_count"], 3)
+            self.assertEqual(eff["unique_blocked_opportunities"], 1)
+            bo = eff["blocked_outcomes"]
+            self.assertEqual(bo["settled_count"], 1)
+            self.assertEqual(bo["would_have_won"], 1)
+            # Lost profit at the BEST raw_edge moment (ask=0.70):
+            # (10/0.70 - 10) = 4.2857; saved_dollars = -4.29.
+            self.assertAlmostEqual(
+                bo["counterfactual_pnl"]["saved_dollars"], -4.29, places=2,
+            )
+
+
+class SameGameMultiFireHealthTests(unittest.TestCase):
+    """Generic dedup-leak detector (2026-06-03). Catches the bug shape
+    that ate the 2026-06-02 M_under_paper session (5x TEX@STL UNDER
+    10.5 in inning 9 within 17 seconds; -$50). Scans session bets for
+    any (game_pk, line, side) group with >1 bet and alerts when
+    same-inning multi-fires are detected (the dedup-leak fingerprint)
+    or when cross-inning multi-fires accumulate.
+    """
+
+    @staticmethod
+    def _bet(
+        *, bet_id: str, game_pk: int, line: str, side: str,
+        inning: int, placed_at: str, stake: float = 10.0,
+        profit: Optional[float] = None,
+    ) -> dict:
+        return {
+            "bet_id": bet_id,
+            "game_pk": game_pk,
+            "away_abbrev": "AAA",
+            "home_abbrev": "BBB",
+            "line": line,
+            "side": side,
+            "inning": inning,
+            "inning_state": "Top",
+            "placed_at": placed_at,
+            "entry_ask": 0.50,
+            "fair_value": 0.65,
+            "edge": 0.15,
+            "stake": stake,
+            "profit": profit,
+            "won": (profit is not None and profit > 0),
+            "order_status": "filled",
+        }
+
+    def test_no_bets_returns_ok(self):
+        out = bdhr._same_game_multi_fire_health(
+            session_date="2026-06-03", bets=[],
+        )
+        self.assertEqual(out["status"], "no_bets")
+        self.assertEqual(out["groups"], [])
+        self.assertEqual(out["alerts"], [])
+
+    def test_single_bets_per_group_returns_ok(self):
+        bets = [
+            self._bet(bet_id="a", game_pk=1, line="7.5", side="over",
+                      inning=5, placed_at="2026-06-03T00:00:00Z"),
+            self._bet(bet_id="b", game_pk=2, line="8.5", side="over",
+                      inning=6, placed_at="2026-06-03T00:01:00Z"),
+            self._bet(bet_id="c", game_pk=3, line="9.5", side="under",
+                      inning=7, placed_at="2026-06-03T00:02:00Z"),
+        ]
+        out = bdhr._same_game_multi_fire_health(
+            session_date="2026-06-03", bets=bets,
+        )
+        self.assertEqual(out["status"], "ok")
+        self.assertEqual(out["n_multi_fire_groups"], 0)
+        self.assertEqual(out["alerts"], [])
+
+    def test_same_inning_multi_fire_fires_dedup_leak_alert(self):
+        """Reproduces the 2026-06-02 TEX@STL UNDER 10.5 5x bug. Five
+        UNDER bets on the same game/line/side in the same inning
+        within 17 seconds -> 'DEDUP LEAK' alert."""
+        # Five identical bets, same inning, timestamps spread across
+        # 17 seconds, all losses (-$10 each = -$50 total).
+        bets = []
+        for i in range(5):
+            bets.append(self._bet(
+                bet_id=f"823052_{i+1:04d}",
+                game_pk=823052, line="10.5", side="under",
+                inning=9,
+                placed_at=f"2026-06-03T02:33:{26+4*i:02d}Z",
+                stake=10.0, profit=-10.0,
+            ))
+        out = bdhr._same_game_multi_fire_health(
+            session_date="2026-06-03", bets=bets,
+        )
+        self.assertEqual(out["status"], "alert")
+        self.assertEqual(out["n_multi_fire_groups"], 1)
+        self.assertEqual(out["n_tight_groups"], 1)
+        self.assertEqual(out["n_loose_groups"], 0)
+        self.assertEqual(out["total_bets_in_multi_fire_groups"], 5)
+        self.assertAlmostEqual(out["total_stake_at_risk"], 50.0, places=2)
+        self.assertAlmostEqual(
+            out["total_pnl_in_multi_fire_groups"], -50.0, places=2,
+        )
+        group = out["groups"][0]
+        self.assertEqual(group["n_bets"], 5)
+        self.assertEqual(group["tightness"], "tight")
+        self.assertEqual(group["innings"], [9])
+        self.assertEqual(group["side"], "under")
+        self.assertEqual(group["line"], "10.5")
+        # Spread: last (02:33:42) - first (02:33:26) = 16 seconds.
+        self.assertAlmostEqual(group["spread_seconds"], 16.0, places=1)
+        joined = " || ".join(out["alerts"])
+        self.assertIn("DEDUP LEAK", joined)
+        self.assertIn("AAA@BBB", joined)
+        self.assertIn("UNDER", joined)
+
+    def test_cross_inning_multi_fire_only_warns_when_count_reaches_threshold(self):
+        """Cross-inning refires are softer signal (Gate 10's edge-
+        improvement escape hatch supports them). Only alert when 3+
+        groups have cross-inning multi-fires."""
+        # 2 cross-inning multi-fire groups -> below threshold, no alert
+        bets = [
+            self._bet(bet_id="g1_1", game_pk=1, line="7.5", side="over",
+                      inning=4, placed_at="2026-06-03T00:00:00Z"),
+            self._bet(bet_id="g1_2", game_pk=1, line="7.5", side="over",
+                      inning=7, placed_at="2026-06-03T01:00:00Z"),
+            self._bet(bet_id="g2_1", game_pk=2, line="8.5", side="over",
+                      inning=5, placed_at="2026-06-03T00:00:00Z"),
+            self._bet(bet_id="g2_2", game_pk=2, line="8.5", side="over",
+                      inning=8, placed_at="2026-06-03T01:30:00Z"),
+        ]
+        out = bdhr._same_game_multi_fire_health(
+            session_date="2026-06-03", bets=bets,
+        )
+        # 2 groups, both loose (cross-inning). Below tight threshold (1)
+        # because n_tight=0, and below loose threshold (3). But the
+        # total stake (40) is above the 30 wasted-stake threshold so we
+        # DO get an alert via that path.
+        self.assertEqual(out["n_multi_fire_groups"], 2)
+        self.assertEqual(out["n_tight_groups"], 0)
+        self.assertEqual(out["n_loose_groups"], 2)
+        # 4 bets * $10 stake = $40 total, above the $30 alert threshold.
+        self.assertEqual(out["status"], "alert")
+        joined = " || ".join(out["alerts"])
+        # Should be the wasted-stake alert, NOT the dedup-leak one.
+        self.assertNotIn("DEDUP LEAK", joined)
+        self.assertIn("Multi-fire stake exposure", joined)
+
+    def test_three_loose_groups_fires_loose_alert(self):
+        """3+ cross-inning multi-fire groups -> the loose alert fires."""
+        bets = []
+        for gpk in range(1, 4):
+            bets.append(self._bet(
+                bet_id=f"g{gpk}_1", game_pk=gpk, line="7.5", side="over",
+                inning=4, placed_at="2026-06-03T00:00:00Z",
+            ))
+            bets.append(self._bet(
+                bet_id=f"g{gpk}_2", game_pk=gpk, line="7.5", side="over",
+                inning=7, placed_at="2026-06-03T01:00:00Z",
+            ))
+        out = bdhr._same_game_multi_fire_health(
+            session_date="2026-06-03", bets=bets,
+        )
+        self.assertEqual(out["status"], "alert")
+        self.assertEqual(out["n_tight_groups"], 0)
+        self.assertEqual(out["n_loose_groups"], 3)
+        joined = " || ".join(out["alerts"])
+        self.assertIn("Cross-inning multi-fire", joined)
+
+    def test_over_and_under_same_game_same_line_dont_collide(self):
+        """OVER 8.5 and UNDER 8.5 on the same game are different
+        contracts (over_no vs under_no token); they are NOT a
+        multi-fire group."""
+        bets = [
+            self._bet(bet_id="a", game_pk=1, line="8.5", side="over",
+                      inning=5, placed_at="2026-06-03T00:00:00Z"),
+            self._bet(bet_id="b", game_pk=1, line="8.5", side="under",
+                      inning=5, placed_at="2026-06-03T00:00:05Z"),
+        ]
+        out = bdhr._same_game_multi_fire_health(
+            session_date="2026-06-03", bets=bets,
+        )
+        self.assertEqual(out["status"], "ok")
+        self.assertEqual(out["n_multi_fire_groups"], 0)
 
 
 if __name__ == "__main__":

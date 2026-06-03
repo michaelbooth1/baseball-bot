@@ -23,6 +23,7 @@ const BLOCK_ORDER: Array<{ key: keyof DailyReview; label: string }> = [
   { key: "cohort_calibration_health", label: "Cohort calibration" },
   { key: "cohort_roi_health", label: "Cohort ROI" },
   { key: "fill_rate_health", label: "Fill rate" },
+  { key: "same_game_multi_fire_health", label: "Multi-fire dedup" },
   { key: "signal_quality_health", label: "Signal quality" },
   { key: "regime_mix_health", label: "Regime mix" },
   { key: "concept_drift_health", label: "Concept drift" },
