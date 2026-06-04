@@ -42,6 +42,254 @@ _DAEMON_STALENESS_SUCCESS_ACTIONS: Tuple[str, ...] = (
     "promoted", "forced", "demoted",
 )
 
+# 2026-06-03: history-file paths for the per-lever blocker reason
+# computation. These are the same files the daemon retrospective
+# replays; we load them here to surface "why no promote today" in
+# plain English on the daily review.
+_DEFAULT_STAGE2_BRIER_HISTORY_PATH = (
+    PROJECT_DIR / "data" / "analysis_output" / "calibration"
+    / "stage2_brier_history.jsonl"
+)
+_DEFAULT_STAGE3_V2_DRIFT_HISTORY_PATH = (
+    PROJECT_DIR / "data" / "analysis_output" / "calibration"
+    / "stage3_v2_drift_history.jsonl"
+)
+# Thresholds for the blocker text. Kept here (vs imported from the
+# refresh package) so this module stays self-contained and the blocker
+# text can be tested without spinning up the refresh package.
+_STAGE2_BLOCKER_WINDOW = 7
+_STAGE2_BLOCKER_MIN_DELTA = 0.001
+_STAGE2_BLOCKER_MIN_IMPROVING = 5
+_STAGE3_V2_BLOCKER_DRIFT_THRESHOLD = 0.015
+_STAGE3_V2_BLOCKER_WINDOW = 7
+
+
+def _load_jsonl_safe(path: Path) -> List[Dict[str, Any]]:
+    """Lenient JSONL reader -- malformed rows are skipped silently.
+    Returns [] for missing files. Same forgiveness contract as the
+    other history loaders in the codebase."""
+    if not path.exists():
+        return []
+    rows: List[Dict[str, Any]] = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    rows.append(json.loads(raw))
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return []
+    return rows
+
+
+def _row_date(row: Dict[str, Any]) -> str:
+    d = row.get("data_max_date") or row.get("date")
+    if d:
+        return str(d)[:10]
+    g = row.get("generated_at_utc") or ""
+    return str(g)[:10] if g else ""
+
+
+def _trailing_distinct_dates(
+    rows: List[Dict[str, Any]], *, window: int,
+) -> List[Dict[str, Any]]:
+    by_date: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        d = _row_date(row)
+        if d:
+            by_date[d] = row
+    if not by_date:
+        return []
+    ordered = sorted(by_date.items(), key=lambda kv: kv[0])
+    return [v for _, v in ordered[-window:]]
+
+
+def _stage2_blocker_reason(
+    history_path: Path,
+) -> Tuple[str, Dict[str, Any], bool]:
+    """Plain-English explanation of why stage2 isn't promoting today.
+
+    Reads the trailing window of stage2 Brier history (staging vs
+    production) and counts how many days the staging candidate beat
+    production by the threshold.
+
+    Returns (reason_text, diagnostic, would_promote_today).
+    `would_promote_today` is True iff the verdict logic would emit
+    `promote` -- used to decide whether flipping `--auto-daemon-mode`
+    to `act` would actually act on this lever.
+    """
+    rows = _load_jsonl_safe(history_path)
+    trailing = _trailing_distinct_dates(rows, window=_STAGE2_BLOCKER_WINDOW)
+    diag = {
+        "history_path": str(history_path),
+        "n_history": len(trailing),
+        "window": _STAGE2_BLOCKER_WINDOW,
+        "min_delta": _STAGE2_BLOCKER_MIN_DELTA,
+        "min_improving_required": _STAGE2_BLOCKER_MIN_IMPROVING,
+    }
+    if not trailing:
+        return ("no stage2 brier history rows yet", diag, False)
+    deltas: List[float] = []
+    n_improving = 0
+    for row in trailing:
+        d = row.get("delta")
+        if isinstance(d, (int, float)):
+            deltas.append(float(d))
+            if float(d) <= -_STAGE2_BLOCKER_MIN_DELTA:
+                n_improving += 1
+    diag["n_improving"] = n_improving
+    if not deltas:
+        return ("trailing rows present but no `delta` field", diag, False)
+    last_delta = deltas[-1]
+    avg_delta = sum(deltas) / len(deltas)
+    diag["last_delta"] = round(last_delta, 6)
+    diag["avg_delta_window"] = round(avg_delta, 6)
+    would_promote = n_improving >= _STAGE2_BLOCKER_MIN_IMPROVING
+    if would_promote:
+        return (
+            f"verdict=PROMOTE ({n_improving}/{len(trailing)} "
+            "improving days)",
+            diag,
+            True,
+        )
+    direction = "worse than" if avg_delta > 0 else "better than"
+    return (
+        f"staging Brier {direction} prod by avg "
+        f"{avg_delta:+.4f} over last {len(trailing)} days; "
+        f"{n_improving}/{len(trailing)} days hit the "
+        f"{-_STAGE2_BLOCKER_MIN_DELTA:+.3f} improving-delta threshold "
+        f"(need {_STAGE2_BLOCKER_MIN_IMPROVING}/{_STAGE2_BLOCKER_WINDOW}). "
+        "Staging candidate is not currently an improvement."
+    ), diag, False
+
+
+def _stage3_v2_blocker_reason(
+    history_path: Path,
+) -> Tuple[str, Dict[str, Any], bool]:
+    """Plain-English explanation of why stage3-v2 isn't promoting.
+
+    The verdict logic flags drift between the research and active
+    Stage-3 v2 betas. `hold` here means "research and active are in
+    sync; nothing to promote" -- the opposite of a problem.
+    """
+    rows = _load_jsonl_safe(history_path)
+    trailing = _trailing_distinct_dates(rows, window=_STAGE3_V2_BLOCKER_WINDOW)
+    diag = {
+        "history_path": str(history_path),
+        "n_history": len(trailing),
+        "window": _STAGE3_V2_BLOCKER_WINDOW,
+        "drift_threshold": _STAGE3_V2_BLOCKER_DRIFT_THRESHOLD,
+    }
+    if not trailing:
+        return ("no stage3-v2 drift history rows yet", diag, False)
+    drifts: List[float] = []
+    for row in trailing:
+        m = row.get("max_abs_delta")
+        if isinstance(m, (int, float)):
+            drifts.append(float(m))
+    if not drifts:
+        return (
+            "trailing rows present but no `max_abs_delta` field",
+            diag, False,
+        )
+    last_drift = drifts[-1]
+    max_in_window = max(drifts)
+    diag["last_max_abs_delta"] = last_drift
+    diag["max_in_window"] = max_in_window
+    if max_in_window >= _STAGE3_V2_BLOCKER_DRIFT_THRESHOLD:
+        return (
+            f"max drift in window {max_in_window:.5f} "
+            f">= {_STAGE3_V2_BLOCKER_DRIFT_THRESHOLD} threshold "
+            "-- promote verdict expected on next refresh",
+            diag, True,
+        )
+    return (
+        f"research vs active drift max {max_in_window:.2e} over "
+        f"last {len(trailing)} days, well below "
+        f"{_STAGE3_V2_BLOCKER_DRIFT_THRESHOLD:.3f} threshold. "
+        "Active model is in sync with research -- no promotion needed."
+    ), diag, False
+
+
+def _stake_scaling_blocker_reason(
+    snapshot: Optional[Dict[str, Any]],
+) -> Tuple[str, Dict[str, Any], bool]:
+    """Use the daemon retrospective's stake-scaling snapshot (which
+    already carries n_sessions / min_sessions from the analysis
+    report) to explain the data-runway status."""
+    diag: Dict[str, Any] = {}
+    if not snapshot:
+        return ("no stake-scaling snapshot in retrospective", diag, False)
+    verdict = str(snapshot.get("verdict_label") or "")
+    n = snapshot.get("n_sessions")
+    mn = snapshot.get("min_sessions")
+    diag["verdict_label"] = verdict
+    diag["n_sessions"] = n
+    diag["min_sessions"] = mn
+    if verdict == "promote":
+        return (
+            "verdict=PROMOTE -- daemon auto-actuates in act mode",
+            diag, True,
+        )
+    if verdict == "need_more_data" and isinstance(n, int) and isinstance(mn, int):
+        return (
+            f"{n}/{mn} sessions of shadow data accumulated; "
+            f"{mn - n} more sessions needed before the verdict can flip",
+            diag, False,
+        )
+    return (f"verdict={verdict or 'unknown'}", diag, False)
+
+
+def _gate_threshold_blocker_reason(
+    snapshot: Optional[Dict[str, Any]],
+) -> Tuple[str, Dict[str, Any], bool]:
+    """Use the daemon retrospective's gate-threshold snapshot to
+    explain the preview-only-by-design pattern + list actionable
+    gates the operator should hand-promote.
+
+    Returns would_promote_today=False ALWAYS because gate-threshold
+    is preview-only-by-design even when verdict=promote (operator
+    must select the threshold value per-gate). This is the design
+    constraint we want to make visible in the daily review.
+    """
+    diag: Dict[str, Any] = {}
+    if not snapshot:
+        return (
+            "no gate-threshold snapshot in retrospective",
+            diag, False,
+        )
+    verdict = str(snapshot.get("verdict_label") or "")
+    actionable = snapshot.get("actionable_gates") or []
+    diag["verdict_label"] = verdict
+    diag["n_actionable_gates"] = len(actionable)
+    if verdict != "promote":
+        return (f"verdict={verdict or 'unknown'}", diag, False)
+    if not actionable:
+        return (
+            "verdict=promote but no actionable gates in snapshot",
+            diag, False,
+        )
+    gates_summary = ", ".join(
+        f"{g.get('name')} {g.get('current_threshold')} -> "
+        f"{g.get('recommended_threshold')}"
+        for g in actionable[:3]
+    )
+    more = (
+        f" + {len(actionable) - 3} more"
+        if len(actionable) > 3 else ""
+    )
+    return (
+        f"preview-only-by-design: daemon does NOT auto-actuate "
+        f"gate-threshold (operator runs `promote.py gate-threshold "
+        f"<gate> <value>`). {len(actionable)} actionable gate(s): "
+        f"{gates_summary}{more}.",
+        diag, False,
+    )
+
 
 def _last_audit_event_for_lever(
     audit_rows: List[Dict[str, Any]], lever_underscore: str,
@@ -424,12 +672,13 @@ def _cache_lineage_freshness_health(
 def _cross_artifact_consistency_health(
     *,
     project_root: Path = PROJECT_DIR,
-    artifact_specs: Sequence[Tuple[str, str]] = CROSS_ARTIFACT_CONSISTENCY_PATHS,
+    artifact_specs: Sequence[Any] = CROSS_ARTIFACT_CONSISTENCY_PATHS,
 ) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "alerts": [],
         "artifacts": {},
         "cross_artifact_divergences": [],
+        "suppressed_transient_stale": [],
     }
 
     try:
@@ -456,12 +705,22 @@ def _cross_artifact_consistency_health(
 
     inputs_seen: Dict[str, List[Tuple[str, str, Optional[str]]]] = {}
 
-    for label, rel_path in artifact_specs:
+    for spec in artifact_specs:
+        # 2026-06-03: support both 2-tuple (label, path) and 3-tuple
+        # (label, path, rebuilt_each_refresh) specs. 2-tuple defaults
+        # to rebuilt_each_refresh=True (the safe default for legacy
+        # callers -- treats transient STALE as suppressible noise).
+        if len(spec) >= 3:
+            label, rel_path, rebuilt_each_refresh = spec[0], spec[1], bool(spec[2])
+        else:
+            label, rel_path = spec[0], spec[1]
+            rebuilt_each_refresh = True
         artifact_path = project_root / rel_path
         info: Dict[str, Any] = {
             "label": label,
             "path": str(artifact_path),
             "exists": artifact_path.exists(),
+            "rebuilt_each_refresh": rebuilt_each_refresh,
             "status": "ok",
             "inputs": [],
         }
@@ -503,14 +762,48 @@ def _cross_artifact_consistency_health(
                     (label, recorded, current),
                 )
             if verdict.get("status") == CONSISTENCY_STALE:
-                payload["alerts"].append(
-                    f"{label} recorded hash for `{ip}` "
-                    f"({(recorded or '')[:30]}) does not match current "
-                    f"file hash ({(current or '')[:30]}). The artifact "
-                    "was built against an older version of this input; "
-                    "rerun the artifact's refresh step to bring it "
-                    "current."
-                )
+                if rebuilt_each_refresh:
+                    # Transient: the same refresh will rebuild this
+                    # artifact at a later step and resolve the
+                    # mismatch by end-of-refresh. Don't fire an alert;
+                    # surface in `suppressed_transient_stale` for
+                    # debugging. The 2026-06-03 fix that introduced
+                    # this branch documented the root cause:
+                    # daily_human_review runs at step 14 of the
+                    # refresh, BEFORE the artifacts at steps 17-38 get
+                    # rebuilt. A STALE check at step 14 is a snapshot
+                    # of an intermediate state, not a real problem.
+                    payload["suppressed_transient_stale"].append({
+                        "artifact": label,
+                        "input_path": ip,
+                        "recorded_hash": recorded,
+                        "current_hash": current,
+                    })
+                else:
+                    # Promotion-gated or otherwise NOT rebuilt by the
+                    # refresh -- alert is real signal. Operator needs
+                    # to run the lever's promote command (or wait for
+                    # the daemon in act mode) to rebuild. Phrase the
+                    # alert with the right next-step language (the
+                    # generic "rerun the artifact's refresh step"
+                    # version was misleading for promotion-gated
+                    # artifacts like stage3_v2_weights, which have
+                    # NO refresh step -- only a manual promotion).
+                    payload["alerts"].append(
+                        f"{label} recorded hash for `{ip}` "
+                        f"({(recorded or '')[:30]}) does not match "
+                        f"current file hash ({(current or '')[:30]}). "
+                        "The artifact is promotion-gated (NOT rebuilt "
+                        "by the daily refresh) and was built against "
+                        "an older version of this input. To bring it "
+                        "current, run `promote.py <lever>` or wait "
+                        "for the auto-daemon in act mode. Cross-check "
+                        "the drift/verdict signal for this lever "
+                        "before promoting -- the input may have "
+                        "changed in ways that don't materially affect "
+                        "the downstream model (e.g., stage3_v2 drift "
+                        "may still be below threshold)."
+                    )
         payload["artifacts"][label] = info
 
     for ip, entries in inputs_seen.items():
@@ -640,6 +933,8 @@ def _daemon_readiness_health(
     report_path: Path,
     session_date: str,
     audit_log_path: Path = DEFAULT_PROMOTION_EVENTS_LOG,
+    stage2_history_path: Path = _DEFAULT_STAGE2_BRIER_HISTORY_PATH,
+    stage3_v2_history_path: Path = _DEFAULT_STAGE3_V2_DRIFT_HISTORY_PATH,
 ) -> Dict[str, Any]:
     """Surface the daemon retrospective's per-lever readiness verdict.
 
@@ -650,9 +945,14 @@ def _daemon_readiness_health(
       - per-lever readiness label (ready_for_act /
         needs_more_history / disagreements_present)
       - overall_ready_for_act (true iff every time-series lever ready)
+      - per-lever blocker_reason: plain-English explanation of why
+        each lever isn't promoting today (added 2026-06-03 to replace
+        the operationally-misleading "ready_for_act -> flip to act"
+        alert that suggested operator action when no verdict was
+        actually saying go)
       - alerts when stale, when disagreements present, or (positive
-        signal) when every lever is ready and operator may flip from
-        `--auto-daemon-mode preview` to `act`.
+        signal) when at least one lever's verdict is currently promote
+        AND the daemon would auto-actuate it in act mode
 
     Surfaces under top-level `notes` with prefix "Daemon-readiness:".
     """
@@ -713,19 +1013,113 @@ def _daemon_readiness_health(
     payload["levers"] = levers
 
     snap_summary: Dict[str, Dict[str, Any]] = {}
-    for lever_name, snap in (report.get("snapshots") or {}).items():
+    snapshots_raw = report.get("snapshots") or {}
+    for lever_name, snap in snapshots_raw.items():
         snap_summary[lever_name] = {
             "verdict_label": snap.get("verdict_label"),
             "actuated_by_daemon": snap.get("actuated_by_daemon"),
         }
     payload["snapshots"] = snap_summary
 
+    # 2026-06-03: per-lever blocker_reason. Replaces the old
+    # "ready_for_act -> flip --auto-daemon-mode act" alert that misled
+    # the operator into thinking the daemon was stuck. The real story
+    # is per-lever: each lever has a specific reason it isn't promoting
+    # today (staging-worse-than-prod, in-sync research/active, runway,
+    # preview-only-by-design). Surface that reason so the daily review
+    # is self-explanatory.
+    blockers: Dict[str, Dict[str, Any]] = {}
+    # stage2 + stage3-v2: blocker text derived from the history files
+    s2_reason, s2_diag, s2_promote = _stage2_blocker_reason(
+        stage2_history_path,
+    )
+    s3_reason, s3_diag, s3_promote = _stage3_v2_blocker_reason(
+        stage3_v2_history_path,
+    )
+    blockers["stage2"] = {
+        "reason": s2_reason, "diag": s2_diag,
+        "would_promote_today": s2_promote,
+    }
+    blockers["stage3-v2"] = {
+        "reason": s3_reason, "diag": s3_diag,
+        "would_promote_today": s3_promote,
+    }
+    # stake-scaling + gate-threshold: blocker text from the
+    # retrospective's snapshot (which already carries the relevant
+    # diagnostic fields from the source verdict reports).
+    sk_reason, sk_diag, sk_promote = _stake_scaling_blocker_reason(
+        snapshots_raw.get("stake-scaling"),
+    )
+    gt_reason, gt_diag, gt_promote = _gate_threshold_blocker_reason(
+        snapshots_raw.get("gate-threshold"),
+    )
+    blockers["stake-scaling"] = {
+        "reason": sk_reason, "diag": sk_diag,
+        "would_promote_today": sk_promote,
+    }
+    blockers["gate-threshold"] = {
+        "reason": gt_reason, "diag": gt_diag,
+        "would_promote_today": gt_promote,
+    }
+    # Decorate the lever entries we already produced from replays so a
+    # single per-lever lookup carries everything.
+    for lever_name, info in blockers.items():
+        levers.setdefault(lever_name, {})
+        levers[lever_name]["blocker_reason"] = info["reason"]
+        levers[lever_name]["blocker_diag"] = info["diag"]
+        levers[lever_name]["would_promote_today"] = info["would_promote_today"]
+    payload["per_lever_blocker_reasons"] = {
+        k: v["reason"] for k, v in blockers.items()
+    }
+
     payload["overall_ready_for_act"] = all_ready
-    if all_ready:
+    # `actionable_today` = levers where the verdict says go AND the
+    # daemon would auto-actuate in `act` mode. Gate-threshold is
+    # excluded by construction (its blocker function returns
+    # would_promote_today=False even when verdict=promote, because
+    # the daemon is preview-only-by-design on this lever). This list
+    # is what makes flipping `--auto-daemon-mode act` USEFUL today
+    # vs. a no-op.
+    actionable_today = [
+        lever for lever, info in blockers.items()
+        if info["would_promote_today"]
+    ]
+    payload["actionable_today"] = actionable_today
+
+    # 2026-06-03: replace the operationally-misleading
+    # "ready_for_act -> flip to act mode" alert with one of three
+    # outcomes:
+    #   1. Some lever IS actionable -> tell the operator to flip and
+    #      what would happen
+    #   2. all_ready (retrospective agrees) but nothing actionable ->
+    #      explain that flipping the mode would not promote anything
+    #      and surface the per-lever reasons
+    #   3. not all_ready (disagreements in history) -> existing
+    #      per-lever disagreement alerts already cover this
+    if actionable_today:
+        readout = []
+        for lever in actionable_today:
+            readout.append(f"{lever}: {blockers[lever]['reason']}")
         payload["alerts"].append(
-            "all time-series levers ready_for_act; operator may consider "
-            "`--auto-daemon-mode act` after reviewing the per-date table "
-            "in the retrospective markdown."
+            f"daemon would auto-actuate "
+            f"{', '.join(actionable_today)} TODAY if flipped to "
+            f"`--auto-daemon-mode act` ({'; '.join(readout)}). "
+            "Cross-check the retrospective's per-date table before "
+            "flipping the mode."
+        )
+    elif all_ready:
+        blocker_summary = "; ".join(
+            f"{lever}={blockers[lever]['reason']}"
+            for lever in (
+                "stage2", "stage3-v2", "stake-scaling", "gate-threshold",
+            )
+        )
+        payload["alerts"].append(
+            "retrospective shows daemon agrees with operator on all "
+            "evaluated dates (overall_ready_for_act=true), but no "
+            "auto-actuatable lever has a `promote` verdict today, so "
+            "flipping `--auto-daemon-mode act` would not promote "
+            f"anything. Per-lever status: {blocker_summary}."
         )
 
     staleness_records = _daemon_staleness_check(
@@ -744,10 +1138,24 @@ def _daemon_readiness_health(
             )
         else:
             tail = "no successful action ever"
+        # 2026-06-03: gate-threshold is preview-only-by-design, so a
+        # stale promote-verdict on it isn't a daemon configuration
+        # bug -- it just means the operator hasn't run
+        # `promote.py gate-threshold <gate> <value>` yet. Use
+        # lever-specific suffix so the alert points at the right fix.
+        if rec["lever"] == "gate-threshold":
+            suffix = (
+                "Preview-only-by-design: daemon does NOT auto-actuate "
+                "this lever. Operator runs `promote.py gate-threshold "
+                "<gate> <value>` (the daemon retrospective's "
+                "snapshot.actionable_gates lists the candidates)."
+            )
+        else:
+            suffix = "Check daemon mode, cooldown, opt-out flags."
         payload["alerts"].append(
             f"{rec['lever']} verdict={rec['verdict_label']} but "
             f"{tail}; > {rec['threshold_days']}d staleness threshold. "
-            "Check daemon mode, cooldown, opt-out flags."
+            f"{suffix}"
         )
 
     return payload

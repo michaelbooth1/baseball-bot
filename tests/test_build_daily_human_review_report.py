@@ -2034,21 +2034,47 @@ class DaemonReadinessHealthTests(unittest.TestCase):
             self.assertEqual(out["alerts"], [])
             self.assertIn("missing", out.get("artifact_error", ""))
 
-    def test_all_ready_emits_positive_signal_alert(self):
+    def test_all_ready_emits_non_actionable_clarification(self):
+        """2026-06-03 reword: when retrospective agreement is good but
+        no auto-actuatable lever has a promote verdict TODAY, the alert
+        should explain that flipping `--auto-daemon-mode act` would
+        NOT promote anything (vs. the misleading older wording that
+        sounded like an opportunity)."""
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "retro.json"
             path.write_text(json.dumps(self._retrospective_payload()),
                             encoding="utf-8")
+            # Isolate from the real stage2/stage3-v2 history files on
+            # disk -- pass empty paths so blocker reasons come from
+            # the "no history rows yet" branch.
+            empty_s2 = Path(td) / "no_s2.jsonl"
+            empty_s3 = Path(td) / "no_s3.jsonl"
             out = bdhr._daemon_readiness_health(
                 report_path=path, session_date="2026-05-16",
+                stage2_history_path=empty_s2,
+                stage3_v2_history_path=empty_s3,
             )
             self.assertTrue(out["overall_ready_for_act"])
+            # actionable_today is empty when no auto-actuatable
+            # lever has a promote verdict.
+            self.assertEqual(out["actionable_today"], [])
             self.assertTrue(
-                any("all time-series levers ready_for_act" in a for a in out["alerts"]),
+                any(
+                    "would not promote anything" in a
+                    and "Per-lever status" in a
+                    for a in out["alerts"]
+                ),
                 f"alerts were: {out['alerts']}",
             )
             self.assertEqual(out["levers"]["stage2"]["readiness_for_act"],
                              "ready_for_act")
+            # New: blocker_reason field surfaces per lever.
+            for lever in ("stage2", "stage3-v2", "stake-scaling",
+                          "gate-threshold"):
+                self.assertIn(lever, out["per_lever_blocker_reasons"])
+                self.assertIn(lever, out["levers"])
+                self.assertIn("blocker_reason", out["levers"][lever])
+                self.assertIn("would_promote_today", out["levers"][lever])
 
     def test_disagreement_emits_per_lever_alert(self):
         with tempfile.TemporaryDirectory() as td:
@@ -2116,6 +2142,232 @@ class DaemonReadinessHealthTests(unittest.TestCase):
             )
             self.assertEqual(out["snapshots"]["stake-scaling"]["verdict_label"], "promote")
             self.assertEqual(out["snapshots"]["gate-threshold"]["actuated_by_daemon"], False)
+
+    def test_blocker_reason_explains_stage2_when_staging_worse_than_prod(self):
+        """2026-06-03: when staging Brier is consistently worse than
+        prod (positive delta), the blocker text should say that in
+        plain English and include the avg delta + improving-days
+        count."""
+        with tempfile.TemporaryDirectory() as td:
+            retro_path = Path(td) / "retro.json"
+            retro_path.write_text(
+                json.dumps(self._retrospective_payload()), encoding="utf-8",
+            )
+            # Build a stage2 history with 7 distinct dates, all with
+            # POSITIVE delta (staging WORSE than prod). None hit the
+            # -0.001 improving threshold so blocker should call out
+            # "0/7 days hit the threshold".
+            s2_path = Path(td) / "s2_history.jsonl"
+            with s2_path.open("w", encoding="utf-8") as f:
+                for i, d in enumerate([
+                    "2026-05-27", "2026-05-28", "2026-05-29", "2026-05-30",
+                    "2026-05-31", "2026-06-01", "2026-06-02",
+                ]):
+                    row = {
+                        "data_max_date": d,
+                        "production_brier": 0.162,
+                        "staging_brier": 0.164,
+                        "delta": 0.002,  # positive = staging worse
+                    }
+                    f.write(json.dumps(row) + "\n")
+            empty_s3 = Path(td) / "no_s3.jsonl"
+            out = bdhr._daemon_readiness_health(
+                report_path=retro_path, session_date="2026-06-03",
+                stage2_history_path=s2_path,
+                stage3_v2_history_path=empty_s3,
+            )
+            reason = out["per_lever_blocker_reasons"]["stage2"]
+            self.assertIn("staging Brier worse than prod", reason)
+            self.assertIn("0/7", reason)
+            self.assertFalse(out["levers"]["stage2"]["would_promote_today"])
+            diag = out["levers"]["stage2"]["blocker_diag"]
+            self.assertEqual(diag["n_improving"], 0)
+            self.assertEqual(diag["n_history"], 7)
+
+    def test_blocker_reason_says_promote_when_stage2_consistently_better(self):
+        """Inverse: when staging consistently beats prod (negative
+        delta) the blocker should say 'verdict=PROMOTE' and
+        would_promote_today should be True, putting stage2 into
+        actionable_today."""
+        with tempfile.TemporaryDirectory() as td:
+            retro_path = Path(td) / "retro.json"
+            retro_path.write_text(
+                json.dumps(self._retrospective_payload()), encoding="utf-8",
+            )
+            s2_path = Path(td) / "s2_history.jsonl"
+            with s2_path.open("w", encoding="utf-8") as f:
+                # 5/7 days hitting the -0.001 threshold = promote
+                for i, (d, delta) in enumerate([
+                    ("2026-05-27", -0.002),
+                    ("2026-05-28", -0.002),
+                    ("2026-05-29", -0.002),
+                    ("2026-05-30", -0.002),
+                    ("2026-05-31", -0.002),
+                    ("2026-06-01",  0.001),   # not improving
+                    ("2026-06-02",  0.001),   # not improving
+                ]):
+                    f.write(json.dumps({
+                        "data_max_date": d,
+                        "production_brier": 0.164,
+                        "staging_brier": 0.164 + delta,
+                        "delta": delta,
+                    }) + "\n")
+            empty_s3 = Path(td) / "no_s3.jsonl"
+            audit = Path(td) / "events.jsonl"
+            audit.write_text("", encoding="utf-8")
+            out = bdhr._daemon_readiness_health(
+                report_path=retro_path, session_date="2026-06-03",
+                stage2_history_path=s2_path,
+                stage3_v2_history_path=empty_s3,
+                audit_log_path=audit,
+            )
+            self.assertTrue(out["levers"]["stage2"]["would_promote_today"])
+            self.assertIn("stage2", out["actionable_today"])
+            self.assertTrue(
+                any(
+                    "stage2" in a and "would auto-actuate" in a
+                    for a in out["alerts"]
+                ),
+                f"alerts: {out['alerts']}",
+            )
+
+    def test_blocker_reason_explains_stage3_v2_when_in_sync(self):
+        """Stage-3 v2 in sync (drift well below threshold) -> blocker
+        should say so explicitly so the operator knows hold is a
+        good state, not a problem."""
+        with tempfile.TemporaryDirectory() as td:
+            retro_path = Path(td) / "retro.json"
+            retro_path.write_text(
+                json.dumps(self._retrospective_payload()), encoding="utf-8",
+            )
+            empty_s2 = Path(td) / "no_s2.jsonl"
+            s3_path = Path(td) / "s3_history.jsonl"
+            with s3_path.open("w", encoding="utf-8") as f:
+                for d in ["2026-05-27","2026-05-28","2026-05-29","2026-05-30",
+                          "2026-05-31","2026-06-01","2026-06-02"]:
+                    f.write(json.dumps({
+                        "data_max_date": d,
+                        "max_abs_delta": 1e-5,  # well below 0.015
+                    }) + "\n")
+            out = bdhr._daemon_readiness_health(
+                report_path=retro_path, session_date="2026-06-03",
+                stage2_history_path=empty_s2,
+                stage3_v2_history_path=s3_path,
+            )
+            reason = out["per_lever_blocker_reasons"]["stage3-v2"]
+            self.assertIn("in sync with research", reason)
+            self.assertIn("no promotion needed", reason)
+            self.assertFalse(out["levers"]["stage3-v2"]["would_promote_today"])
+
+    def test_blocker_reason_for_stake_scaling_shows_runway(self):
+        """stake-scaling 'need_more_data' should produce a blocker
+        like '7/30 sessions; 23 more needed'."""
+        with tempfile.TemporaryDirectory() as td:
+            retro_payload = self._retrospective_payload(
+                stake_scaling_verdict="need_more_data",
+            )
+            # Override stake-scaling snapshot to include the runway
+            # numbers (the fixture's default doesn't).
+            retro_payload["snapshots"]["stake-scaling"] = {
+                "verdict_label": "need_more_data",
+                "n_sessions": 7, "min_sessions": 30,
+                "actuated_by_daemon": True,
+            }
+            retro_path = Path(td) / "retro.json"
+            retro_path.write_text(json.dumps(retro_payload), encoding="utf-8")
+            empty_s2 = Path(td) / "no_s2.jsonl"
+            empty_s3 = Path(td) / "no_s3.jsonl"
+            out = bdhr._daemon_readiness_health(
+                report_path=retro_path, session_date="2026-06-03",
+                stage2_history_path=empty_s2,
+                stage3_v2_history_path=empty_s3,
+            )
+            reason = out["per_lever_blocker_reasons"]["stake-scaling"]
+            self.assertIn("7/30", reason)
+            self.assertIn("23 more", reason)
+            self.assertFalse(
+                out["levers"]["stake-scaling"]["would_promote_today"],
+            )
+
+    def test_blocker_reason_for_gate_threshold_explains_preview_only(self):
+        """gate-threshold verdict=promote should NOT add gate-threshold
+        to actionable_today (preview-only-by-design). Blocker text
+        should explain why + list the actionable gates."""
+        with tempfile.TemporaryDirectory() as td:
+            retro_payload = self._retrospective_payload()
+            retro_payload["snapshots"]["gate-threshold"] = {
+                "verdict_label": "promote",
+                "actuated_by_daemon": False,
+                "actionable_gates": [
+                    {"name": "gate_extreme_edge",
+                     "current_threshold": 0.22,
+                     "recommended_threshold": 0.30},
+                    {"name": "gate_high_line_min_inning",
+                     "current_threshold": 5,
+                     "recommended_threshold": 6},
+                ],
+            }
+            retro_path = Path(td) / "retro.json"
+            retro_path.write_text(json.dumps(retro_payload), encoding="utf-8")
+            empty_s2 = Path(td) / "no_s2.jsonl"
+            empty_s3 = Path(td) / "no_s3.jsonl"
+            audit = Path(td) / "events.jsonl"
+            audit.write_text("", encoding="utf-8")
+            out = bdhr._daemon_readiness_health(
+                report_path=retro_path, session_date="2026-06-03",
+                stage2_history_path=empty_s2,
+                stage3_v2_history_path=empty_s3,
+                audit_log_path=audit,
+            )
+            reason = out["per_lever_blocker_reasons"]["gate-threshold"]
+            self.assertIn("preview-only-by-design", reason)
+            self.assertIn("gate_extreme_edge 0.22 -> 0.3", reason)
+            self.assertIn("gate_high_line_min_inning 5 -> 6", reason)
+            self.assertFalse(
+                out["levers"]["gate-threshold"]["would_promote_today"],
+            )
+            # Even though verdict=promote, gate-threshold must NOT be
+            # in actionable_today because the daemon is preview-only
+            # on this lever by design.
+            self.assertNotIn("gate-threshold", out["actionable_today"])
+
+    def test_gate_threshold_staleness_alert_uses_preview_only_wording(self):
+        """When gate-threshold staleness fires (verdict=promote, no
+        action in > threshold days), the alert should NOT say 'Check
+        daemon mode' (that misleads the operator). It should explain
+        preview-only-by-design + point at promote.py gate-threshold."""
+        with tempfile.TemporaryDirectory() as td:
+            retro_payload = self._retrospective_payload()
+            retro_payload["snapshots"]["gate-threshold"] = {
+                "verdict_label": "promote",
+                "actuated_by_daemon": False,
+            }
+            retro_path = Path(td) / "retro.json"
+            retro_path.write_text(json.dumps(retro_payload), encoding="utf-8")
+            audit = Path(td) / "events.jsonl"
+            audit.write_text("", encoding="utf-8")  # no events ever
+            empty_s2 = Path(td) / "no_s2.jsonl"
+            empty_s3 = Path(td) / "no_s3.jsonl"
+            out = bdhr._daemon_readiness_health(
+                report_path=retro_path, session_date="2026-06-03",
+                stage2_history_path=empty_s2,
+                stage3_v2_history_path=empty_s3,
+                audit_log_path=audit,
+            )
+            stale_alerts = [
+                a for a in out["alerts"]
+                if "gate-threshold verdict=promote" in a
+            ]
+            self.assertEqual(len(stale_alerts), 1, out["alerts"])
+            self.assertIn("Preview-only-by-design", stale_alerts[0])
+            self.assertIn(
+                "promote.py gate-threshold", stale_alerts[0],
+            )
+            # Critical: must NOT include the misleading old suffix.
+            self.assertNotIn(
+                "Check daemon mode, cooldown, opt-out flags",
+                stale_alerts[0],
+            )
 
     def test_top_level_notes_include_daemon_readiness_alerts(self):
         dr_health = {

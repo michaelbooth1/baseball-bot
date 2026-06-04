@@ -286,27 +286,54 @@ B4_MILESTONE_DRIFT_PERSISTENCE_THRESHOLD = 3
 # condition status in the JSON for the operator).
 B4_MILESTONE_MIN_N_FOR_FAILURE_ALERT = 30
 
-CROSS_ARTIFACT_CONSISTENCY_PATHS: Tuple[Tuple[str, str], ...] = (
-    ("stage1_cache", "cache/mlb_ou_cache.json"),
-    ("stage2_cache", "cache/mlb_stage2_run_env.json"),
-    ("stage3_v2_weights", "cache/team_offense_v2_weights.json"),
+# 2026-06-03: extended from 2-tuple (label, path) to 3-tuple
+# (label, path, rebuilt_each_refresh) to suppress transient STALE
+# alerts on artifacts that the same refresh will resolve.
+#
+# Root cause of the noise: `daily_human_review` runs at step 14 of the
+# refresh, BEFORE the artifacts at steps 17-38 get rebuilt. So the
+# consistency check at step 14 sees yesterday's lineage vs whatever
+# inputs were rewritten by earlier steps -- a transient state that
+# would be resolved by end-of-refresh.
+#
+# For `rebuilt_each_refresh=True` artifacts (calibrator, walk-forward,
+# etc.), STALE alerts are downgraded to informational notes -- they
+# self-resolve by end of the same refresh.
+#
+# For `rebuilt_each_refresh=False` artifacts (`stage3_v2_weights` is
+# promotion-gated, only rebuilt on operator-approved promotion), STALE
+# alerts continue to fire because the operator needs to act
+# (`promote.py stage3-v2` or wait for the daemon in act mode).
+#
+# The 3-tuple shape is back-compat: the consumer's defensive code in
+# `_cross_artifact_consistency_health` falls back to True if a spec
+# is a 2-tuple, preserving the old behavior for any external callers.
+CROSS_ARTIFACT_CONSISTENCY_PATHS: Tuple[Tuple[str, str, bool], ...] = (
+    ("stage1_cache", "cache/mlb_ou_cache.json", True),
+    ("stage2_cache", "cache/mlb_stage2_run_env.json", True),
+    # stage3_v2_weights is PROMOTION-GATED (operator runs
+    # `promote.py stage3-v2`), not rebuilt by the daily refresh, so a
+    # stale alert IS real signal for the operator.
+    ("stage3_v2_weights", "cache/team_offense_v2_weights.json", False),
     ("calibrator_over",
-     "data/analysis_output/calibration/signal_win_calibration.json"),
+     "data/analysis_output/calibration/signal_win_calibration.json", True),
     ("calibrator_under",
-     "data/analysis_output/calibration/signal_win_calibration_under.json"),
+     "data/analysis_output/calibration/signal_win_calibration_under.json",
+     True),
     ("walk_forward_cert",
      "data/analysis_output/walk_forward_certification/"
-     "walk_forward_certification.json"),
+     "walk_forward_certification.json", True),
     ("ev_policy_report",
-     "data/analysis_output/ev_policy/ev_policy_report.json"),
+     "data/analysis_output/ev_policy/ev_policy_report.json", True),
     ("loss_attribution",
-     "data/analysis_output/loss_attribution/loss_attribution_report.json"),
+     "data/analysis_output/loss_attribution/loss_attribution_report.json",
+     True),
     ("stage1_shadow_override",
      "data/analysis_output/stage1_shadow_override/"
-     "stage1_shadow_override_report.json"),
+     "stage1_shadow_override_report.json", True),
     ("stage1_cell_loss_attribution",
      "data/analysis_output/stage1_cell_loss_attribution/"
-     "stage1_cell_loss_attribution.json"),
+     "stage1_cell_loss_attribution.json", True),
 )
 LOSS_ATTRIBUTION_NOTES_MIN_ABS_BIAS = 0.05
 LOSS_ATTRIBUTION_NOTES_MIN_SHARE = 0.50

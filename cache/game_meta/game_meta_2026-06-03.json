@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "date": "2026-06-03",
+  "generated_at_utc": "2026-06-03T15:17:13Z",
+  "coverage": {
+    "scheduled_games": 15,
+    "games_with_umpire": 3
+  },
+  "warnings": [],
+  "games": [
+    {
+      "game_pk": 822727,
+      "hp_umpire_id": 484198,
+      "hp_umpire_name": "Alan Porter",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 484198,
+          "name": "Alan Porter"
+        },
+        {
+          "type": "First Base",
+          "id": 577468,
+          "name": "Roberto Ortiz"
+        },
+        {
+          "type": "Second Base",
+          "id": 427554,
+          "name": "Jim Wolf"
+        },
+        {
+          "type": "Third Base",
+          "id": 623945,
+          "name": "Alex MacKay"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 822973,
+      "hp_umpire_id": 658292,
+      "hp_umpire_name": "Derek Thomas",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 658292,
+          "name": "Derek Thomas"
+        },
+        {
+          "type": "First Base",
+          "id": 605670,
+          "name": "Dan Merzel"
+        },
+        {
+          "type": "Second Base",
+          "id": 483564,
+          "name": "Dan Bellino"
+        },
+        {
+          "type": "Third Base",
+          "id": 483919,
+          "name": "Mark Ripperger"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823701,
+      "hp_umpire_id": 639723,
+      "hp_umpire_name": "Brennan Miller",
+      "officials": [
+        {
+          "type": "Home Plate",
+          "id": 639723,
+          "name": "Brennan Miller"
+        },
+        {
+          "type": "First Base",
+          "id": 482620,
+          "name": "Chris Conroy"
+        },
+        {
+          "type": "Second Base",
+          "id": 521251,
+          "name": "Ben May"
+        },
+        {
+          "type": "Third Base",
+          "id": 483630,
+          "name": "John Tumpane"
+        }
+      ],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823130,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823456,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824755,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823540,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824509,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824917,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823780,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 823051,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824671,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824188,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 824024,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    },
+    {
+      "game_pk": 825077,
+      "hp_umpire_id": null,
+      "hp_umpire_name": "",
+      "officials": [],
+      "fetch_ok": true
+    }
+  ]
+}

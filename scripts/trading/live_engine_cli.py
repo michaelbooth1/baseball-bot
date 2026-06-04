@@ -36,6 +36,15 @@ PROJECT_DIR = Path(__file__).resolve().parents[2]
 # ---------------------------------------------------------------------------
 
 DEFAULT_SPREAD_FACTOR            = 0.65    # limit price: bid + spread * factor
+# 2026-06-03 fill-optimization fix: cap the maximum below-ask gap on
+# the limit-buy price. The pre-fix logic (spread_factor=0.65, no gap
+# cap) let limits sit 6-10c below ask in wide-spread regimes, where
+# the 34-day historical fill rate was ~50%. Fills above 1.5c below
+# ask were ~80-94%. Default 0.02 (= 2c) lands the bot in the high-
+# fill zone while preserving some below-ask savings. Audit data:
+# moving from current (mean gap ~1.9c, 80% fill) to a 2c cap is
+# estimated at +$4-5/day at $20 stake on the 28-cancel sample.
+DEFAULT_MAX_LIMIT_GAP_BELOW_ASK  = 0.02    # cap: limit >= ask - 2c
 DEFAULT_ORDER_TIMEOUT_SECS       = 10800.0 # safety-net cancel after 3 hours
 DEFAULT_MAX_OPEN_ORDERS          = 5       # refuse new bets when this many orders live
 DEFAULT_MIN_ORDER_SIZE           = 5.0     # Polymarket minimum order size in USDC
@@ -122,6 +131,7 @@ DEFAULT_WALLET_EXHAUSTED_COOLDOWN_SECS = 300.0  # 5 min
 __all__ = [
     "PROJECT_DIR",
     "DEFAULT_SPREAD_FACTOR",
+    "DEFAULT_MAX_LIMIT_GAP_BELOW_ASK",
     "DEFAULT_ORDER_TIMEOUT_SECS",
     "DEFAULT_MAX_OPEN_ORDERS",
     "DEFAULT_MIN_ORDER_SIZE",
@@ -188,6 +198,20 @@ def parse_live_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace, 
                         "is read from the .env file.")
     p.add_argument("--spread-factor", type=float, default=DEFAULT_SPREAD_FACTOR,
                    help=f"Limit price position in spread: bid + spread*factor (default: {DEFAULT_SPREAD_FACTOR})")
+    p.add_argument(
+        "--max-limit-gap-below-ask", type=float,
+        default=DEFAULT_MAX_LIMIT_GAP_BELOW_ASK,
+        help=(
+            "2026-06-03 fill-optimization: cap the maximum below-ask "
+            "gap on limit-buy prices. The bot's natural limit "
+            "(bid + spread*spread_factor) can fall many cents below "
+            "ask in wide-spread regimes; orders >1.5c below ask have "
+            "historically had ~50-80% fill rate vs ~94% for at-ask. "
+            "This floor forces limit >= ask - max_gap, dramatically "
+            "improving fill rate at the cost of some below-ask "
+            f"savings. (default: {DEFAULT_MAX_LIMIT_GAP_BELOW_ASK})"
+        ),
+    )
     p.add_argument("--order-timeout-secs", type=float, default=DEFAULT_ORDER_TIMEOUT_SECS,
                    help=f"Safety-net: cancel orders older than this many seconds "
                         f"(default: {DEFAULT_ORDER_TIMEOUT_SECS}s = 3 hours). "

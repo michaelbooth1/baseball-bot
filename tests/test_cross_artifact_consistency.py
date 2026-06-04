@@ -175,10 +175,21 @@ class CrossArtifactConsistencyHealthTests(unittest.TestCase):
     def _specs(
         self, root: Path,
         artifact_rel_paths: Dict[str, str],
+        *,
+        rebuilt_each_refresh: bool = False,
     ) -> tuple:
         """Translate a {label: rel_path} dict into the
-        artifact_specs tuple shape the block expects."""
-        return tuple((label, path) for label, path in artifact_rel_paths.items())
+        artifact_specs tuple shape the block expects.
+
+        2026-06-03: tests default to `rebuilt_each_refresh=False` so
+        STALE alerts fire (the older behavior under the 2-tuple
+        contract). Tests of the new suppression branch pass
+        `rebuilt_each_refresh=True` explicitly.
+        """
+        return tuple(
+            (label, path, rebuilt_each_refresh)
+            for label, path in artifact_rel_paths.items()
+        )
 
     def test_all_artifacts_missing_no_alerts(self):
         root = self._setup_workspace()
@@ -452,8 +463,132 @@ class CrossArtifactConsistencyHealthTests(unittest.TestCase):
             project_root=PROJECT_DIR,
             artifact_specs=(),
         )
-        for k in ("alerts", "artifacts", "cross_artifact_divergences"):
+        for k in (
+            "alerts", "artifacts", "cross_artifact_divergences",
+            "suppressed_transient_stale",
+        ):
             self.assertIn(k, out)
+
+    def test_rebuilt_each_refresh_suppresses_transient_stale(self):
+        """2026-06-03 fix: when an artifact is marked
+        rebuilt_each_refresh=True AND its input hash mismatches,
+        downgrade the STALE alert -- the same refresh will resolve
+        the mismatch at a later step. The mismatch goes into
+        `suppressed_transient_stale` for debugging."""
+        root = self._setup_workspace()
+        try:
+            tt = root / "data" / "analysis_output" / "training_tables" / "tt.jsonl"
+            _write_text(tt, "v1")
+            cal = (
+                root / "data" / "analysis_output"
+                / "calibration" / "cal.json"
+            )
+            cal.parent.mkdir(parents=True, exist_ok=True)
+            _write_artifact_with_lineage(cal, input_hashes={
+                "data/analysis_output/training_tables/tt.jsonl": (
+                    _hash_text("v1")
+                ),
+            })
+            # Update input -> mismatch
+            _write_text(tt, "v2")
+            # 3-tuple spec with rebuilt_each_refresh=True
+            specs = self._specs(
+                root,
+                {"calibrator_over": "data/analysis_output/calibration/cal.json"},
+                rebuilt_each_refresh=True,
+            )
+            out = bdhr._cross_artifact_consistency_health(
+                project_root=root, artifact_specs=specs,
+            )
+            # No alert (suppressed -- transient noise)
+            stale_alerts = [
+                a for a in out["alerts"] if "does not match" in a
+            ]
+            self.assertEqual(stale_alerts, [])
+            # Recorded in suppressed_transient_stale for visibility
+            self.assertEqual(len(out["suppressed_transient_stale"]), 1)
+            sup = out["suppressed_transient_stale"][0]
+            self.assertEqual(sup["artifact"], "calibrator_over")
+            self.assertEqual(
+                sup["input_path"],
+                "data/analysis_output/training_tables/tt.jsonl",
+            )
+            # Artifact info also exposes the flag for downstream
+            # consumers (e.g., dashboards rendering per-artifact status)
+            self.assertTrue(
+                out["artifacts"]["calibrator_over"]["rebuilt_each_refresh"],
+            )
+        finally:
+            import shutil
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_non_rebuilt_artifact_still_fires_alert_with_promote_wording(self):
+        """Promotion-gated artifacts (rebuilt_each_refresh=False) still
+        fire STALE alerts. The alert wording now points at
+        `promote.py <lever>` rather than the misleading "rerun the
+        refresh step" wording (there IS no refresh step for these
+        artifacts)."""
+        root = self._setup_workspace()
+        try:
+            tt = root / "data" / "analysis_output" / "training_tables" / "tt.jsonl"
+            _write_text(tt, "v1")
+            stage3 = root / "cache" / "team_offense_v2_weights.json"
+            _write_artifact_with_lineage(stage3, input_hashes={
+                "data/analysis_output/training_tables/tt.jsonl": (
+                    _hash_text("v1")
+                ),
+            })
+            _write_text(tt, "v2")  # mismatch
+            specs = self._specs(
+                root,
+                {"stage3_v2_weights": "cache/team_offense_v2_weights.json"},
+                rebuilt_each_refresh=False,
+            )
+            out = bdhr._cross_artifact_consistency_health(
+                project_root=root, artifact_specs=specs,
+            )
+            # Alert fires
+            self.assertEqual(len(out["alerts"]), 1)
+            alert = out["alerts"][0]
+            self.assertIn("stage3_v2_weights", alert)
+            self.assertIn("promote.py", alert)
+            self.assertIn("promotion-gated", alert)
+            # Not in suppressed_transient_stale (this IS real signal)
+            self.assertEqual(out["suppressed_transient_stale"], [])
+        finally:
+            import shutil
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_two_tuple_back_compat_default_to_rebuilt(self):
+        """Back-compat: 2-tuple specs (label, path) default to
+        rebuilt_each_refresh=True for callers built before the
+        2026-06-03 schema change. This means external callers using
+        the older shape get the new (less-noisy) behavior by
+        default."""
+        root = self._setup_workspace()
+        try:
+            tt = root / "data" / "analysis_output" / "training_tables" / "tt.jsonl"
+            _write_text(tt, "v1")
+            cal = root / "data" / "analysis_output" / "calibration" / "cal.json"
+            cal.parent.mkdir(parents=True, exist_ok=True)
+            _write_artifact_with_lineage(cal, input_hashes={
+                "data/analysis_output/training_tables/tt.jsonl": (
+                    _hash_text("v1")
+                ),
+            })
+            _write_text(tt, "v2")  # mismatch
+            # 2-tuple spec (legacy shape)
+            specs = (("calibrator_over",
+                      "data/analysis_output/calibration/cal.json"),)
+            out = bdhr._cross_artifact_consistency_health(
+                project_root=root, artifact_specs=specs,
+            )
+            # Defaults to rebuilt_each_refresh=True -> suppressed
+            self.assertEqual(out["alerts"], [])
+            self.assertEqual(len(out["suppressed_transient_stale"]), 1)
+        finally:
+            import shutil
+            shutil.rmtree(root, ignore_errors=True)
 
 
 class NotesBlockMirrorTests(unittest.TestCase):

@@ -82,6 +82,20 @@ def compute_limit_price(
     edge_cap = fair_value - min_edge   # don't pay more than FV - min_edge
     limit = min(limit_raw, edge_cap)   # cap: preserve edge
     limit = min(limit, ask - 0.01)     # cap: must stay inside spread
+    # 2026-06-03 fill-optimization fix: floor the limit at
+    # `ask - max_limit_gap_below_ask`. The pre-fix bid+spread*factor
+    # logic let the limit fall 6-10c below ask in wide-spread regimes,
+    # which historically filled only ~50% of the time. Floor pulls
+    # the limit back up so it sits in the high-fill (~80-94%) zone.
+    # Audit data (34d live, 28 cancels): 27 of 28 cancels would have
+    # WON had they filled at ask; the gap was the only blocker.
+    # If max_limit_gap_below_ask is None or <= 0, no floor is applied
+    # (back-compat for callers built before this fix).
+    max_gap = getattr(
+        engine.live_args, "max_limit_gap_below_ask", None,
+    )
+    if max_gap is not None and max_gap > 0:
+        limit = max(limit, ask - float(max_gap))
     limit = max(limit, bid + 0.01)     # floor: must improve on bid
     limit = round(limit, 2)
 
