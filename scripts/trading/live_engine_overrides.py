@@ -100,6 +100,13 @@ _GATE_THRESHOLD_ROUTES: Dict[str, Tuple[str, str, str]] = {
     "gate_min_inning":       ("trade", "min_inning",         "--min-inning"),
     "gate_min_entry_ask":    ("trade", "min_entry_ask",      "--min-entry-ask"),
     "gate_runs_needed_max":  ("trade", "runs_needed_max",    "--runs-needed-max"),
+    # 2026-06-04 phantom-risk-band gate. Tunable via override file
+    # so the operator can dial it without restarting CLI invocation.
+    # Set to 1.0 to disable; default 0.70 blocks the "high" band that
+    # the cross-engine audit identified as systematically -EV.
+    "gate_phantom_risk_band": (
+        "trade", "max_phantom_risk_score", "--max-phantom-risk-score",
+    ),
 }
 
 

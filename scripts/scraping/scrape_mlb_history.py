@@ -253,12 +253,58 @@ def game_output_path(g: GameRef) -> Path:
     )
 
 
+# 2026-06-04: retry-with-backoff parameters for atomic-rename. On
+# Windows, `os.replace` fails with PermissionError (WinError 32)
+# when another process holds the target file open for reading --
+# this surfaced as a persistent `scrape_active_schedule` refresh
+# failure when the live engine was tailing `schedule_2026-05.json`
+# during the daily refresh. Linux doesn't have this problem.
+# 5 attempts with exponential backoff = 0.1+0.2+0.4+0.8+1.6 = 3.1s
+# total wait, plenty for a typical brief read-handle release.
+_ATOMIC_REPLACE_MAX_ATTEMPTS = 5
+_ATOMIC_REPLACE_BASE_DELAY_S = 0.1
+
+
+def _atomic_replace_with_retry(
+    src: Path,
+    dst: Path,
+    *,
+    max_attempts: int = _ATOMIC_REPLACE_MAX_ATTEMPTS,
+    base_delay_s: float = _ATOMIC_REPLACE_BASE_DELAY_S,
+) -> None:
+    """Atomic rename `src` -> `dst`, retrying on Windows file-lock
+    PermissionErrors. Re-raises the last error if all attempts fail.
+
+    Why: another process (e.g., the live engine tailing this same
+    schedule file) can hold the target open for reading during a
+    refresh's atomic-write. Windows refuses the rename in that case;
+    Linux honors it. A small bounded retry-with-backoff lets the
+    reader's handle clear naturally and the rename succeeds on the
+    second or third attempt almost every time.
+    """
+    last_err: Optional[Exception] = None
+    for attempt in range(max_attempts):
+        try:
+            src.replace(dst)
+            return
+        except PermissionError as exc:
+            last_err = exc
+            if attempt + 1 >= max_attempts:
+                break
+            time.sleep(base_delay_s * (2 ** attempt))
+    # All attempts exhausted -- re-raise the last PermissionError so
+    # the caller's existing error handling (and the refresh step's
+    # failure logging) works exactly as before.
+    if last_err is not None:
+        raise last_err
+
+
 def save_json(path: Path, payload: dict) -> None:
     ensure_dir(path.parent)
     tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
-    tmp.replace(path)
+    _atomic_replace_with_retry(tmp, path)
 
 
 def _cached_game_is_final(path: Path) -> bool:

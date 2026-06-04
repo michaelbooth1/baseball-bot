@@ -2477,6 +2477,193 @@ class CalibratedStakeScalingPlacementTests(unittest.TestCase):
             ])
 
 
+class PhantomRiskBandGateTests(unittest.TestCase):
+    """2026-06-04 phantom-risk-band gate. Blocks signals where the
+    shadow_phantom_risk_score >= max_phantom_risk_score. Cross-engine
+    audit (n=58 since 2026-05-01) showed the high band (score>=0.70)
+    has ROI -13.86% with 95% Wilson CI on WR [44%, 69%] sitting
+    entirely below the ~70% break-even at typical fill ask.
+
+    Pattern mirrors LineHighFvBlockGateTests above: synthetic engine
+    with every OTHER gate disabled, exercise evaluate_post_fv_gates,
+    assert on record_skip's args.
+    """
+
+    @staticmethod
+    def _fake_market(line="7.5"):
+        from types import SimpleNamespace
+        return SimpleNamespace(line=line, token_id="tok")
+
+    @staticmethod
+    def _fake_game():
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            game_pk=824671, away_abbrev="ATH", home_abbrev="CHC",
+        )
+
+    @staticmethod
+    def _fake_ctx(line="7.5", inning=8):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            game=PhantomRiskBandGateTests._fake_game(),
+            market=PhantomRiskBandGateTests._fake_market(line=line),
+            state=None, now=0.0,
+            inning=inning, inning_state="Top",
+            away_score=4, home_score=2, outs=1, runners_on=0,
+            current_total=6, line_val=float(line),
+            best_bid=0.55, ask=0.60, book={},
+        )
+
+    @staticmethod
+    def _fake_fv_result(edge=0.20):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            stopped=False, edge=edge, min_edge=0.10,
+            min_edge_base=0.10, ask_edge_boost=0.0,
+            base_fair_value=0.80, fair_value=0.80,
+        )
+
+    def _engine(self, **trade_arg_overrides):
+        import sys
+        from pathlib import Path
+        from types import SimpleNamespace
+        sys.path.insert(0, str(
+            Path(__file__).resolve().parents[1] / "scripts" / "trading",
+        ))
+        import signal_engine as se
+        engine = se.SignalEngine.__new__(se.SignalEngine)
+        # All other gates disabled so we isolate phantom-risk behavior.
+        defaults = dict(
+            extreme_edge_max=1.0,
+            max_base_fv=1.0,
+            fv_ask_gap_max=1.0,
+            fv_ask_gap_min_inning=99,
+            s2_suppress_max=-99.0,
+            s2_suppress_min_inning=99,
+            sp_era_threshold=0.0,
+            sp_era_max_inning=0,
+            sp_era_edge_boost=0.0,
+            event_dedup_secs=0.0,
+            inning_dedup_gap=0,
+            inning_dedup_edge_gap=0.0,
+            edge_threshold=0.0,
+            edge_threshold_high_line=0.0,
+            high_line_cutoff=999.0,
+            line_high_fv_block_mode="off",
+            line_high_fv_block_min_raw_fv=0.90,
+            line_high_fv_block_lines="5.5",
+            max_phantom_risk_score=0.70,  # the new flag we're testing
+        )
+        defaults.update(trade_arg_overrides)
+        engine.trade_args = SimpleNamespace(**defaults)
+        engine._log_skip_debug_once = lambda **_: None
+        engine._line_state = {}
+        engine._last_bet_ts = {}
+        engine._last_bet_edge = {}
+        engine._last_bet_inning = {}
+        engine._last_bet_edge_by_line = {}
+        engine._pitcher_cache = None
+        return engine
+
+    def _call(self, *, phantom_score, max_phantom=0.70, edge=0.20):
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(
+            Path(__file__).resolve().parents[1] / "scripts" / "trading",
+        ))
+        import signal_pipeline_gates_post_fv as gpf
+
+        engine = self._engine(max_phantom_risk_score=max_phantom)
+        ctx = self._fake_ctx()
+        fv_result = self._fake_fv_result(edge=edge)
+        def _band(s):
+            if not isinstance(s, (int, float)):
+                return None
+            if s >= 0.70: return "high"
+            if s >= 0.40: return "medium"
+            return "low"
+        payload = {
+            "base_fair_value": 0.80,
+            "shadow_phantom_risk_score": phantom_score,
+            "shadow_phantom_risk_band": _band(phantom_score),
+        }
+        skip_reasons = []
+        skip_values = []
+
+        def record_skip(reason, *, shadow_values=None, **_):
+            skip_reasons.append(reason)
+            skip_values.append(shadow_values or {})
+
+        stopped = gpf.evaluate_post_fv_gates(
+            engine, ctx=ctx, candidate_payload=payload,
+            fv_result=fv_result, record_skip=record_skip,
+        )
+        return stopped, payload, skip_reasons, skip_values
+
+    def test_score_below_threshold_passes_through(self):
+        """phantom_score=0.65 with threshold 0.70 -> not blocked."""
+        stopped, _, reasons, _ = self._call(phantom_score=0.65)
+        self.assertNotIn("gate_phantom_risk_band", reasons)
+        self.assertFalse(stopped)
+
+    def test_score_at_threshold_blocks(self):
+        """phantom_score=0.70 (= the 'high' band boundary) blocks."""
+        stopped, _, reasons, values = self._call(phantom_score=0.70)
+        self.assertIn("gate_phantom_risk_band", reasons)
+        self.assertTrue(stopped)
+        idx = reasons.index("gate_phantom_risk_band")
+        sv = values[idx]
+        self.assertAlmostEqual(sv["shadow_phantom_risk_score"], 0.70)
+        self.assertEqual(sv["shadow_phantom_risk_band"], "high")
+        self.assertAlmostEqual(sv["max_phantom_risk_score"], 0.70)
+
+    def test_score_well_above_threshold_blocks(self):
+        """A real audit-day example: score=0.899 (06-03 ATH@CHC 9.5
+        bet that lost $20)."""
+        stopped, _, reasons, values = self._call(phantom_score=0.899)
+        self.assertIn("gate_phantom_risk_band", reasons)
+        self.assertTrue(stopped)
+        idx = reasons.index("gate_phantom_risk_band")
+        self.assertAlmostEqual(
+            values[idx]["shadow_phantom_risk_score"], 0.899,
+        )
+
+    def test_threshold_of_1_disables_gate(self):
+        """max_phantom_risk_score=1.0 -> gate is disabled. Even
+        very high scores pass through."""
+        stopped, _, reasons, _ = self._call(
+            phantom_score=0.95, max_phantom=1.0,
+        )
+        self.assertNotIn("gate_phantom_risk_band", reasons)
+        self.assertFalse(stopped)
+
+    def test_missing_phantom_score_does_not_block(self):
+        """When the candidate payload has no phantom score (e.g.,
+        Stage-1 didn't run the score-transition path), the gate
+        must NOT fire -- gates should fail-OPEN on missing data
+        rather than block all bets when one diagnostic is dark."""
+        stopped, _, reasons, _ = self._call(phantom_score=None)
+        self.assertNotIn("gate_phantom_risk_band", reasons)
+        self.assertFalse(stopped)
+
+    def test_non_numeric_phantom_score_does_not_block(self):
+        """Defensive: if the payload has a string or other non-numeric
+        value (corrupted upstream), don't crash and don't block."""
+        stopped, _, reasons, _ = self._call(phantom_score="nan_string")
+        self.assertNotIn("gate_phantom_risk_band", reasons)
+        self.assertFalse(stopped)
+
+    def test_tighter_threshold_blocks_medium_band_too(self):
+        """If an operator wants to block 'medium' band too (e.g.,
+        --max-phantom-risk-score 0.40), the gate should respect it.
+        Verifies the threshold isn't hardcoded to the high band."""
+        stopped, _, reasons, _ = self._call(
+            phantom_score=0.50, max_phantom=0.40,
+        )
+        self.assertIn("gate_phantom_risk_band", reasons)
+        self.assertTrue(stopped)
+
+
 class ComputeLimitPriceMaxGapTests(unittest.TestCase):
     """2026-06-03 fill-optimization: cap the maximum below-ask gap on
     limit-buy prices. Audit data showed orders >1.5c below ask had a

@@ -45,6 +45,7 @@ from signal_config import (
     DEFAULT_ASK_EDGE_RAMP_MAX_BOOST,
     DEFAULT_ASK_EDGE_RAMP_START,
     DEFAULT_EXTREME_EDGE_MAX,
+    DEFAULT_MAX_PHANTOM_RISK_SCORE,
     STAGE1_ALT_A_SCOPE_RULES,
     STAGE1_ALT_A_SCOPE_DEFAULT_ACTION,
 )
@@ -1063,6 +1064,66 @@ def evaluate_post_fv_gates(
             },
         )
         return True
+
+    # --- GATE 8f.4: Phantom-risk-band gate (2026-06-04) ---
+    # Block signals where the shadow_phantom_risk_score (computed in
+    # signal_pipeline_state_value._attach_score_transition_shadow_fields)
+    # exceeds the threshold. The score is the bot's own diagnostic
+    # for "this bet's edge depends on a score event the model doesn't
+    # actually expect". Was shadow-only until 2026-06-04 audit found:
+    #   high-band (>=0.70) cross-engine cohort (n=58 since 2026-05-01):
+    #     WR 56.9%, ROI -13.86% -- 95% Wilson CI [44%, 69%] sits
+    #     entirely below the ~70% break-even at typical fill ask.
+    # gate_extreme_edge above only catches edge > 0.22 (TR17), which
+    # the 2026-06-03 live phantom-cohort (3 high bets, all edge
+    # 0.15-0.21) bypassed entirely. This gate fills that protection
+    # gap. Default threshold 0.70; tunable via --max-phantom-risk-score
+    # and the runtime overrides file.
+    max_phantom = float(getattr(
+        self.trade_args, "max_phantom_risk_score",
+        DEFAULT_MAX_PHANTOM_RISK_SCORE,
+    ))
+    if max_phantom < 1.0:
+        phantom_score = candidate_payload.get(
+            "shadow_phantom_risk_score",
+        )
+        phantom_band = candidate_payload.get(
+            "shadow_phantom_risk_band",
+        )
+        if (
+            isinstance(phantom_score, (int, float))
+            and float(phantom_score) >= max_phantom
+        ):
+            self._log_skip_debug_once(
+                reason="gate_phantom_risk_band",
+                game=game,
+                market=market,
+                inning=inning,
+                inning_state=inning_state,
+                outs=outs,
+                current_total=current_total,
+                message=(
+                    "Skip %s@%s line=%s: phantom_risk_score=%.3f >= "
+                    "%.3f (band=%s); fv depends on inferred score event "
+                    "the model itself rates unlikely"
+                ),
+                args=(
+                    game.away_abbrev, game.home_abbrev, market.line,
+                    float(phantom_score), max_phantom,
+                    str(phantom_band or "?"),
+                ),
+            )
+            record_skip(
+                "gate_phantom_risk_band",
+                shadow_values={
+                    "shadow_phantom_risk_score": float(phantom_score),
+                    "shadow_phantom_risk_band": str(phantom_band or ""),
+                    "max_phantom_risk_score": max_phantom,
+                    "edge": edge,
+                    "inning": inning,
+                },
+            )
+            return True
 
     # --- GATE 8f.5: Per-line high-FV slice guard (Hygiene #1, 2026-05-26) ---
     # 2026-05-19 FV-overconfidence audit found line=5.5 at base FV >= 0.90

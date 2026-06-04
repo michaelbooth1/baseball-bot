@@ -137,6 +137,25 @@ DEFAULT_FV_ASK_GAP_MIN_INNING  = 7      # [TR12] â€¦but only in inning >= th
 # Tunable via --extreme-edge-max if a future audit shifts the boundary.
 DEFAULT_EXTREME_EDGE_MAX        = 0.22
 
+# 2026-06-04 phantom_risk_band gate: block signals whose
+# shadow_phantom_risk_score >= this threshold. The score is computed
+# in signal_pipeline_state_value._attach_score_transition_shadow_fields
+# from three components: fv_lift (the FV delta from inferred score),
+# no_event_edge (edge at the no-event FV), and score_event_proxy
+# (model's own probability of a real score event). Bands: low (<0.40),
+# medium (0.40-0.70), high (>=0.70). The 2026-06-04 cross-engine audit
+# (655 settled bets since 2026-05-01) showed:
+#   high (n=58):    WR 56.9%, ROI -13.86%  <- statistically below break-even
+#   medium (n=119): WR 84.0%, ROI +28.87%
+#   low (n=473):    WR 74.4%, ROI +6.60%
+# 95% Wilson CI on the high cohort's WR is [44%, 69%], entirely below
+# the ~70% break-even at typical fill ask. The high cohort dominates
+# phantom-run losses where the bot signals on inferred score events
+# the model itself says are unlikely (score_event_proxy = 0.000).
+# Default 0.70 (= the existing "high" band boundary) so we block
+# exactly the cohort the audit identified. Set to 1.0 to disable.
+DEFAULT_MAX_PHANTOM_RISK_SCORE  = 0.70
+
 # Hygiene #1 (2026-05-26): per-line high-FV slice guard. The 2026-05-19
 # FV-overconfidence audit found line=5.5 at raw FV >= 0.90 has a
 # realized hit rate of only 51% on n=92 settled predictions vs the
@@ -600,6 +619,19 @@ def parse_trade_args(argv=None) -> Tuple[argparse.Namespace, argparse.Namespace]
                    help=f"[TR17] Enforced gate: skip signals where edge exceeds this threshold "
                         f"in any inning. Also logged as a shadow risk tag for diagnostics. "
                         f"(default: {DEFAULT_EXTREME_EDGE_MAX})")
+    p.add_argument("--max-phantom-risk-score", type=float,
+                   default=DEFAULT_MAX_PHANTOM_RISK_SCORE,
+                   help=(
+                       "[2026-06-04] Enforced gate: skip signals where "
+                       "shadow_phantom_risk_score >= this threshold. "
+                       "The score (0-1) is computed per-tick from "
+                       "fv_lift / no_event_edge / score_event_proxy. "
+                       "Cross-engine audit (n=58, since 2026-05-01) "
+                       "showed high-band (>=0.70) cohort ROI -13.9% "
+                       "(95% Wilson CI on WR sits below break-even). "
+                       "Set to 1.0 to disable. "
+                       f"(default: {DEFAULT_MAX_PHANTOM_RISK_SCORE})"
+                   ))
     p.add_argument("--ltp-ask-gap-max", type=float, default=DEFAULT_LTP_ASK_GAP_MAX,
                    help=f"[TR14] Shadow-tag signals where |ask - ltp| exceeds this threshold. "
                         f"Diagnostics only; does not block trades. "

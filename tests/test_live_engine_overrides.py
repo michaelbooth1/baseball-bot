@@ -99,6 +99,8 @@ class ApplyOverridesTests(unittest.TestCase):
             min_inning=5,
             min_entry_ask=0.55,
             runs_needed_max=4.0,
+            # 2026-06-04: new phantom-risk-band gate route. Default 0.70.
+            max_phantom_risk_score=0.70,
         )
         return live, trade
 
@@ -126,6 +128,22 @@ class ApplyOverridesTests(unittest.TestCase):
         self.assertEqual(trade.min_inning, 6)
         # Untouched keys remain at default
         self.assertEqual(trade.edge_threshold, 0.10)
+
+    def test_applies_phantom_risk_band_override(self):
+        """2026-06-04: gate_phantom_risk_band routes via the override
+        file to max_phantom_risk_score on trade_args."""
+        live, trade = self._build_namespaces()
+        overrides.apply_overrides(
+            live_args=live, trade_args=trade,
+            overrides={
+                "version": 1,
+                "gate_thresholds": {"gate_phantom_risk_band": 0.50},
+            },
+            passed=set(),
+        )
+        self.assertAlmostEqual(trade.max_phantom_risk_score, 0.50)
+        # Other gate thresholds untouched
+        self.assertAlmostEqual(trade.extreme_edge_max, 0.22)
 
     def test_explicit_cli_flag_wins_over_override(self):
         live, trade = self._build_namespaces()
