@@ -212,6 +212,22 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--per-line-min-rows",
+        type=int,
+        default=0,
+        help=(
+            "Per-line stratified calibration (2026-06-06): when >0, fit "
+            "an additional Platt/isotonic curve per (family, line) whose "
+            "labeled sample count >= this threshold. Stored under "
+            "families[<family>][lines][<line>] in the calibration "
+            "artifact; pooled family curve remains the fallback for "
+            "lines below threshold or not present. Default 0 = disabled "
+            "(back-compat). Recommended starting value 100; cohort "
+            "analysis shows line 5.5 needs its own curve (realized WR "
+            "55% at raw FV>=0.90 vs ~80% for other lines)."
+        ),
+    )
+    p.add_argument(
         "--selection-history-path",
         type=Path,
         default=None,
@@ -798,6 +814,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         family_payloads: Dict[str, Dict[str, Any]] = {}
         family_reports: Dict[str, Dict[str, Any]] = {}
         pred_rows = []
+        per_line_min_rows = max(0, int(getattr(args, "per_line_min_rows", 0) or 0))
         for family in sorted(by_family.keys()):
             family_payload, family_report, family_preds = _fit_calibration_bundle(
                 list(by_family[family]),
@@ -825,6 +842,71 @@ def main(argv: Optional[List[str]] = None) -> None:
             family_payloads[family] = family_payload
             family_reports[family] = family_report
             pred_rows.extend(family_preds)
+
+            # Per-line stratification (2026-06-06). Runtime reads
+            # families[<family>][lines][<line>] first; falls back to the
+            # pooled family curve when (family, line) is absent. We fit
+            # ONLY for line cohorts with >= per_line_min_rows labeled
+            # samples; rare lines (4.5, 11.5+) stay on the pooled curve.
+            # Disabled when threshold==0 to preserve back-compat.
+            if per_line_min_rows > 0:
+                by_line: Dict[str, List[Sample]] = {}
+                for s in by_family[family]:
+                    ln = s.line if s.line is not None else "unknown"
+                    by_line.setdefault(ln, []).append(s)
+                line_payloads: Dict[str, Dict[str, Any]] = {}
+                line_reports: Dict[str, Dict[str, Any]] = {}
+                for line_key in sorted(by_line.keys()):
+                    line_samples = by_line[line_key]
+                    if len(line_samples) < per_line_min_rows:
+                        continue
+                    line_payload, line_report, line_preds = _fit_calibration_bundle(
+                        list(line_samples),
+                        input_path=args.input_path,
+                        mode=args.mode,
+                        min_date=args.min_date,
+                        max_date=args.max_date,
+                        val_frac=args.val_frac,
+                        test_frac=args.test_frac,
+                        input_kind=args.input_kind,
+                        family_mode=args.family_mode,
+                        model_family=family,
+                        strict=False,  # never strict on per-line; pooled is the safety net
+                        skipped_reasons={},
+                        probability_source_counts=probability_source_counts,
+                        artifact_purpose=args.artifact_purpose,
+                        identity_rejection_train_ece_delta=args.identity_rejection_train_ece_delta,
+                        stability_history=[],  # no stability gate per line; sample too small
+                        stability_window=args.stability_window,
+                        stability_min_history=args.stability_min_history,
+                        stability_gate_enabled=False,
+                        input_drift_status=input_drift_status,
+                        side=args.side,
+                    )
+                    # Annotate predictions so per-line attribution is
+                    # downstream-attributable in the predictions JSONL.
+                    for pr in line_preds:
+                        pr["stratification_scope"] = "per_line"
+                        pr["stratification_line"] = line_key
+                    pred_rows.extend(line_preds)
+                    line_payloads[line_key] = {
+                        "selected_method": line_payload["selected_method"],
+                        "selection_metric": line_payload.get(
+                            "selection_metric", "validation_logloss",
+                        ),
+                        "selection_audit": line_payload.get("selection_audit", {}),
+                        "methods": line_payload["methods"],
+                        "n_train": len(line_samples),
+                    }
+                    line_reports[line_key] = line_report
+                    LOGGER.info(
+                        "per_line fit: family=%s line=%s n=%d method=%s",
+                        family, line_key, len(line_samples),
+                        line_payload["selected_method"],
+                    )
+                if line_payloads:
+                    family_payload["lines"] = line_payloads
+                    family_report["line_reports"] = line_reports
 
         default_family = str(args.default_family or SCORE_EVENT_TRANSITION)
         if default_family not in family_payloads:
@@ -925,6 +1007,9 @@ def main(argv: Optional[List[str]] = None) -> None:
                     "min_train_date": getattr(args, "min_train_date", None),
                     "min_train_date_filter_count": (
                         min_train_date_filter_count
+                    ),
+                    "per_line_min_rows": int(
+                        getattr(args, "per_line_min_rows", 0) or 0
                     ),
                 },
             },

@@ -166,23 +166,90 @@ def _resolve_orphan_via_trades(
     return price, size, ts_iso, match.get("trade_id")
 
 
+def _apply_orphan_fill(
+    engine: "LiveTradingEngine",
+    bet: "LiveBetRecord",
+    *,
+    price: float,
+    size: float,
+    ts_iso: str,
+    source: str,
+    trade_id: Optional[str],
+    token_id: str,
+    summary: Dict[str, int],
+) -> bool:
+    """Patch ``bet`` with the discovered fill, log loudly, and append a
+    ``reconciled_filled`` lifecycle row to the ledger. Returns True on
+    success, False on any error (errors are counted into ``summary``)."""
+    LOGGER.warning(
+        "ORPHAN FILL RECONCILED [%s] order_id=%s  token=%s..%s  "
+        "fill_price=%.4f  size=%.4f  source=%s  trade_id=%s -- "
+        "engine had marked order_status=%s",
+        bet.bet_id, getattr(bet, "order_id", "?"),
+        token_id[:10], token_id[-6:],
+        price, size, source, trade_id or "n/a",
+        getattr(bet, "order_status", "?"),
+    )
+
+    _patch_bet_with_orphan_fill(
+        bet,
+        fill_price=price,
+        fill_size=size,
+        fill_timestamp_iso=ts_iso,
+        source=source,
+        trade_id=trade_id,
+    )
+    try:
+        row = asdict(bet)
+        row["_event"] = "reconciled_filled"
+        row["reconciliation_source"] = source
+        if trade_id:
+            row["reconciliation_trade_id"] = trade_id
+        writer = getattr(engine, "_write_live_ledger_row", None)
+        if writer is not None:
+            writer(row)
+    except Exception as exc:
+        LOGGER.warning(
+            "Reconciliation ledger append failed [%s]: %s", bet.bet_id, exc,
+        )
+        summary["errors"] += 1
+        return False
+    return True
+
+
 def reconcile_orphan_fills(engine: "LiveTradingEngine") -> Dict[str, int]:
     """Walk current LiveBetRecords; recover any fill the engine missed.
 
-    Strategy:
-      1. Snapshot the wallet's open positions (one HTTP call).
-      2. For each unfilled bet whose token is in that snapshot:
-         a. Try to locate the matching trade row for accurate price/timestamp.
-         b. Otherwise synthesize a fill at the bet's limit price (the position
-            tells us the fill happened; the trade query just gives us better
-            audit data).
-      3. Patch the bet, append a corrected ledger row tagged
-         ``_event="reconciled_filled"``.
+    Two-pass strategy:
+
+      Pass 1 (position-based, fast). Snapshot the wallet's open positions
+      (one HTTP call). For each unfilled bet whose token shows up in the
+      snapshot, locate the matching trade row (or synthesize at limit
+      price), patch the bet, and append a ``reconciled_filled`` ledger
+      row. Catches WINNING orphan fills (shares still held).
+
+      Pass 2 (trade-history, 2026-06-07). For each remaining unfilled
+      candidate, hit the data-api ``/trades`` endpoint scoped to its
+      token + post-placement timestamp. This catches LOSING orphan
+      fills -- the case the position check is structurally blind to:
+      order filled, game resolved against us, position auto-resolved
+      to $0, wallet no longer holds the token. Without pass 2 every
+      losing-side race-condition fill stays silent (real money lost,
+      ``profit=$0`` in the ledger). 2026-06-06 CWS@PHI 11.5 was the
+      flagship incident that motivated this; see promotion_events.jsonl
+      lever=``orphan_fill_recovery``.
 
     Returns a small counter dict for the caller's summary log:
-        {"checked": N, "orphans": N, "errors": N}
+        {"checked": N, "orphans": N, "errors": N,
+         "orphans_position_only": N, "orphans_trade_only": N}
     """
-    summary: Dict[str, int] = {"checked": 0, "orphans": 0, "errors": 0}
+    summary: Dict[str, int] = {
+        "checked": 0,
+        "orphans": 0,
+        "errors": 0,
+        "orphans_position_only": 0,
+        "orphans_trade_only": 0,
+    }
 
     candidates = _candidate_bets(engine)
     if not candidates:
@@ -199,21 +266,23 @@ def reconcile_orphan_fills(engine: "LiveTradingEngine") -> Dict[str, int]:
         return summary
 
     positions = clob.get_user_positions()
+    # Track which candidates pass 1 already reconciled, so pass 2 doesn't
+    # double-process. Identity by bet_id (stable across the function).
+    reconciled_ids: set = set()
+
+    # ---- Pass 1: position-based ----
     if positions is None:
         # Best-effort: data-api unreachable. Already warned by the client.
+        # Don't abort; pass 2 still has a chance via the /trades endpoint.
         summary["errors"] += 1
-        return summary
-    if not positions:
-        LOGGER.info(
-            "Reconciliation: %d unfilled bet(s) checked; wallet holds no positions, no orphans.",
-            len(candidates),
-        )
-        return summary
+        positions = {}
 
-    LOGGER.info(
-        "Reconciliation: checking %d unfilled bet(s) against %d wallet position(s).",
-        len(candidates), len(positions),
-    )
+    if positions:
+        LOGGER.info(
+            "Reconciliation pass 1 (position-based): checking %d unfilled bet(s) "
+            "against %d wallet position(s).",
+            len(candidates), len(positions),
+        )
 
     for bet in candidates:
         try:
@@ -227,8 +296,6 @@ def reconcile_orphan_fills(engine: "LiveTradingEngine") -> Dict[str, int]:
                 price, size, ts_iso, trade_id = recovered
                 source = "data_api_trades"
             else:
-                # We know a position exists; synthesize at the limit price so
-                # the ledger / P&L math at least carries the right shares.
                 price = float(getattr(bet, "limit_price", 0.0) or 0.0)
                 if price <= 0:
                     LOGGER.warning(
@@ -243,54 +310,77 @@ def reconcile_orphan_fills(engine: "LiveTradingEngine") -> Dict[str, int]:
                 trade_id = None
                 source = "data_api_position_only"
 
-            LOGGER.warning(
-                "ORPHAN FILL RECONCILED [%s] order_id=%s  token=%s..%s  "
-                "fill_price=%.4f  size=%.4f  source=%s  trade_id=%s -- "
-                "engine had marked order_status=%s",
-                bet.bet_id, getattr(bet, "order_id", "?"),
-                token_id[:10], token_id[-6:],
-                price, size, source, trade_id or "n/a",
-                getattr(bet, "order_status", "?"),
+            ok = _apply_orphan_fill(
+                engine, bet,
+                price=price, size=size, ts_iso=ts_iso,
+                source=source, trade_id=trade_id, token_id=token_id,
+                summary=summary,
             )
-
-            _patch_bet_with_orphan_fill(
-                bet,
-                fill_price=price,
-                fill_size=size,
-                fill_timestamp_iso=ts_iso,
-                source=source,
-                trade_id=trade_id,
-            )
-            summary["orphans"] += 1
-
-            # Write a fresh lifecycle row tagged so analysis tooling can
-            # distinguish orphan-recovered fills from on-the-wire fills.
-            try:
-                row = asdict(bet)
-                row["_event"] = "reconciled_filled"
-                row["reconciliation_source"] = source
-                if trade_id:
-                    row["reconciliation_trade_id"] = trade_id
-                writer = getattr(engine, "_write_live_ledger_row", None)
-                if writer is not None:
-                    writer(row)
-            except Exception as exc:
-                LOGGER.warning(
-                    "Reconciliation ledger append failed [%s]: %s", bet.bet_id, exc,
-                )
-                summary["errors"] += 1
+            if ok:
+                summary["orphans"] += 1
+                summary["orphans_position_only"] += 1
+                reconciled_ids.add(getattr(bet, "bet_id", ""))
         except Exception as exc:
             LOGGER.warning(
-                "Reconciliation failed for bet [%s]: %s",
+                "Reconciliation pass 1 failed for bet [%s]: %s",
                 getattr(bet, "bet_id", "?"), exc,
             )
             summary["errors"] += 1
 
+    # ---- Pass 2: trade-history-only (catches LOSING orphans) ----
+    # Only candidates not already recovered by pass 1, and only if the
+    # CLOB client exposes the per-market trades endpoint.
+    if not hasattr(clob, "get_user_trades_for_market"):
+        LOGGER.debug(
+            "Reconciliation pass 2 skipped: CLOB client does not expose "
+            "get_user_trades_for_market.",
+        )
+    else:
+        remaining = [
+            b for b in candidates
+            if getattr(b, "bet_id", "") not in reconciled_ids
+        ]
+        if remaining:
+            LOGGER.info(
+                "Reconciliation pass 2 (trade-history): checking %d remaining "
+                "unfilled bet(s) for losing-side orphan fills.",
+                len(remaining),
+            )
+        for bet in remaining:
+            try:
+                token_id = str(bet_traded_token_id(bet))
+                recovered = _resolve_orphan_via_trades(engine, bet)
+                if recovered is None:
+                    continue
+                price, size, ts_iso, trade_id = recovered
+                # Tag distinctly so the daily-review reconciler_summary
+                # block can break out losing-side recoveries from the
+                # standard wallet-position path.
+                ok = _apply_orphan_fill(
+                    engine, bet,
+                    price=price, size=size, ts_iso=ts_iso,
+                    source="data_api_trades_only",
+                    trade_id=trade_id, token_id=token_id,
+                    summary=summary,
+                )
+                if ok:
+                    summary["orphans"] += 1
+                    summary["orphans_trade_only"] += 1
+            except Exception as exc:
+                LOGGER.warning(
+                    "Reconciliation pass 2 failed for bet [%s]: %s",
+                    getattr(bet, "bet_id", "?"), exc,
+                )
+                summary["errors"] += 1
+
     if summary["orphans"] > 0:
         LOGGER.warning(
-            "Reconciliation summary: checked=%d orphans_recovered=%d errors=%d -- "
+            "Reconciliation summary: checked=%d orphans_recovered=%d "
+            "(position=%d trade_only=%d) errors=%d -- "
             "see data/live_trading/live_orders_ledger.jsonl for `reconciled_filled` rows.",
-            summary["checked"], summary["orphans"], summary["errors"],
+            summary["checked"], summary["orphans"],
+            summary["orphans_position_only"], summary["orphans_trade_only"],
+            summary["errors"],
         )
     else:
         LOGGER.info(

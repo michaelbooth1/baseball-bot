@@ -272,6 +272,17 @@ UNDER_OUTCOMES_TRAILING_MIN_N_FOR_ALERT = 50
 DEFAULT_PAPER_SESSIONS_DIR = (
     PROJECT_DIR / "data" / "paper_trading" / "sessions"
 )
+# 2026-06-10: extra paper roots the B4 scanner walks IN ADDITION to
+# the default paper + live roots. The parallel-engine fleet writes to
+# data/paper_<label>/sessions/, NOT data/paper_trading/sessions/, so
+# the M_under_paper preset had been accumulating UNDER paper bets
+# since 2026-05-30 that were invisible to the B4 milestone (dashboard
+# read 0/60 sessions while evidence existed). Bets are deduped by
+# bet_id across all roots, so an identical signal counted by two
+# roots still counts once.
+B4_EXTRA_PAPER_SESSION_ROOTS: tuple = (
+    PROJECT_DIR / "data" / "paper_M_under_paper" / "sessions",
+)
 # B4 thresholds (from ROADMAP B4 entry; change here AND in ROADMAP
 # together so the doc and the verdict stay in sync).
 B4_MILESTONE_TRAILING_DAYS = 60

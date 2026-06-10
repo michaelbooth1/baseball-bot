@@ -34,11 +34,27 @@ def _logit(p: float) -> float:
     return math.log(cp / (1.0 - cp))
 
 
+def _line_key(line: Any) -> str:
+    """Canonicalize a line value into the string key used in the
+    calibration artifact's per-line block. Matches the builder's keying
+    (samples store ``str(row["line"])``). Accepts numerics ("7.5") and
+    strings ("7.5"). Returns the input stringified; callers should
+    ensure non-canonical forms (e.g. trailing zeros) are normalized
+    upstream if they cause mismatches."""
+    return str(line)
+
+
 @dataclass
 class ProbabilityCalibrator:
     method: str
     params: Dict[str, Any]
     family_calibrators: Optional[Dict[str, "ProbabilityCalibrator"]] = None
+    # Per-line stratified curves (2026-06-06). Map of line_key
+    # (string, e.g. "5.5") -> calibrator instance. Populated when the
+    # family payload's "lines" block is present. Runtime tries this
+    # map first; falls back to the family-pooled curve (self) when
+    # the line key isn't present or absent entirely.
+    line_calibrators: Optional[Dict[str, "ProbabilityCalibrator"]] = None
     default_family: str = SCORE_EVENT_TRANSITION
     family_mode: str = "single"
 
@@ -67,6 +83,7 @@ class ProbabilityCalibrator:
                 method=default.method,
                 params=dict(default.params),
                 family_calibrators=family_calibrators,
+                line_calibrators=default.line_calibrators,
                 default_family=default_family,
                 family_mode="separate",
             )
@@ -84,9 +101,24 @@ class ProbabilityCalibrator:
         if selected not in {"platt", "isotonic"}:
             selected = "identity"
             params = {}
+
+        # Per-line stratification (2026-06-06). The "lines" block, when
+        # present, holds a {line_key: per_line_payload} map where each
+        # per-line payload mirrors the single-family schema (selected_method
+        # + methods). Absent block / absent line falls back to the
+        # family-pooled curve at call time.
+        line_calibrators: Optional[Dict[str, ProbabilityCalibrator]] = None
+        lines_block = payload.get("lines") if isinstance(payload, dict) else None
+        if isinstance(lines_block, dict) and lines_block:
+            line_calibrators = {}
+            for line_key, line_payload in lines_block.items():
+                if isinstance(line_payload, dict):
+                    line_calibrators[str(line_key)] = cls._from_single_payload(line_payload)
+
         return cls(
             method=selected,
             params=dict(params),
+            line_calibrators=line_calibrators,
             default_family=model_family,
             family_mode=str(payload.get("family_mode") or "single"),
         )
@@ -104,6 +136,28 @@ class ProbabilityCalibrator:
             return family == str(self.default_family or "").strip()
         family = str(model_family or self.default_family or "").strip()
         return family in self.family_calibrators
+
+    def has_line_curve(
+        self,
+        model_family: Optional[str] = None,
+        line: Optional[Any] = None,
+    ) -> bool:
+        """Return True iff a per-line curve is available for the
+        requested (model_family, line). False means the family-pooled
+        curve will be used."""
+        if line is None:
+            return False
+        family_cal = self
+        if self.family_calibrators:
+            family_cal = self._resolve_family_calibrator(
+                model_family, allow_fallback=False,
+            )
+            if family_cal is None:
+                return False
+        line_calibrators = getattr(family_cal, "line_calibrators", None)
+        if not line_calibrators:
+            return False
+        return _line_key(line) in line_calibrators
 
     def _resolve_family_calibrator(
         self,
@@ -127,6 +181,7 @@ class ProbabilityCalibrator:
         prob: float,
         model_family: Optional[str] = None,
         *,
+        line: Optional[Any] = None,
         allow_family_fallback: bool = True,
     ) -> float:
         if self.family_calibrators:
@@ -135,8 +190,18 @@ class ProbabilityCalibrator:
                 allow_fallback=allow_family_fallback,
             )
             if cal is not None:
-                return cal.calibrate(prob)
+                return cal.calibrate(prob, line=line)
             return _clamp_prob(prob)
+
+        # Per-line override (2026-06-06): try the per-line curve first,
+        # silently fall through to the family-pooled curve when this
+        # (family, line) doesn't have its own fit. Strictly additive
+        # behavior: lines without per-line curves are calibrated
+        # exactly as they were before this change.
+        if line is not None and self.line_calibrators:
+            line_cal = self.line_calibrators.get(_line_key(line))
+            if line_cal is not None:
+                return line_cal.calibrate(prob)
 
         raw = _clamp_prob(prob)
         if self.method == "platt":

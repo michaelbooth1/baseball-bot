@@ -890,14 +890,39 @@ class SignalEngine(MLBPolymarketMonitor):
             )
             return raw, diag
 
+        # Per-line stratification (2026-06-06): pass line into the
+        # calibrator so it can prefer a per-(family, line) curve when
+        # one is available. Falls back to the family-pooled curve
+        # silently when no per-line curve exists for the (family, line).
+        # The two TypeError catches stage gracefully against older
+        # ProbabilityCalibrator builds (line kwarg added 2026-06-06;
+        # model_family kwarg added 2025-12-XX).
         try:
             calibrated_raw = self._prob_calibrator.calibrate(
                 raw,
                 model_family=model_family,
+                line=line,
                 allow_family_fallback=False,
             )
         except TypeError:
-            calibrated_raw = self._prob_calibrator.calibrate(raw)
+            try:
+                calibrated_raw = self._prob_calibrator.calibrate(
+                    raw,
+                    model_family=model_family,
+                    allow_family_fallback=False,
+                )
+            except TypeError:
+                calibrated_raw = self._prob_calibrator.calibrate(raw)
+        # Surface whether a per-line curve was actually used so the
+        # diag log can be filtered downstream (e.g. cohort_roi by
+        # calibrator_scope=per_line vs family_pooled).
+        has_line_curve_fn = getattr(
+            self._prob_calibrator, "has_line_curve", None,
+        )
+        per_line_used = bool(
+            callable(has_line_curve_fn)
+            and has_line_curve_fn(model_family, line)
+        )
         calibrated = min(max(calibrated_raw, 1e-8), 1.0 - 1e-8)
         # Band-gated enforce (2026-05-19): only overwrite raw FV when
         # raw >= threshold. Below threshold the calibrator is still
@@ -930,6 +955,7 @@ class SignalEngine(MLBPolymarketMonitor):
                 "below_min_raw_kept_raw": below_threshold,
                 "enforce_min_raw_threshold": self._prob_calibration_enforce_min_raw,
                 "family_fallback_used": bool(family_missing),
+                "calibrator_scope": "per_line" if per_line_used else "family_pooled",
             }
         )
         return final_prob, diag

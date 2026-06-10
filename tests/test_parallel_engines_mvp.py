@@ -84,11 +84,12 @@ class ParallelEnginesMvpTests(unittest.TestCase):
         bet = BetRecord(**_base_bet(config_label="B_cal_only"))
         self.assertEqual(asdict(bet)["config_label"], "B_cal_only")
 
-    def test_five_preset_2x2_factorial_plus_tight_edge(self):
+    def test_2x2_factorial_d_scope_only(self):
         # 2026-05-25 expansion: D_scope_only completes the scope x
         # calibrator 2x2 (A: cal+scope, B: cal only, C: neither,
-        # D: scope only). E_tight_edge tests the edge-threshold lever
-        # at +5pp tighter than A_current.
+        # D: scope only). E_tight_edge was retired 2026-06-10
+        # (question concluded: +/-5pp edge-floor moves both lose;
+        # 0.15 floor locally optimal -- see PRESETS retirement notes).
         d_flags = lpe.PRESETS["D_scope_only"]
         self.assertIn("--prob-calibration-mode", d_flags)
         self.assertIn("--stage1-alt-a-scope-mode", d_flags)
@@ -98,51 +99,28 @@ class ParallelEnginesMvpTests(unittest.TestCase):
         self.assertEqual(d_flags[cal_idx + 1], "shadow")
         self.assertEqual(d_flags[scope_idx + 1], "enforce")
 
-        e_flags = lpe.PRESETS["E_tight_edge"]
-        self.assertIn("--edge-threshold", e_flags)
-        et_idx = e_flags.index("--edge-threshold")
-        self.assertEqual(e_flags[et_idx + 1], "0.20")
-        eth_idx = e_flags.index("--edge-threshold-high-line")
-        self.assertEqual(e_flags[eth_idx + 1], "0.21")
-        # E should still enforce both cal and scope (it's A_current
-        # plus a tighter edge gate); test that.
-        e_cal_idx = e_flags.index("--prob-calibration-mode")
-        e_scope_idx = e_flags.index("--stage1-alt-a-scope-mode")
-        self.assertEqual(e_flags[e_cal_idx + 1], "enforce")
-        self.assertEqual(e_flags[e_scope_idx + 1], "enforce")
-
-    def test_fourteen_preset_default_includes_k_l_m_n(self):
-        """2026-05-26: K_line5p5_block. 2026-05-28: L_enforce_min_raw_095 +
-        M_under_paper. 2026-06-01: N_extreme_edge_022 (A/B vs the
-        gate_extreme_edge-disabled live default). Default = 14 configs."""
+    def test_eleven_preset_fleet_after_2026_06_10_prune(self):
+        """2026-06-10 prune: E_tight_edge + G_loose_edge concluded
+        (edge floor locally optimal both directions), N_extreme_edge_022
+        null (identical bet set to A_current). 14 -> 11 presets."""
         self.assertEqual(
             set(lpe.PRESETS.keys()),
             {
-                "A_current", "B_cal_only", "C_raw", "D_scope_only", "E_tight_edge",
-                "F_no_dedup", "G_loose_edge", "H_late_innings",
+                "A_current", "B_cal_only", "C_raw", "D_scope_only",
+                "F_no_dedup", "H_late_innings",
                 "I_extreme_018", "J_no_phantom_filter", "K_line5p5_block",
-                "L_enforce_min_raw_095", "M_under_paper", "N_extreme_edge_022",
+                "L_enforce_min_raw_095", "M_under_paper",
             },
         )
 
-    def test_n_extreme_edge_022_preset_flags(self):
-        """N_extreme_edge_022: A_current baseline + --extreme-edge-max 0.22
-        (re-enables the TR17/TR18 cap disabled in live since 2026-05-28).
-        No live-only flags; pure paper A/B."""
-        flags = lpe.PRESETS["N_extreme_edge_022"]
-        self.assertEqual(flags[flags.index("--extreme-edge-max") + 1], "0.22")
-        # Sanity: must mirror A_current's other lever choices.
-        self.assertEqual(flags[flags.index("--prob-calibration-mode") + 1], "enforce")
-        self.assertEqual(flags[flags.index("--stage1-alt-a-scope-mode") + 1], "enforce")
-        self.assertEqual(flags[flags.index("--under-emission-mode") + 1], "shadow")
-        # Must NOT carry any live-only flag.
-        for f in flags:
-            if not f.startswith("--"):
-                continue
-            self.assertNotIn(
-                f, lpe.LIVE_ONLY_ENGINE_FLAGS,
-                f"N_extreme_edge_022 contains LIVE_ONLY flag {f}",
-            )
+    def test_a_current_mirrors_live_extreme_edge_override(self):
+        """2026-06-10 fidelity re-sync: live runs gate_extreme_edge=0.30
+        via cache/live_engine_overrides.json (2026-06-03 promotion), and
+        paper engines don't read the overrides file. A_current must pass
+        the flag explicitly or the baseline arm silently drifts from
+        production (it ran 0.22 from 2026-06-03 to 2026-06-10)."""
+        flags = lpe.PRESETS["A_current"]
+        self.assertEqual(flags[flags.index("--extreme-edge-max") + 1], "0.3")
 
     def test_m_under_paper_preset_flags(self):
         """M_under_paper: A_current baseline + --under-mode paper (paper
@@ -232,22 +210,15 @@ class ParallelEnginesMvpTests(unittest.TestCase):
         # No edge override -> default floor stays in play.
         self.assertNotIn("--edge-threshold", flags)
 
-    def test_g_loose_edge_lowers_both_edge_floors_5pp(self):
-        flags = lpe.PRESETS["G_loose_edge"]
-        self.assertEqual(flags[flags.index("--edge-threshold") + 1], "0.10")
-        self.assertEqual(
-            flags[flags.index("--edge-threshold-high-line") + 1], "0.11"
-        )
-
     def test_h_late_innings_sets_min_inning_6_on_both_tiers(self):
         flags = lpe.PRESETS["H_late_innings"]
         self.assertEqual(flags[flags.index("--min-inning") + 1], "6")
         self.assertEqual(flags[flags.index("--min-inning-high-line") + 1], "6")
 
     def test_i_and_j_form_extreme_edge_sweep(self):
-        """I (0.18 tightened) and J (1.0 = off) pair with A's 0.22 to
-        form a clean 3-point sweep of the TR19 extreme-edge knob.
-        Phase 6 prep for the 2026-06-07 recalibration deadline."""
+        """I (0.18 tightened) and J (1.0 = off) pair with A's 0.30
+        (re-synced to the live override 2026-06-10; was 0.22) to form a
+        3-point sweep of the TR19 extreme-edge knob."""
         i_flags = lpe.PRESETS["I_extreme_018"]
         j_flags = lpe.PRESETS["J_no_phantom_filter"]
         self.assertEqual(
@@ -265,8 +236,9 @@ class ParallelEnginesMvpTests(unittest.TestCase):
     def test_no_f_through_j_uses_live_only_flag(self):
         """F-J must only use paper-safe flags (none in LIVE_ONLY_ENGINE_FLAGS).
         Catches regressions where someone adds a Kelly / daily-budget /
-        stake-mode flag to a preset thinking paper supports it."""
-        for label in ("F_no_dedup", "G_loose_edge", "H_late_innings",
+        stake-mode flag to a preset thinking paper supports it.
+        (G_loose_edge retired 2026-06-10 -- question concluded.)"""
+        for label in ("F_no_dedup", "H_late_innings",
                       "I_extreme_018", "J_no_phantom_filter"):
             flags = lpe.PRESETS[label]
             for f in flags:

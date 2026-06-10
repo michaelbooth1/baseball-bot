@@ -183,6 +183,10 @@ class B4VerdictLadderTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def _run(self, **kwargs):
+        # extra_paper_sessions_dirs defaults to () here (NOT the
+        # production B4_EXTRA_PAPER_SESSION_ROOTS default) so tests
+        # stay isolated from the real data/paper_M_under_paper root.
+        kwargs.setdefault("extra_paper_sessions_dirs", ())
         return _under_paper_b4_milestone_health(
             session_date=ANCHOR,
             paper_sessions_dir=self.paper_dir,
@@ -393,6 +397,59 @@ class CrossRootUnionTests(unittest.TestCase):
         )
         self.assertEqual(day["n_paper_under_bets"], 0)
 
+    def test_extra_fleet_root_bets_are_counted(self):
+        """2026-06-10 B4 scanner fix: UNDER paper bets written by a
+        parallel-engine fleet preset (data/paper_M_under_paper/sessions)
+        must advance B4. Before this fix the milestone read 0/60 while
+        the M preset accumulated UNDER evidence invisibly."""
+        fleet_dir = self.tmp / "paper_M_under_paper" / "sessions"
+        fleet_dir.mkdir(parents=True)
+        _write_session(fleet_dir, ANCHOR, [_under_bet(bet_id="fleet_m_1")])
+        day = _collect_paper_under_bets_for_date(
+            session_date=ANCHOR,
+            paper_sessions_dir=self.paper_dir,
+            live_sessions_dir=self.live_dir,
+            extra_paper_sessions_dirs=(fleet_dir,),
+        )
+        self.assertEqual(day["n_paper_under_bets"], 1)
+        # Source label identifies the fleet engine by its paper_<name>
+        # directory so the by_date drill-down shows provenance.
+        self.assertEqual(day["sources"], ["fleet:paper_M_under_paper"])
+
+    def test_extra_fleet_root_dedupes_against_primary_roots(self):
+        """Same bet_id in the default paper root AND a fleet root must
+        count once (mirrors the existing paper-vs-live dedup)."""
+        self.paper_dir.mkdir(parents=True, exist_ok=True)
+        fleet_dir = self.tmp / "paper_M_under_paper" / "sessions"
+        fleet_dir.mkdir(parents=True)
+        bet = _under_bet(bet_id="dup_fleet")
+        _write_session(self.paper_dir, ANCHOR, [bet])
+        _write_session(fleet_dir, ANCHOR, [bet])
+        day = _collect_paper_under_bets_for_date(
+            session_date=ANCHOR,
+            paper_sessions_dir=self.paper_dir,
+            live_sessions_dir=self.live_dir,
+            extra_paper_sessions_dirs=(fleet_dir,),
+        )
+        self.assertEqual(day["n_paper_under_bets"], 1)
+        self.assertEqual(
+            set(day["sources"]), {"paper", "fleet:paper_M_under_paper"},
+        )
+
+    def test_default_extra_roots_constant_points_at_m_preset(self):
+        """The production default must include the M_under_paper fleet
+        root -- that's the engine currently accumulating B4 evidence."""
+        from scripts.analysis.human_review.constants import (
+            B4_EXTRA_PAPER_SESSION_ROOTS,
+        )
+        self.assertTrue(
+            any(
+                "paper_M_under_paper" in str(p)
+                for p in B4_EXTRA_PAPER_SESSION_ROOTS
+            ),
+            f"expected paper_M_under_paper in {B4_EXTRA_PAPER_SESSION_ROOTS}",
+        )
+
 
 # ----------------------------------------------------------------------
 # Aggregate math
@@ -555,6 +612,7 @@ class AlertEmissionGateTests(unittest.TestCase):
             session_date=ANCHOR,
             paper_sessions_dir=self.paper_dir,
             live_sessions_dir=self.live_dir,
+            extra_paper_sessions_dirs=(),
             output_root=self.output_root,
             min_n_for_failure_alert=1000,
         )
@@ -574,6 +632,7 @@ class AlertEmissionGateTests(unittest.TestCase):
             session_date=ANCHOR,
             paper_sessions_dir=self.paper_dir,
             live_sessions_dir=self.live_dir,
+            extra_paper_sessions_dirs=(),
             output_root=self.output_root,
             min_n_for_failure_alert=99999,
         )

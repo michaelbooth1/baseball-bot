@@ -23,7 +23,7 @@ Engine attrs read:
 
 from __future__ import annotations
 
-from typing import Optional, Tuple, TYPE_CHECKING
+from typing import Any, Optional, Tuple, TYPE_CHECKING
 
 from signal_config import DEFAULT_COOLDOWN_TICKS  # noqa: F401  (kept for parity; not used here)
 
@@ -223,6 +223,7 @@ def resolve_calibrated_edge(
     raw_or_final_fv: float,
     decision_ask: float,
     model_family: str,
+    line: Optional[Any] = None,
 ) -> Optional[float]:
     """Compute (calibrated_fv - decision_ask), or None if no calibrator.
 
@@ -231,6 +232,10 @@ def resolve_calibrated_edge(
     enforce. We work backward: in enforce mode the value is already
     calibrated; otherwise we route it through the calibrator. This avoids
     double-calibration without plumbing the raw FV through every call site.
+
+    ``line`` (2026-06-06) routes the calibrator through its per-line
+    curve when one is fit for (model_family, line). Falls back to the
+    family-pooled curve when absent, matching SignalEngine behavior.
     """
     calibrator = getattr(engine, "_prob_calibrator", None)
     if calibrator is None:
@@ -241,8 +246,18 @@ def resolve_calibrated_edge(
     else:
         try:
             calibrated_fv = float(calibrator.calibrate(
-                float(raw_or_final_fv), model_family=model_family
+                float(raw_or_final_fv),
+                model_family=model_family,
+                line=line,
             ))
+        except TypeError:
+            # Pre-2026-06-06 ProbabilityCalibrator without line kwarg.
+            try:
+                calibrated_fv = float(calibrator.calibrate(
+                    float(raw_or_final_fv), model_family=model_family
+                ))
+            except Exception:
+                return None
         except Exception:
             return None
     return calibrated_fv - float(decision_ask)

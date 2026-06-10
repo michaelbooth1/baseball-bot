@@ -52,6 +52,15 @@ PRESETS: Dict[str, List[str]] = {
         "--stage1-alt-a-scope-mode", "enforce",
         "--under-emission-mode", "shadow",
         "--quote-engine-mode", "shadow",
+        # 2026-06-10 fidelity re-sync: live runs gate_extreme_edge=0.30 via
+        # cache/live_engine_overrides.json (2026-06-03 walk-forward RETUNE
+        # promotion), but paper engines don't read the overrides file, so
+        # A_current had silently drifted to the 0.22 signal_config default.
+        # The baseline arm must mirror production or every X-vs-A paired
+        # comparison carries a hidden confound. (gate_phantom_risk_band=0.70
+        # needs no flag here -- DEFAULT_MAX_PHANTOM_RISK_SCORE is already
+        # 0.70 in signal_config, matching the live override.)
+        "--extreme-edge-max", "0.3",
     ],
     "B_cal_only": [
         "--prob-calibration-mode", "enforce",
@@ -80,17 +89,17 @@ PRESETS: Dict[str, List[str]] = {
         "--under-emission-mode", "shadow",
         "--quote-engine-mode", "shadow",
     ],
-    "E_tight_edge": [
-        # Same as A_current but with min_edge raised 5pp on both line
-        # tiers. Tests whether the marginal-edge bets are the loser.
-        "--prob-calibration-mode", "enforce",
-        "--stage1-shadow-empirical-mode", "shadow",
-        "--stage1-alt-a-scope-mode", "enforce",
-        "--under-emission-mode", "shadow",
-        "--quote-engine-mode", "shadow",
-        "--edge-threshold", "0.20",
-        "--edge-threshold-high-line", "0.21",
-    ],
+    # E_tight_edge RETIRED 2026-06-10 (ran 2026-05-25 -> 2026-06-10,
+    # 34 settled). CONCLUSION: tightening the edge floor +5pp LOSES
+    # money -- the paired-delta vs A_current showed the 41 bets E
+    # skipped won at 73.2% WR (+$32.71) while E's 10 unique bets went
+    # 60% (-$5.39); net -$38 for tightening. Together with
+    # G_loose_edge's mirror result (loosening -5pp also loses: the 40
+    # added bets won only 65%, -$37), the fleet's verdict is that the
+    # current 0.15 edge floor is locally optimal in both directions.
+    # Matches the walk-forward cert's edge-band cohort table
+    # (0.10-0.15 = -28.1% ROI; 0.15-0.22 = +14.2%). Question closed;
+    # definition removed -- see git history to reproduce.
     # 2026-05-26: F-J added to expand the per-question coverage of the
     # parallel-engine fleet. Each maps to one open Active or Hygiene
     # roadmap item so the daily aggregate becomes the decision evidence.
@@ -114,21 +123,14 @@ PRESETS: Dict[str, List[str]] = {
         "--max-correlated-over-lines-per-game", "999",
         "--min-correlated-line-gap", "0.0",
     ],
-    "G_loose_edge": [
-        # A_current minus 5pp on both edge floors (0.10 / 0.11). E_tight
-        # tests "are we under-filtering" by going +5pp; G tests the
-        # mirror: "are we over-filtering by 5pp?". The 2026-05-25 audit's
-        # edge-band cohort showed 0.10-0.15 was -28% ROI on n=14 but the
-        # 0.15-0.22 band was +20.7% on n=92 -- need more 0.10-0.15 data
-        # to know if that's variance or signal.
-        "--prob-calibration-mode", "enforce",
-        "--stage1-shadow-empirical-mode", "shadow",
-        "--stage1-alt-a-scope-mode", "enforce",
-        "--under-emission-mode", "shadow",
-        "--quote-engine-mode", "shadow",
-        "--edge-threshold", "0.10",
-        "--edge-threshold-high-line", "0.11",
-    ],
+    # G_loose_edge RETIRED 2026-06-10 (ran 2026-05-26 -> 2026-06-10,
+    # 93 settled). CONCLUSION: loosening the edge floor -5pp LOSES
+    # money -- paired-delta vs A_current: G's 40 unique (marginal-edge)
+    # bets won only 65.0% (-$37.13), worse than the 11 it caused A-side
+    # to miss. Confirms the 0.10-0.15 edge band is -EV (the 2026-05-25
+    # audit's -28% ROI on n=14 was signal, not variance). Paired with
+    # E_tight_edge's mirror result, the 0.15 floor is locally optimal.
+    # Question closed; definition removed -- see git history.
     "H_late_innings": [
         # A_current but ban early-inning bets entirely. The 2026-05-25
         # walk-forward cohort breakdown showed inn_4-5 = -22.1% ROI vs
@@ -229,26 +231,16 @@ PRESETS: Dict[str, List[str]] = {
         # post-2026-05-30 outcomes.
         "--under-calibration-mode", "off",
     ],
-    # 2026-06-01: N_extreme_edge_022 A/B-tests re-enabling the TR17/TR18
-    # gate_extreme_edge=0.22 cap against today's gate-disabled production
-    # default. Live + 12 of 13 paper presets currently run with
-    # `--extreme-edge-max 1.0` (disabled, 2026-05-28 operator decision
-    # for data-gathering). The 2026-05-27 day showed 15 losses
-    # concentrated in 3 games with finals exactly 0.5 below the line
-    # (824270 OVER 4.5 -> 4; 824432 OVER 5.5 -> 5; 823626 OVER 6.5 -> 6)
-    # -- the textbook phantom-run cliff cohort the original gate was
-    # built to filter. This preset enforces the original 0.22 cap;
-    # everything else is A_current. After 30 days of paper outcomes,
-    # compare $/Bet + ROI vs A_current to decide whether to re-enable
-    # the cap in live.
-    "N_extreme_edge_022": [
-        "--prob-calibration-mode", "enforce",
-        "--stage1-shadow-empirical-mode", "shadow",
-        "--stage1-alt-a-scope-mode", "enforce",
-        "--under-emission-mode", "shadow",
-        "--quote-engine-mode", "shadow",
-        "--extreme-edge-max", "0.22",
-    ],
+    # N_extreme_edge_022 RETIRED 2026-06-10 (ran 2026-06-01 -> 2026-06-10,
+    # 47 settled). NULL EXPERIMENT: the preset's premise ("production
+    # runs --extreme-edge-max 1.0, disabled") was wrong -- A_current was
+    # running the signal_config default of 0.22, identical to N. Result:
+    # 10 days, 47 settled bets, ZERO delta decisions vs A_current
+    # (paired analysis found 0 unique bets either way). The 0.22-vs-0.30
+    # question is owned by the 2026-06-03 live promotion + the armed
+    # fast Wilson-UB demote check; J_no_phantom_filter (cap=1.0)
+    # continues to provide the edge>0.30 counterfactual cohort.
+    # Definition removed -- see git history.
 }
 
 PRESET_ALIASES = {
@@ -396,9 +388,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=[],
         help=(
             "Config preset or label:preset. Presets: A_current, "
-            "B_cal_only, C_raw, D_scope_only, E_tight_edge. Aliases: "
-            "enforce_enforce, enforce_shadow, shadow_shadow. May be "
-            "repeated. Default (no --config): all 5 presets."
+            "B_cal_only, C_raw, D_scope_only, F_no_dedup, "
+            "H_late_innings, I_extreme_018, J_no_phantom_filter, "
+            "K_line5p5_block, L_enforce_min_raw_095, M_under_paper. "
+            "Aliases: enforce_enforce, enforce_shadow, shadow_shadow. "
+            "May be repeated. Default (no --config): all 11 presets."
         ),
     )
     p.add_argument(
@@ -1197,17 +1191,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # edge-shaving recommendation (enforce_min_raw 0.90 -> 0.95).
     # 2026-05-28: M_under_paper (13) -- no-risk paper mirror of live UNDER;
     # accumulates the B4 paper-UNDER validation evidence.
-    # 2026-06-01: N_extreme_edge_022 (14) -- A/B-tests re-enabling the
-    # TR17/TR18 extreme_edge_max=0.22 cap (disabled live since 2026-05-28
-    # for data-gathering posture). The 2026-05-27 paper day had 15 losses
-    # concentrated in 3 phantom-run-cliff games (finals exactly line-0.5):
-    # 824270 OVER 4.5->4, 824432 OVER 5.5->5, 823626 OVER 6.5->6. Compare
-    # vs A_current after ~30 days to decide whether to re-enable in live.
+    # 2026-06-01: N_extreme_edge_022 (14) -- A/B vs the 0.22 cap.
+    # 2026-06-10: fleet pruned 14 -> 11 per the paired-delta audit:
+    # E_tight_edge + G_loose_edge CONCLUDED (both directions of a +/-5pp
+    # edge-floor move lose money; 0.15 floor is locally optimal),
+    # N_extreme_edge_022 NULL (identical bet set to A_current -- its
+    # "production runs at 1.0" premise was wrong). See the retirement
+    # comments in PRESETS above for the full evidence.
     raw_configs = args.config or [
-        "A_current", "B_cal_only", "C_raw", "D_scope_only", "E_tight_edge",
-        "F_no_dedup", "G_loose_edge", "H_late_innings",
+        "A_current", "B_cal_only", "C_raw", "D_scope_only",
+        "F_no_dedup", "H_late_innings",
         "I_extreme_018", "J_no_phantom_filter", "K_line5p5_block",
-        "L_enforce_min_raw_095", "M_under_paper", "N_extreme_edge_022",
+        "L_enforce_min_raw_095", "M_under_paper",
     ]
     configs = [_resolve_config(raw, Path(args.paper_root_prefix)) for raw in raw_configs]
 

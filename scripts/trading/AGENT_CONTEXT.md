@@ -572,9 +572,18 @@ promotion thresholds, or walk-forward conclusions across them.
   against the same live market day, each with its own `paper_root` and
   `config_label`. Owns the daily refresh once; child engines all get
   `--no-startup-refresh` so N configs don't rebuild artifacts N times.
-  5 built-in `PRESETS` (`A_current`, `B_cal_only`, `C_raw`,
-  `D_scope_only`, `E_tight_edge`) with 2x2 factorial design across
-  calibrator + scoped Alt-A modes plus an edge-threshold lever.
+  11 built-in `PRESETS` as of the 2026-06-10 prune (`A_current`,
+  `B_cal_only`, `C_raw`, `D_scope_only` form the calibrator x scoped
+  Alt-A 2x2 factorial; `F_no_dedup`, `H_late_innings`,
+  `I_extreme_018`, `J_no_phantom_filter`, `K_line5p5_block`,
+  `L_enforce_min_raw_095`, `M_under_paper` each map to one open
+  roadmap question). Retired with recorded conclusions (see PRESETS
+  comments + git history): `E_tight_edge`/`G_loose_edge` (edge floor
+  0.15 locally optimal in both directions, 2026-06-10) and
+  `N_extreme_edge_022` (null experiment -- identical bet set to
+  A_current). A_current passes `--extreme-edge-max 0.3` explicitly
+  because paper engines don't read cache/live_engine_overrides.json
+  (fidelity re-sync 2026-06-10).
   `RESERVED_ENGINE_FLAGS` reject paper-only overrides;
   `LIVE_ONLY_ENGINE_FLAGS` reject Kelly/daily-budget/stake-mode so
   live-only flags don't leak into paper presets.

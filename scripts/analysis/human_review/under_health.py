@@ -21,6 +21,7 @@ from .constants import (
     UNDER_OUTCOMES_UNPROFITABLE_ROI_WARN,
     UNDER_OUTCOMES_MIN_N_FOR_ALERT,
     UNDER_OUTCOMES_TRAILING_MIN_N_FOR_ALERT,
+    B4_EXTRA_PAPER_SESSION_ROOTS,
     B4_MILESTONE_TRAILING_DAYS,
     B4_MILESTONE_MIN_SESSIONS,
     B4_MILESTONE_MIN_SETTLED,
@@ -703,6 +704,7 @@ def _collect_paper_under_bets_for_date(
     session_date: str,
     paper_sessions_dir: Path,
     live_sessions_dir: Path,
+    extra_paper_sessions_dirs: Tuple[Path, ...] = (),
 ) -> Dict[str, Any]:
     """Walk paper_root + live_root session JSONs for one date and
     return the union of side="under" bets across both. Operator may
@@ -711,13 +713,20 @@ def _collect_paper_under_bets_for_date(
     paper`; this function ignores the source and reports the merged
     set so a "session with paper UNDER bets" counts once per date.
 
+    `extra_paper_sessions_dirs` (2026-06-10): additional fleet roots
+    (e.g. data/paper_M_under_paper/sessions) whose UNDER paper bets
+    also advance B4. The parallel-engine fleet writes per-preset roots
+    that the two default roots never see; without this the milestone
+    undercounts (the M preset accumulated UNDER bets invisible to the
+    dashboard from 2026-05-30 to 2026-06-10).
+
     Returns:
       {
         "session_date": str,
         "n_paper_under_bets": int,
         "settled_under_bets": List[Dict],   # only side=under AND
                                             # settled
-        "sources": ["paper" | "live", ...], # which roots had data
+        "sources": ["paper" | "live" | "fleet:<name>", ...],
       }
     """
     out: Dict[str, Any] = {
@@ -728,10 +737,17 @@ def _collect_paper_under_bets_for_date(
     }
     seen_bet_ids: set = set()
 
-    for label, root in (
+    roots: List[Tuple[str, Path]] = [
         ("paper", paper_sessions_dir),
         ("live", live_sessions_dir),
-    ):
+    ]
+    for extra in extra_paper_sessions_dirs:
+        # Label fleet roots by their paper_<name> directory so the
+        # by_date sources drill-down shows which engine contributed.
+        name = extra.parent.name if extra.name == "sessions" else extra.name
+        roots.append((f"fleet:{name}", extra))
+
+    for label, root in roots:
         session_path = root / f"{session_date}_session.json"
         bets = _load_session_bets(session_path)
         if not bets:
@@ -920,6 +936,7 @@ def _under_paper_b4_milestone_health(
     session_date: str,
     paper_sessions_dir: Path = DEFAULT_PAPER_SESSIONS_DIR,
     live_sessions_dir: Path = DEFAULT_SESSIONS_DIR,
+    extra_paper_sessions_dirs: Tuple[Path, ...] = B4_EXTRA_PAPER_SESSION_ROOTS,
     output_root: Path = DEFAULT_OUTPUT_ROOT,
     trailing_days: int = B4_MILESTONE_TRAILING_DAYS,
     min_sessions: int = B4_MILESTONE_MIN_SESSIONS,
@@ -932,9 +949,10 @@ def _under_paper_b4_milestone_health(
 ) -> Dict[str, Any]:
     """Phase C-paper follow-up (2026-05-27): B4 milestone tracker.
 
-    Walks `paper_sessions_dir` + `live_sessions_dir` for the trailing
-    `trailing_days` dates, accumulates ACTUAL `side="under"` paper
-    bets, and reports verdict status across the 5 B4 conditions:
+    Walks `paper_sessions_dir` + `live_sessions_dir` (+ any
+    `extra_paper_sessions_dirs` fleet roots, 2026-06-10) for the
+    trailing `trailing_days` dates, accumulates ACTUAL `side="under"`
+    paper bets, and reports verdict status across the 5 B4 conditions:
 
     1. sessions_with_under_bets >= min_sessions
     2. n_settled >= min_settled
@@ -955,6 +973,11 @@ def _under_paper_b4_milestone_health(
     payload: Dict[str, Any] = {
         "session_date": session_date,
         "trailing_days": trailing_days,
+        "scanned_roots": [
+            str(paper_sessions_dir),
+            str(live_sessions_dir),
+            *[str(p) for p in extra_paper_sessions_dirs],
+        ],
         "thresholds": {
             "min_sessions": min_sessions,
             "min_settled": min_settled,
@@ -990,6 +1013,7 @@ def _under_paper_b4_milestone_health(
             session_date=d_str,
             paper_sessions_dir=paper_sessions_dir,
             live_sessions_dir=live_sessions_dir,
+            extra_paper_sessions_dirs=extra_paper_sessions_dirs,
         )
         if day["n_paper_under_bets"] == 0:
             continue

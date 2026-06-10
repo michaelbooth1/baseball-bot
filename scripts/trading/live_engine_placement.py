@@ -330,6 +330,7 @@ def place_bet(
             raw_or_final_fv=fair_value,
             decision_ask=best_ask,
             model_family=family_for_cal,
+            line=line_val,
         )
         if cs_edge is not None:
             cs_multiplier = calibrated_stake_multiplier(

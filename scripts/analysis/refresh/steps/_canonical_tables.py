@@ -182,7 +182,11 @@ def build_canonical_table_steps(
             name="calibrate_signal_probabilities",
             description=(
                 "Refit fair_value probability calibration (per-family Platt/"
-                "isotonic) from the calibration-opportunity training table."
+                "isotonic) from the calibration-opportunity training table. "
+                "2026-06-06: also fits per-(family, line) curves when a "
+                "line has >=100 labeled rows; runtime uses per-line first, "
+                "falls back to family-pooled. Addresses miscalibrated "
+                "line 5.5 cohort (realized WR 55% at raw FV>=0.90)."
             ),
             command=[
                 _python(),
@@ -203,6 +207,8 @@ def build_canonical_table_steps(
                 "runtime-refit",
                 "--mode",
                 "live",
+                "--per-line-min-rows",
+                "100",
                 *max_date_args,
                 *strict_flag,
             ],

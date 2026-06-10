@@ -290,5 +290,225 @@ class IdentityRejectionGuardTests(unittest.TestCase):
             self.assertTrue(audit.get("identity_rejection_applied"))
 
 
+class ProbabilityCalibrationPerLineTests(unittest.TestCase):
+    """Per-line calibrator stratification (2026-06-06). Validates that
+    when a (family, line) curve is present in the artifact, the runtime
+    uses it; otherwise falls back to the family-pooled curve. Strictly
+    additive change -- artifacts without a ``lines`` block must behave
+    identically to pre-change runtime."""
+
+    def _payload_with_per_line(self):
+        """Family-pooled curve is identity (a=1,b=0). Per-line curve
+        for line '5.5' is a strong downshift (a=1,b=-2), pulling
+        probability ~0.5 below the family-pooled level. Other lines
+        fall back to the pooled identity curve."""
+        return {
+            "schema_version": 2,
+            "family_mode": "separate",
+            "default_family": "score_event_transition",
+            "families": {
+                "score_event_transition": {
+                    "selected_method": "platt",
+                    "methods": {"platt": {"params": {"a": 1.0, "b": 0.0}}},
+                    "lines": {
+                        "5.5": {
+                            "selected_method": "platt",
+                            "methods": {
+                                "platt": {"params": {"a": 1.0, "b": -2.0}}
+                            },
+                            "n_train": 150,
+                        },
+                    },
+                },
+            },
+        }
+
+    def test_per_line_curve_overrides_family_pooled_when_present(self) -> None:
+        cal = ProbabilityCalibrator.from_payload(self._payload_with_per_line())
+        # raw 0.80, pooled = identity, so pooled_out = 0.80
+        pooled = cal.calibrate(0.80, model_family="score_event_transition")
+        self.assertAlmostEqual(pooled, 0.80, places=4)
+        # raw 0.80, per-line: sigmoid(1*logit(0.80) - 2.0) approx 0.36
+        per_line = cal.calibrate(
+            0.80, model_family="score_event_transition", line="5.5",
+        )
+        self.assertLess(per_line, 0.50)
+        self.assertGreater(per_line, 0.30)
+
+    def test_per_line_falls_back_to_family_pooled_when_line_absent(self) -> None:
+        cal = ProbabilityCalibrator.from_payload(self._payload_with_per_line())
+        # line "7.5" has no per-line curve -> falls back to pooled identity.
+        out_75 = cal.calibrate(
+            0.80, model_family="score_event_transition", line="7.5",
+        )
+        self.assertAlmostEqual(out_75, 0.80, places=4)
+        out_pooled = cal.calibrate(0.80, model_family="score_event_transition")
+        self.assertAlmostEqual(out_75, out_pooled, places=6)
+
+    def test_per_line_lookup_with_no_line_kwarg_uses_pooled(self) -> None:
+        cal = ProbabilityCalibrator.from_payload(self._payload_with_per_line())
+        # When caller omits line (line=None), runtime MUST behave
+        # identically to pre-per-line. This preserves callers that
+        # haven't been threaded with line yet.
+        out_no_line = cal.calibrate(0.80, model_family="score_event_transition")
+        self.assertAlmostEqual(out_no_line, 0.80, places=4)
+
+    def test_has_line_curve_reports_presence_correctly(self) -> None:
+        cal = ProbabilityCalibrator.from_payload(self._payload_with_per_line())
+        self.assertTrue(
+            cal.has_line_curve("score_event_transition", "5.5")
+        )
+        self.assertFalse(
+            cal.has_line_curve("score_event_transition", "7.5")
+        )
+        # None line returns False -- no per-line curve possible.
+        self.assertFalse(
+            cal.has_line_curve("score_event_transition", None)
+        )
+        # Unknown family returns False.
+        self.assertFalse(
+            cal.has_line_curve("no_score_drift", "5.5")
+        )
+
+    def test_numeric_line_normalizes_to_string_key(self) -> None:
+        """The artifact stores line keys as strings ('5.5'). When the
+        engine passes the numeric float 5.5, the runtime must canonicalize
+        to the same key. Mismatch would silently drop per-line behavior."""
+        cal = ProbabilityCalibrator.from_payload(self._payload_with_per_line())
+        out_str = cal.calibrate(
+            0.80, model_family="score_event_transition", line="5.5",
+        )
+        out_num = cal.calibrate(
+            0.80, model_family="score_event_transition", line=5.5,
+        )
+        self.assertAlmostEqual(out_str, out_num, places=6)
+
+    def test_legacy_artifact_without_lines_block_unchanged(self) -> None:
+        """Back-compat: a calibrator artifact with no ``lines`` block
+        in any family must produce the exact same calibrated probability
+        whether or not a line kwarg is passed."""
+        payload = {
+            "schema_version": 2,
+            "family_mode": "separate",
+            "default_family": "score_event_transition",
+            "families": {
+                "score_event_transition": {
+                    "selected_method": "platt",
+                    "methods": {"platt": {"params": {"a": 0.5, "b": 0.3}}},
+                },
+            },
+        }
+        cal = ProbabilityCalibrator.from_payload(payload)
+        out_no_line = cal.calibrate(0.75, model_family="score_event_transition")
+        out_with_line = cal.calibrate(
+            0.75, model_family="score_event_transition", line="5.5",
+        )
+        self.assertAlmostEqual(out_no_line, out_with_line, places=8)
+
+    def test_builder_writes_lines_block_when_threshold_met(self) -> None:
+        """Integration: builder must materialize the lines block in
+        the calibration artifact when --per-line-min-rows is set and
+        cohort size is sufficient. Below threshold, the line is absent
+        and the runtime falls back to family-pooled (covered above)."""
+        # Build a synthetic input with 80 rows on line 5.5 (below threshold)
+        # and 200 rows on line 7.5 (above threshold). Only 7.5 should
+        # get a per-line block; 5.5 should not appear under "lines".
+        rows = []
+        # 7.5 cohort: positives well-correlated with raw_prob
+        for i in range(200):
+            raw = 0.40 + (i % 50) * 0.012  # spans 0.40 .. 0.99
+            win = 1 if raw > 0.70 else 0
+            rows.append({
+                "mode": "live",
+                "session_date": "2026-05-15",
+                "candidate_id": f"cand-75-{i}",
+                "signal_model_family": "score_event_transition",
+                "label_available": True,
+                "label_final_available": True,
+                "target_over_win": win,
+                "fair_value_raw": raw,
+                "decision_ask": 0.65,
+                "line": "7.5",
+            })
+        # 5.5 cohort: below threshold (80 rows)
+        for i in range(80):
+            raw = 0.50 + (i % 30) * 0.015
+            win = 1 if raw > 0.85 else 0
+            rows.append({
+                "mode": "live",
+                "session_date": "2026-05-15",
+                "candidate_id": f"cand-55-{i}",
+                "signal_model_family": "score_event_transition",
+                "label_available": True,
+                "label_final_available": True,
+                "target_over_win": win,
+                "fair_value_raw": raw,
+                "decision_ask": 0.60,
+                "line": "5.5",
+            })
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            input_path = root / "rows.jsonl"
+            with open(input_path, "w", encoding="utf-8") as f:
+                for row in rows:
+                    f.write(json.dumps(row) + "\n")
+            calib.main([
+                "--input-path", str(input_path),
+                "--input-kind", "auto",
+                "--output-root", str(root / "out"),
+                "--family-mode", "separate",
+                "--per-line-min-rows", "100",
+                "--no-stability-gate",
+            ])
+            payload = json.loads(
+                (root / "out" / "signal_win_calibration.json").read_text(encoding="utf-8")
+            )
+            family = payload["families"]["score_event_transition"]
+            self.assertIn("lines", family)
+            self.assertIn("7.5", family["lines"])
+            self.assertNotIn("5.5", family["lines"])
+            line_75 = family["lines"]["7.5"]
+            self.assertEqual(line_75.get("n_train"), 200)
+            self.assertIn(line_75.get("selected_method"), {"platt", "isotonic"})
+
+    def test_builder_omits_lines_block_when_disabled(self) -> None:
+        """Default --per-line-min-rows=0 must keep the legacy schema
+        (no lines block) for back-compat with existing readers."""
+        rows = []
+        for i in range(60):
+            raw = 0.55 + (i % 20) * 0.02
+            win = 1 if raw > 0.75 else 0
+            rows.append({
+                "mode": "live",
+                "session_date": "2026-05-15",
+                "candidate_id": f"cand-{i}",
+                "signal_model_family": "score_event_transition",
+                "label_available": True,
+                "label_final_available": True,
+                "target_over_win": win,
+                "fair_value_raw": raw,
+                "decision_ask": 0.60,
+                "line": "7.5",
+            })
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            input_path = root / "rows.jsonl"
+            with open(input_path, "w", encoding="utf-8") as f:
+                for row in rows:
+                    f.write(json.dumps(row) + "\n")
+            calib.main([
+                "--input-path", str(input_path),
+                "--input-kind", "auto",
+                "--output-root", str(root / "out"),
+                "--family-mode", "separate",
+                "--no-stability-gate",
+            ])
+            payload = json.loads(
+                (root / "out" / "signal_win_calibration.json").read_text(encoding="utf-8")
+            )
+            family = payload["families"]["score_event_transition"]
+            self.assertNotIn("lines", family)
+
+
 if __name__ == "__main__":
     unittest.main()

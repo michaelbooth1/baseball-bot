@@ -1,12 +1,13 @@
 {
   "_audit": {
-    "last_modified_by": "manual_ship_alt_a_and_gate_extreme_edge_retune",
-    "last_modified_utc": "2026-06-03T00:00:00Z",
-    "last_promotion_event_at": "2026-06-03T00:00:00Z",
-    "notes": "Ship Alt A runtime-shadow + gate_extreme_edge 0.22 -> 0.30 retune per 2026-06-02 walk-forward + daily review. Alt A: computes fair_value_alt_empirical per tick (scope-mode at enforce already filters inning>=8 regression cohort). gate_extreme_edge: walk-forward verdict RETUNE confidence=medium, blocked cohort ROI +10.3% vs kept +2.3% on 197-bet sample (gate currently filtering profitable bets)."
+    "last_modified_by": "manual_ship_phantom_risk_gate_activation_2026-06-06",
+    "last_modified_utc": "2026-06-06T00:00:00Z",
+    "last_promotion_event_at": "2026-06-04T00:00:00Z",
+    "notes": "Activate gate_phantom_risk_band=0.70 per 2026-06-04 ship; would have blocked 2/2 -$20 losers in Week B paper sample. Carries forward gate_extreme_edge=0.30 (2026-06-03 walk-forward RETUNE) and stage1_shadow_empirical_mode=shadow (2026-06-03 Alt A runtime-shadow promotion)."
   },
   "gate_thresholds": {
-    "gate_extreme_edge": 0.3
+    "gate_extreme_edge": 0.3,
+    "gate_phantom_risk_band": 0.7
   },
   "stage1_shadow_empirical_mode": "shadow",
   "version": 1

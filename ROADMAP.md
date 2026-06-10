@@ -441,7 +441,54 @@ first production data.
 
 ## Recently completed
 
-- **RF1.a Recent-N Edge Atlas comparison** *(2026-05-27, latest)* —
+- **Fleet prune + paired-delta audit quick wins** *(2026-06-10, latest)* —
+  first decision pass driven by the 2026-06-10 paired-delta fleet audit
+  (the per-engine marginal tables hide the signal; the information is
+  in the delta bets each config takes/skips vs A_current). Four ships:
+
+  1. **E_tight_edge + G_loose_edge CONCLUDED + retired.** The fleet
+     answered its edge-floor question in both directions: E (+5pp
+     floor) skipped 41 bets that won 73.2% (net −$38 for tightening);
+     G (−5pp floor) added 40 marginal-edge bets that won only 65.0%
+     (net −$15 for loosening). **The 0.15 edge floor is locally
+     optimal.** Matches the walk-forward cert's edge-band table
+     (0.10-0.15 = −28.1% ROI; 0.15-0.22 = +14.2%). Both presets
+     removed from PRESETS + default launch list; conclusions recorded
+     as retirement comments in `launch_parallel_engines.py`.
+  2. **N_extreme_edge_022 retired as a NULL experiment.** Its premise
+     ("production runs --extreme-edge-max 1.0") was wrong — A_current
+     ran the 0.22 signal_config default, identical to N. 10 days /
+     47 settled bets / ZERO delta decisions vs A_current. The
+     0.22-vs-0.30 question is owned by the 2026-06-03 live promotion
+     + armed fast Wilson-UB demote; J_no_phantom_filter keeps
+     providing the edge>0.30 counterfactual cohort.
+  3. **A_current re-synced to live.** Live runs gate_extreme_edge=0.30
+     via cache/live_engine_overrides.json (2026-06-03 promotion), but
+     paper engines don't read the overrides file — the baseline arm
+     had silently drifted to 0.22, confounding every X-vs-A
+     comparison. A_current now passes `--extreme-edge-max 0.3`
+     explicitly. (Phantom-band 0.70 needs no flag: signal_config
+     default already matches the live override.)
+  4. **B4 scanner blind spot fixed.** The B4 milestone walked only
+     `data/paper_trading/sessions` + live sessions, so UNDER paper
+     bets written by the M_under_paper fleet preset (which writes to
+     `data/paper_M_under_paper/sessions`) never advanced the
+     60-session clock — dashboard read 0/60 while evidence
+     accumulated invisibly since 2026-05-30. New
+     `B4_EXTRA_PAPER_SESSION_ROOTS` constant + threaded
+     `extra_paper_sessions_dirs` through the collector (bet_id dedup
+     across all roots; sources labeled `fleet:<root>`). First real
+     run: status NOT_EMITTING → INSUFFICIENT_SESSIONS (4/60 sessions,
+     8 settled). Caveat: the 2026-06-02 day carries 5 multi-fire dup
+     bets from the pre-fix UNDER dedup leak; same_game_multi_fire
+     health already flags these, and B4's verdict conditions are
+     n-gated far above this contamination level.
+
+  Fleet now runs 11 presets (was 14). Tests: preset-shape tests
+  updated, +3 new B4 fleet-root tests, B4 ladder tests isolated from
+  the production extra-roots default.
+
+- **RF1.a Recent-N Edge Atlas comparison** *(2026-05-27)* —
   tests whether the 2026-05-27 Edge Atlas RF1 finding (+2-5pp Over
   premium across every cohort, measured on the 10y MLB Stage-1
   cache) survives across multiple historical windows or whether
