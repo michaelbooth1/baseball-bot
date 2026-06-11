@@ -283,6 +283,32 @@ DEFAULT_PAPER_SESSIONS_DIR = (
 B4_EXTRA_PAPER_SESSION_ROOTS: tuple = (
     PROJECT_DIR / "data" / "paper_M_under_paper" / "sessions",
 )
+# 2026-06-11: fleet paired-delta block. The parallel-engine fleet's
+# daily aggregator publishes per-engine marginal ROI tables, but all
+# engines see the same games -- the decision information lives in the
+# DELTA bets (bets one config took that the baseline didn't, and vice
+# versa). This block computes the paired comparison per preset vs the
+# baseline so fleet conclusions surface in the daily review instead of
+# requiring a manual audit (the 2026-06-10 E/G/N retirements were all
+# discoverable weeks earlier from this exact arithmetic).
+FLEET_DATA_ROOT = PROJECT_DIR / "data"
+FLEET_BASELINE_LABEL = "A_current"
+# Legacy / non-fleet paper roots that must not be compared as presets.
+FLEET_EXCLUDED_ROOT_NAMES: tuple = ("paper_trading",)
+FLEET_PAIRED_DELTA_TRAILING_DAYS = 30
+# DEAD: enough shared days to judge, and near-zero delta-bet flow --
+# the preset produces no distinct decisions vs baseline (N_extreme_
+# edge_022 signature: 10 days, 0 delta bets).
+FLEET_DEAD_MIN_SHARED_DAYS = 7
+FLEET_DEAD_MAX_DELTA_FLOW_PER_DAY = 0.3
+# CONCLUSIVE: Welch-t on unique-cohort per-bet profit clears 1.96
+# with a minimum combined delta-bet sample.
+FLEET_CONCLUSIVE_T = 1.96
+FLEET_CONCLUSIVE_MIN_DELTA_N = 20
+# TRENDING: directional but not yet significant.
+FLEET_TRENDING_T = 1.0
+FLEET_TRENDING_MIN_DELTA_N = 10
+
 # B4 thresholds (from ROADMAP B4 entry; change here AND in ROADMAP
 # together so the doc and the verdict stay in sync).
 B4_MILESTONE_TRAILING_DAYS = 60

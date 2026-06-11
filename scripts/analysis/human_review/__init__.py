@@ -71,6 +71,9 @@ from .under_health import (
 from .same_game_multi_fire import (
     _same_game_multi_fire_health,
 )
+from .fleet_health import (
+    _fleet_paired_delta_health,
+)
 
 __all__ = [
     "_load_trailing_reviews",
@@ -130,5 +133,6 @@ __all__ = [
     "_aggregate_paper_under_bets",
     "_count_persistent_under_drift_alerts",
     "_same_game_multi_fire_health",
+    "_fleet_paired_delta_health",
 ]
 

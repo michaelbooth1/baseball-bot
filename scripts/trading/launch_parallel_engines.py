@@ -223,13 +223,20 @@ PRESETS: Dict[str, List[str]] = {
         "--stage1-alt-a-scope-mode", "enforce",
         "--quote-engine-mode", "shadow",
         "--under-mode", "paper",
-        # 2026-05-30: UNDER calibrator is degenerate (Platt slope ~0.04
-        # collapses every FV to ~0.30 -> 0 UNDER paper bets clear
-        # gate_min_edge). Run with calibration off so UNDER FV =
-        # 1 - over_fv_raw varies with game state and bets actually
-        # fire. Flip back to `enforce` once the calibrator is refit on
-        # post-2026-05-30 outcomes.
-        "--under-calibration-mode", "off",
+        # 2026-06-11: calibration flipped back ON (was off since
+        # 2026-05-30). The off-mode stop-gap produced honest volume but
+        # dishonest FVs: 8 UNDER bets at raw 1-over_fv (overconfident
+        # by construction), 1W/7L, -69% ROI, calibration delta -39pp.
+        # B4 can never clear on that data. The 2026-06-11 evaluation
+        # found the pooled UNDER calibrator scores logloss 0.711 on
+        # held-out rows (vs 0.813 for a per-line variant, which is
+        # OVERFIT on current n -- line-5.5 isotonic maps raw 0.05 to
+        # 0.82; per-line UNDER is deferred until real UNDER outcomes
+        # accumulate). The score_event curve remains low-discrimination
+        # (flat ~0.30) so enforce mode fires only cheap-ask unders;
+        # fewer bets, but ones whose FV is defensible -- which is what
+        # the B4 ROI + calibration conditions actually need.
+        "--under-calibration-mode", "enforce",
     ],
     # N_extreme_edge_022 RETIRED 2026-06-10 (ran 2026-06-01 -> 2026-06-10,
     # 47 settled). NULL EXPERIMENT: the preset's premise ("production

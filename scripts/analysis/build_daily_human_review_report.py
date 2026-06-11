@@ -65,6 +65,7 @@ from scripts.analysis.human_review import (
     _under_outcomes_counterfactual_health,
     _under_paper_b4_milestone_health,
     _same_game_multi_fire_health,
+    _fleet_paired_delta_health,
     _wilson_upper_bound,
     _shift_date,
     _parse_iso_to_epoch_safe,
@@ -188,6 +189,7 @@ def _build_notes(
     under_emission_health: Optional[Dict[str, Any]] = None,
     under_outcomes_counterfactual_health: Optional[Dict[str, Any]] = None,
     under_paper_b4_milestone_health: Optional[Dict[str, Any]] = None,
+    fleet_paired_delta_health: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     notes: List[str] = []
     roi = bet_totals.get("roi")
@@ -289,6 +291,11 @@ def _build_notes(
     # _count_persistent_under_drift_alerts can ignore them (B4
     # verdict alerts are not drift alerts).
     for alert in (under_paper_b4_milestone_health or {}).get("alerts") or []:
+        notes.append(alert)
+    # 2026-06-11: fleet paired-delta conclusions. Alerts carry their
+    # own `Fleet-delta:` prefix (CONCLUSIVE_* = promotion/retirement
+    # evidence ready; DEAD = preset produces no distinct decisions).
+    for alert in (fleet_paired_delta_health or {}).get("alerts") or []:
         notes.append(alert)
     for alert in (reconciler_summary or {}).get("alerts") or []:
         notes.append(f"Reconciler watch: {alert}")
@@ -511,6 +518,14 @@ def build_report(
         live_sessions_dir=sessions_dir,
         output_root=output_root,
     )
+    # 2026-06-11: fleet paired-delta block. Computes per-preset
+    # shared/unique bet cohorts vs the A_current baseline so fleet
+    # conclusions (CONCLUSIVE / DEAD presets) surface here instead of
+    # requiring a manual audit. The aggregator's marginal tables stay
+    # in parallel_engine_comparison/; this block is the decision lens.
+    fleet_paired_delta_health = _fleet_paired_delta_health(
+        session_date=session_date,
+    )
     reconciler_summary = _reconciler_summary(session.get("bets") or [])
     notes = _build_notes(
         session_summary,
@@ -543,6 +558,7 @@ def build_report(
         under_emission_health,
         under_outcomes_counterfactual_health,
         under_paper_b4_milestone_health,
+        fleet_paired_delta_health,
     )
     stake_usdc = _safe_float((session.get("params") or {}).get("stake"), 10.0)
     stage2_audit = _stage2_suppression_dollar_audit(
@@ -603,6 +619,7 @@ def build_report(
         "under_paper_b4_milestone_health": (
             under_paper_b4_milestone_health
         ),
+        "fleet_paired_delta_health": fleet_paired_delta_health,
         "concept_drift_health": concept_drift_health,
         "drift_in_drift_health": drift_in_drift_health,
         "daemon_readiness_health": daemon_readiness_health,

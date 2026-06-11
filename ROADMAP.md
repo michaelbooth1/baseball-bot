@@ -441,7 +441,49 @@ first production data.
 
 ## Recently completed
 
-- **Fleet prune + paired-delta audit quick wins** *(2026-06-10, latest)* —
+- **UNDER calibration re-enabled + fleet paired-delta daily-review
+  block** *(2026-06-11, latest)* — the two follow-ups from the
+  2026-06-10 fleet audit.
+
+  **1. UNDER calibration: M_under_paper flipped back to enforce.**
+  The 2026-05-30 off-mode stop-gap produced honest volume but
+  dishonest FVs: raw `1 - over_fv` is overconfident by construction
+  (8 UNDER bets, 1W/7L, −69% ROI, calibration delta −39pp — B4 can
+  never clear on that data). Evaluation of a per-line UNDER refit
+  found it **overfit on current n** (held-out logloss 0.813 vs 0.711
+  pooled; line-5.5 isotonic maps raw 0.05 → 0.82) — so per-line
+  UNDER is deferred until real UNDER outcomes accumulate, and the
+  pooled artifact stays. Two runtime fixes shipped with the flip:
+  (a) `_maybe_emit_under_candidate` now routes the UNDER calibrator
+  by the candidate's ACTUAL model family instead of hardcoding
+  score_event_transition — the no_score_drift UNDER curve has real
+  discrimination (0.20→0.62 spread) while score_event's is near-flat,
+  so no-score candidates were being wasted on the flat curve;
+  (b) `line=` passed through so per-line UNDER curves activate
+  automatically if they ever ship. Engine startup warning updated to
+  reflect the 2026-06-11 evaluation. Expect fewer but defensible
+  UNDER paper bets (flat ~0.30 score_event FV clears gate_min_edge
+  only on cheap asks).
+
+  **2. Fleet paired-delta daily-review block**
+  (`fleet_paired_delta_health`). New
+  `human_review/fleet_health.py::_fleet_paired_delta_health` walks
+  every `data/paper_<label>/sessions` root for the trailing 30d and
+  computes, per preset vs `A_current`: shared/unique bet cohorts
+  (key: date, game_pk, line, side, inning), unique-cohort W/L/P&L,
+  `delta_net_pnl`, a Welch t on per-bet profit (one-sample fallback
+  for strictly-additive presets like F_no_dedup), a verdict ladder
+  (`NO_SHARED_DAYS → DEAD → CONCLUSIVE_± → TRENDING_± → COLLECTING`),
+  and a `days_to_significance` extrapolation. CONCLUSIVE and DEAD
+  verdicts mirror to Notes via `Fleet-delta:` prefix. First
+  production run reproduces the 2026-06-10 manual audit exactly:
+  N_extreme_edge_022 → DEAD (alert fired), B_cal_only →
+  TRENDING_POSITIVE (t=1.71, ~6 days to verdict), F_no_dedup →
+  TRENDING_POSITIVE (t=1.43, ~14 days). The next fleet conclusion
+  surfaces in the daily review without a manual audit. 19 new tests;
+  full suite 1,558 green.
+
+- **Fleet prune + paired-delta audit quick wins** *(2026-06-10)* —
   first decision pass driven by the 2026-06-10 paired-delta fleet audit
   (the per-engine marginal tables hide the signal; the information is
   in the delta bets each config takes/skips vs A_current). Four ships:

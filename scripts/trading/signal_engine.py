@@ -441,17 +441,19 @@ class SignalEngine(MLBPolymarketMonitor):
                 )
                 LOGGER.warning(
                     "UNDER mode: %s (calibration: %s) -- UNDER "
-                    "CALIBRATOR IS UNRELIABLE. Loaded from %s "
-                    "(method=%s), but the 2026-05-22 debut day showed "
-                    "FV severely off: DET@BAL O7.5 inn4 model said "
-                    "P(under)=0.73, game ended at 11 runs. The "
-                    "2026-05-30 audit further found the Platt fit is "
-                    "degenerate (slope a~0.04, pancakes every FV to "
-                    "~0.30). Use --under-calibration-mode off to "
-                    "bypass. Candidate rows stamped "
-                    "shadow_under_calibration_status="
-                    "unreliable_pre_refit so downstream cohort blocks "
-                    "can filter.",
+                    "calibrator loaded from %s (method=%s). Known "
+                    "limitation (2026-06-11 evaluation): the "
+                    "score_event_transition curve is low-discrimination "
+                    "(near-flat ~0.30; Platt slope a~0.04) because UNDER "
+                    "training raws concentrate in [0, 0.1]. It is still "
+                    "better-calibrated on held-out rows (logloss 0.711) "
+                    "than raw 1-over_fv (the 2026-05-30..06-10 off-mode "
+                    "stop-gap went 1W/7L, -39pp calibration delta), so "
+                    "enforce is the recommended mode; expect only "
+                    "cheap-ask UNDER bets to clear gate_min_edge. "
+                    "Candidate rows remain stamped "
+                    "shadow_under_calibration_status=unreliable_pre_refit "
+                    "until UNDER outcomes validate the curve.",
                     self._under_mode,
                     self._under_calibration_mode,
                     under_cal_path,

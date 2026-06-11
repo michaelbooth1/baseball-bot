@@ -381,11 +381,35 @@ def _maybe_emit_under_candidate(
         under_cal_mode = getattr(engine, "_under_calibration_mode", "enforce")
         under_fv_calibrated_shadow: Optional[float] = None
         if under_cal is not None:
+            # 2026-06-11: route by the candidate's ACTUAL family instead
+            # of hardcoding score_event_transition. The UNDER artifact is
+            # fit per-family; the no_score_drift curve has real
+            # discrimination while score_event's is near-flat, so sending
+            # no-score candidates through the score_event curve wasted
+            # the better fit. Also pass line= so per-line UNDER curves
+            # activate automatically if/when they ship (the artifact has
+            # no lines block today; the calibrator falls back to the
+            # family-pooled curve).
+            under_family = str(
+                over_candidate_payload.get("signal_model_family")
+                or over_candidate_payload.get("state_value_strategy")
+                or SCORE_EVENT_TRANSITION
+            )
             try:
                 under_fv_calibrated_shadow = float(under_cal.calibrate(
                     under_fv_raw,
-                    model_family=SCORE_EVENT_TRANSITION,
+                    model_family=under_family,
+                    line=market.line,
                 ))
+            except TypeError:
+                # Pre-2026-06-06 ProbabilityCalibrator without line kwarg.
+                try:
+                    under_fv_calibrated_shadow = float(under_cal.calibrate(
+                        under_fv_raw,
+                        model_family=under_family,
+                    ))
+                except Exception:  # noqa: BLE001
+                    under_fv_calibrated_shadow = None
             except Exception:  # noqa: BLE001
                 under_fv_calibrated_shadow = None
         if under_cal_mode == "enforce" and under_fv_calibrated_shadow is not None:
