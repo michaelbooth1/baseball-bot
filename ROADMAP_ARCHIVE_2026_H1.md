@@ -2745,3 +2745,1216 @@ ledger rows), but the code exists.
   filled multiple correlated bets ($20-$30 of effective same-trade
   exposure per occurrence). With defaults, the canonical 2026-05-08
   O7.5+O8.5 placement would have been blocked at the second line.
+
+
+---
+
+## Entries archived 2026-06-11 (shipped 2026-05-18 -> 2026-05-27)
+
+_Moved from ROADMAP.md "Recently completed" per the trailing-~7-days policy._
+
+- **RF1.a Recent-N Edge Atlas comparison** *(2026-05-27)* —
+  tests whether the 2026-05-27 Edge Atlas RF1 finding (+2-5pp Over
+  premium across every cohort, measured on the 10y MLB Stage-1
+  cache) survives across multiple historical windows or whether
+  it's a 10y baseline artifact (juiced ball era, fence moves,
+  recent scoring-environment shifts). The strongest pre-pivot
+  evidence we have for the bidirectional / market-maker pivot
+  depends on this answer — if RF1 is a regime artifact, post-B4
+  go/no-go calls need a caveat; if it survives, RF1 is a
+  high-confidence input.
+
+  **Script**: new `scripts/analysis/compare_edge_atlas_windows.py`.
+  Runs the existing `build_atlas_payload` (from
+  `build_edge_atlas.py`) once per Stage-1 cache window (no cache
+  builds needed — all 5 windows exist pre-comparison), rolls the
+  per-window `by_inning_band` / `by_line` / `by_score_diff_band`
+  cohort summaries into a comparison matrix vs the
+  `10y_2016_2025` baseline, and emits a verdict.
+
+  **Windows compared**:
+  - `3y_2023_2025` → `cache/mlb_ou_cache_3y_2023_2025_candidate.json`
+  - `4y_2022_2025` → `cache/mlb_ou_cache_4y_2022_2025_candidate.json`
+  - `5y_2021_2025` → `cache/mlb_ou_cache_5y_baseline_2021_2025.json`
+  - `6y_2020_2025` → `cache/mlb_ou_cache_6y_2020_2025_candidate.json`
+  - `10y_2016_2025` → `cache/mlb_ou_cache_10y_candidate.json` (baseline)
+
+  **Verdict ladder**:
+  - `BIAS_SURVIVES_RECENT`: every cohort within ±1.5pp of baseline
+    AND no sign flips → high confidence
+  - `BIAS_PARTIALLY_SURVIVES`: signs consistent, some cohorts in
+    [1.5pp, 3pp] from baseline → directionally robust, magnitude varies
+  - `BIAS_STALE_REGIME_DRIFT`: any sign flip OR any |Δ| ≥ 3pp →
+    10y baseline misleading, add caveat to bidirectional evidence
+  - `INSUFFICIENT_DATA`: too few overlapping cohort buckets
+
+  Sign flips use a ±0.5pp tolerance around zero so tiny near-zero
+  biases don't artificially count as flips.
+
+  **First production run** (2026-05-27 + ~1mo of Polymarket data):
+  - **Verdict**: `BIAS_PARTIALLY_SURVIVES`.
+  - **0 sign flips** across 16 cohort buckets × 5 windows.
+  - **Max |Δ|** = 1.78pp on extras innings (inn_10+, 5y shows
+    +4.05pp vs 10y +5.83pp — still strongly positive but
+    magnitude differs).
+  - **Aggregate stake-weighted biases**:
+    | Window | Bias |
+    |---|---|
+    | 3y_2023_2025 | +2.41pp |
+    | 4y_2022_2025 | +3.18pp |
+    | 5y_2021_2025 | +2.91pp |
+    | 6y_2020_2025 | +2.78pp |
+    | 10y_2016_2025 | +2.46pp |
+  - **By line**: every line bucket positive in every window,
+    max |Δ| 1.17pp (7.5 line).
+  - **By score diff**: every band positive in every window,
+    max |Δ| 1.25pp (trailing_1-3 band).
+  - **By inning band**: every inning bucket positive in every
+    window; the inn_10+ extras innings bucket drives the
+    headline max |Δ|.
+
+  **Operator takeaway**: the directional finding (Over IS
+  overpriced relative to historical empirical) is robust across
+  every measured regime; the magnitude varies but never enough to
+  flip the conclusion. The 4y window actually shows the LARGEST
+  bias (+3.18pp), not the longest window — counterintuitive
+  evidence against "10y baseline is inflating the finding."
+  Treat RF1 as directionally reliable for post-B4 bidirectional-
+  pivot go/no-go decisions; expect cohort-level magnitude drift
+  but no flipped signs.
+
+  **What this unlocks**: post-B4, the operator can lean on RF1
+  as structural evidence that bidirectional trading captures a
+  real premium. RF1.b (realized-outcomes deep dive) becomes the
+  next follow-up once enough actual UNDER paper bets accumulate
+  to test "does our paper UNDER WR confirm the cohort biases
+  this report measures?".
+
+  **Output**:
+  - `data/analysis_output/edge_atlas/recent_n_comparison.json`
+  - `data/analysis_output/edge_atlas/recent_n_comparison.md`
+
+  **Tests**: 20 new in `tests/test_compare_edge_atlas_windows.py`:
+  cohort matrix arithmetic (basic two-window delta, missing-bucket
+  None handling, sign-flip detection, near-zero tolerance, summary
+  aggregation), verdict classifier (all 4 verdict states +
+  cross-cohort-dimension aggregation), stake-weighted aggregate
+  bias from atlas payload (stake-weight math, n_games/n_ticks
+  floor exclusions, empty handling), build_comparison_payload
+  integration (missing-cache reporting, baseline fallback,
+  research_id wiring), markdown render smoke. **1560 tests + 41
+  subtests pass** (+20).
+
+  **Files**:
+  - `scripts/analysis/compare_edge_atlas_windows.py` (NEW, ~530 LOC)
+  - `tests/test_compare_edge_atlas_windows.py` (NEW, 20 tests)
+  - `data/analysis_output/edge_atlas/recent_n_comparison.{json,md}`
+    (NEW, first production run output)
+
+- **B4 milestone dashboard** *(2026-05-27, later)* — closes the
+  Phase C-paper loop. Before this ship, the operator could turn on
+  `--under-mode paper` but had no visibility into how close the
+  60-session B4 validation timer was, which condition was the
+  current limiter, or when verdict would clear. The existing
+  trailing-7d `under_outcomes_counterfactual_health` block tracks
+  SHADOW counterfactual P&L — useful for sanity-checking signal
+  quality but it does NOT advance B4 (B4 specifically requires
+  ACTUAL paper bets, not counterfactual rollups).
+
+  **New block**: `_under_paper_b4_milestone_health` in
+  `scripts/analysis/human_review/under_health.py`. Walks BOTH
+  `data/paper_trading/sessions/` AND `data/live_trading/sessions/`
+  (an operator running the live engine with `--under-mode paper`
+  accumulates evidence on the live root) across the trailing 60d
+  and dedupes by `bet_id` so a bet hosted in both roots counts
+  once per date.
+
+  **5 verdict conditions** (from ROADMAP B4 spec):
+  1. `sessions_with_under_bets >= 60`
+  2. `n_settled >= 150`
+  3. `taker_roi > 0%`
+  4. `|calibration_delta_pp| <= 5pp` (realized WR vs predicted WR
+     using `mean(bet.fair_value)` as predicted)
+  5. UNDER drift alerts on `<3 of last 7d` of human-review JSONs
+     (B1 dimension family; scanner matches `under:` / `under-`
+     prefixes in Notes but EXPLICITLY EXCLUDES the new `under-b4:`
+     prefix so today's verdict alert can't pollute tomorrow's
+     drift count — self-loop guard)
+
+  **Verdict ladder** (highest-priority gap surfaces first):
+  ```
+  NOT_EMITTING -> INSUFFICIENT_SESSIONS -> INSUFFICIENT_OUTCOMES
+    -> SUB_ZERO_ROI -> CALIBRATION_OFF -> DRIFT_ALERT_PERSISTENT
+    -> READY
+  ```
+
+  **Per-condition status** also surfaced in payload regardless of
+  verdict so the operator can see all 5 in one block:
+  ```json
+  "conditions": {
+    "sessions": {"value": 28, "target": 60, "remaining": 32, "pass": false},
+    "n_settled": {"value": 83, "target": 150, "remaining": 67, "pass": false},
+    "roi": {"value": 0.034, "min_roi": 0.0, "pass": true},
+    "calibration_delta_pp": {"value": -2.3, "tolerance_pp": 5.0, "pass": true},
+    "under_drift_alerts": {"days_with_alert": 0, "lookback_days": 7, "persistence_threshold": 3, "pass": true}
+  }
+  ```
+
+  Plus `aggregate` (full trailing metrics + first/last session
+  date) and `by_date` drill-down with per-day n_under_placed,
+  n_settled, wins, profit, roi, sources (which roots had data).
+
+  **Alerts** mirrored to Notes via `Under-B4:` prefix:
+  - **READY**: always fires when status=READY (good news; surface
+    it regardless of n).
+  - **SUB_ZERO_ROI / CALIBRATION_OFF / DRIFT_ALERT_PERSISTENT**:
+    fire only when `n_settled >= 30` (`min_n_for_failure_alert`
+    default) — avoids spamming false alarms on tiny samples while
+    still showing per-condition status in the JSON for audit.
+  - Quiet states (`NOT_EMITTING`, `INSUFFICIENT_SESSIONS`,
+    `INSUFFICIENT_OUTCOMES`) emit NO Notes alert — milestone
+    progress is already implicit in the existing trailing-7d
+    `under_outcomes_counterfactual_health` block.
+
+  **First production run** against today's daily review
+  (2026-05-17 session): `status=NOT_EMITTING`,
+  `aggregate.n_sessions_with_under_bets=0`, 0 alerts. Correct
+  baseline -- the operator has not yet run `--under-mode paper`
+  for a complete session. Once paper UNDER bets land, the block
+  will start ticking through the verdict ladder automatically;
+  the operator will see the same JSON block every day with
+  evolving values until verdict reads `READY`.
+
+  **Files**:
+  - `scripts/analysis/human_review/constants.py` (+~25 LOC: new
+    `DEFAULT_PAPER_SESSIONS_DIR` + 7 B4 threshold constants)
+  - `scripts/analysis/human_review/under_health.py` (+~290 LOC:
+    new `_load_session_bets`, `_collect_paper_under_bets_for_date`,
+    `_aggregate_paper_under_bets`,
+    `_count_persistent_under_drift_alerts`,
+    `_under_paper_b4_milestone_health` helpers)
+  - `scripts/analysis/human_review/__init__.py` (+~10 LOC: export
+    4 new helpers)
+  - `scripts/analysis/build_daily_human_review_report.py`
+    (+~20 LOC: import + call + Notes wiring + return-dict entry)
+  - `tests/test_under_paper_b4_milestone.py` (NEW, 22 tests
+    spanning verdict ladder transitions, cross-root union dedup,
+    drift-alert self-loop guard, aggregate arithmetic, alert
+    emission gating, build_report integration)
+
+  **Tests**: full pytest suite **1540 passed + 41 subtests, 0
+  regressions** (was 1518; +22 new).
+
+- **Phase C-paper: UNDER paper-bet path** *(2026-05-27)* — closes
+  the prerequisite that was blocking B4. Before today the only
+  thing standing between the operator and the 60-session UNDER
+  validation runway was the code: A5 (2026-05-19) shipped UNDER
+  candidate emission in shadow mode but explicitly never placed,
+  and Phase C as documented bundled three pieces (live UNDER
+  trading + UNDER post-FV gates + quote-engine `act`) that all
+  required B4 evidence we didn't yet have. This ship splits the
+  bundle so the paper-mode prerequisite ships now and the
+  live-flip pieces stay gated by the B4 verdict as designed.
+
+  **CLI** (`signal_config.py` + `live_engine_cli.py`): renamed
+  `--under-emission-mode {off, shadow}` → `--under-mode {off,
+  shadow, paper}`. Legacy alias `--under-emission-mode` kept for
+  one transition cycle (silent backward-compat; new flag wins if
+  both passed). Post-parse normalizer in `parse_trade_args`
+  resolves precedence + mirrors back to `trade_args.under_emission_mode`
+  so any downstream reader of the old attr keeps working. 8 new
+  `--under-*` gate-threshold flags expose the symmetric stack
+  (`--under-min-inning`, `--under-min-inning-high-line`,
+  `--under-min-entry-ask`, `--under-min-entry-ask-high-line`,
+  `--under-max-base-fv`, `--under-fv-ask-gap-max`,
+  `--under-fv-ask-gap-min-inning`, `--under-extreme-edge-max`);
+  each defaults to its OVER counterpart so a fresh operator
+  starts with parity.
+
+  **UNDER gate stack** (`signal_pipeline.py
+  ::_maybe_emit_under_candidate`): 5 symmetric gates evaluated
+  in order before the existing `gate_min_edge`:
+  1. `gate_under_min_inning` — variance reduction (same logic
+     applies to both sides).
+  2. `gate_under_min_entry_ask` — thin-book guard on UNDER ask.
+  3. `gate_under_max_base_fv` — UNDER FV saturation / phantom
+     no-score.
+  4. `gate_under_extreme_edge` — symmetric application of TR19's
+     OVER-side empirical finding (very large edge = market more
+     informed than us).
+  5. `gate_under_fv_ask_gap` — late-inning large gap (only when
+     `inning >= --under-fv-ask-gap-min-inning`).
+
+  **Asymmetric gates deliberately deferred** (pace, runs_needed,
+  close_game, inn5/6 dead zone, blowout, S2 suppress, pitcher
+  boost): they work in the OPPOSITE direction for UNDER (e.g.
+  blowout suppresses scoring — bad for OVER, GOOD for UNDER) so
+  mirroring them naively would over-block. They need UNDER-
+  specific design after paper data accumulates; flagged as
+  Hygiene candidates once shadow data has enough cohort N.
+
+  **Paper placement** (new `_place_under_paper_bet` helper):
+  builds a `BetRecord(side="under")` and appends to `engine._bets`
+  so the standard settlement loop picks it up. Capture sidecars
+  (book / tape / velocity) intentionally skipped — those are OVER-
+  bet-focused; UNDER paper only needs the BetRecord. UNDER bet ids
+  use a separate counter and `_under_NNNN` suffix so OVER + UNDER
+  bet ids never collide.
+
+  **Settlement** (`signal_engine.py::_settle_finished_games`):
+  reads `bet.side` and computes `counterfactual_won = (final_total
+  < line)` for UNDER vs `> line` for OVER. MLB OU lines end in .5
+  so pushes are structurally impossible. SETTLED / MISSED log
+  lines now show the actual `bet.side.upper()` instead of the
+  previously-hardcoded "OVER".
+
+  **Live-engine safety** (`live_engine.py::_is_bet_executable` +
+  `live_engine_placement.py::place_bet`): the live `_is_bet_executable`
+  override (which gates OVER bets on `order_status == "filled"`)
+  now short-circuits to True for `side == "under"`, because UNDER
+  paper bets are filled-at-limit by construction and never have
+  an order_status. The CLOB `place_bet` carries an explicit
+  "Phase C-paper invariant: OVER-only by construction (uses
+  market.over_token_id); UNDER bets are paper-only and bypass
+  this path entirely via _place_under_paper_bet" docstring + a
+  test that pins the contract so accidental removal trips CI.
+
+  **What this unlocks**:
+  - Operator can now run
+    `python scripts/trading/live_engine.py --under-mode paper`
+    (or the same flag on `paper_trader.py`) and start the
+    60-session B4 clock. UNDER paper bets land in the same
+    session JSON as OVER bets with `side="under"`, settle
+    correctly, and populate the `by_side.under` block of daily
+    review automatically.
+  - The existing UNDER outcomes counterfactual block (which has
+    been silently accumulating shadow_under rows since 2026-05-19)
+    continues to work; paper rows arrive as `decision="paper_under"`
+    so cohort analysis can split paper vs shadow.
+
+  **What stays deferred** (gated by B4 verdict per design):
+  - `--under-mode live` value: not in the CLI choices list yet;
+    the parser rejects it. Operator must complete B4 before this
+    value is added.
+  - `--quote-engine-mode act` flip: still shadow-only.
+  - UNDER-side hedging execution.
+  - The full UNDER post-FV gate stack tuned from UNDER data
+    (today's 5 symmetric gates use OVER's empirical thresholds;
+    UNDER-specific tuning comes from B4 cohort analysis).
+
+  **Tests**: 29 new in `tests/test_under_paper_placement.py`
+  spanning `UnderGateStackTests`, `UnderPaperPlacementTests`,
+  `UnderSettlementTests`, `LiveEngineUnderSafetyTests`,
+  `UnderModeFlagTests`. Existing `tests/test_under_candidate_emission.py`
+  updated to set permissive UNDER gate defaults in
+  `_make_fake_engine` so 11 pre-existing shadow tests don't trip
+  the new 5-gate stack; bridge test pattern-matches the new
+  live_engine.py wiring. **1518 tests + 41 subtests pass** (+29
+  from this ship; 0 regressions on the rest of the suite).
+
+  **Files**:
+  - `scripts/trading/signal_config.py` (+~115 LOC: new constants,
+    `--under-mode` + 8 gate flags, post-parse alias merge,
+    validation block)
+  - `scripts/trading/live_engine_cli.py` (+~16 LOC: new
+    `--under-mode` flag + legacy alias)
+  - `scripts/trading/live_engine.py` (+~24 LOC: bridge for new
+    flag + 8 gate thresholds, `_is_bet_executable` UNDER override)
+  - `scripts/trading/signal_engine.py` (+~30 LOC: read new attr
+    with legacy fallback, settlement reads bet.side, SETTLED/
+    MISSED log line uses actual side)
+  - `scripts/trading/signal_pipeline.py` (+~270 LOC: new
+    `_place_under_paper_bet` helper, expanded
+    `_maybe_emit_under_candidate` with 5-gate stack +
+    `paper_under` decision tag + paper placement call)
+  - `scripts/trading/live_engine_placement.py` (+~9 LOC:
+    "Phase C-paper invariant" docstring callout)
+  - `tests/test_under_paper_placement.py` (NEW, 29 tests)
+  - `tests/test_under_candidate_emission.py` (~25 LOC: permissive
+    UNDER gate defaults in `_make_fake_engine`; bridge test
+    updated to match new wiring)
+
+- **UNDER outcomes counterfactual trailing-7d aggregate** *(2026-05-19)* --
+  the natural smoothing layer on top of this afternoon's per-day
+  UNDER outcomes block. The per-day window is too sparse for the
+  n>=30 alert threshold to fire reliably (~30% of shadow_under
+  candidates settle by daily-review time, so a single day rarely
+  clears the floor). This ship walks the prior 7 dates' candidate
+  + outcomes files, unions the settled rows, and re-aggregates --
+  so the trailing alert at n>=50 starts firing within ~3 sessions
+  of the operator opting into A5 emission instead of waiting for
+  a single "lucky" day to hit n=30 alone.
+
+  **Refactor**: extracted 3 helpers from the original block so
+  per-day and trailing aggregates share the same arithmetic and
+  cohort logic:
+  - `_collect_under_settled_rows(session_date, candidate_dir,
+    stake_usdc)`: loads shadow_under candidates + matches
+    outcomes + computes won/profit per row. Returns
+    `{settled_rows, n_shadow_under_candidates, n_missing_outcome,
+    n_missing_ask, status, error?}`. Used by both per-day and the
+    trailing loop.
+  - `_aggregate_under_settled(settled_rows, stake_usdc)`: returns
+    the aggregate dict (n, win_rate, total_counterfactual_pnl,
+    counterfactual_roi, mean_under_ask, mean_under_fv) regardless
+    of input window so per-day vs trailing can be compared
+    directly.
+  - `_under_settled_by_cohort(settled_rows, stake_usdc)`:
+    5-dimensional cohort breakdown.
+
+  **Trailing-7d sub-block** in
+  `_under_outcomes_counterfactual_health`:
+  - Walks today + prior 6 dates (`UNDER_OUTCOMES_TRAILING_DAYS`).
+    For each date with a candidate file, runs the per-day
+    collector and accumulates settled_rows into a single trailing
+    list.
+  - Surfaces: `anchor_date`, `trailing_days`, `dates_with_data` /
+    `dates_missing` splits + counts, `n_shadow_under_candidates_total`,
+    `n_settled_total`, `n_missing_outcome_total`, `n_missing_ask_total`,
+    `aggregate` + `by_cohort` (same shape as per-day), `by_date`
+    drill-down (sorted by date) with per-day n_settled / win_rate /
+    pnl / roi, and `date_range` (earliest -> latest date with data).
+  - 3-way status mirrors per-day: `ok` (has settled rows) /
+    `no_settled` (shadow_under emitted but no outcomes) /
+    `no_shadow_under_candidates` (A5 emission was off across the
+    window) / `no_session_history` (no candidate files at all).
+  - **2 sample-size-gated trailing alerts** (separate from per-day):
+    n>=50 settled (vs per-day n>=30). Both prefixed with `(7d)` in
+    the message text so the Notes block distinguishes window:
+    - **Profitable** (trailing ROI >= +5%): "(7d) trailing-7d
+      UNDER counterfactual X% ROI on N settled across M dates;
+      Phase B4 paper-bet milestone progress: M/60 sessions
+      accumulated."
+    - **Unprofitable** (trailing ROI <= -5%): "(7d) trailing-7d
+      UNDER signal is loss-making; aggregate is more stable than
+      per-day view; tune UNDER-specific gates before any B4 flip."
+
+  **Tolerates missing dates gracefully**: the operator's candidate
+  log dir may not have all 7 prior dates (different paper-trading
+  runs, gaps from non-trading days, etc.). Missing dates land in
+  `dates_missing`; the trailing aggregate just runs over whatever
+  data is present.
+
+  **Cache-efficient**: today's date reuses the per-day collector's
+  output rather than re-loading the candidate file twice.
+
+  **First production run** (smoke against today's
+  `candidate_universe`): per-day status =
+  `no_shadow_under_candidates` (A5 emission flag shipped today;
+  the operator hadn't opted in yet for yesterday's 2026-05-18
+  session). Trailing-7d status = `no_shadow_under_candidates` too
+  (1 of 7 trailing dates has any candidate file, and that one has
+  0 shadow_under rows). 0 alerts. Once the operator runs
+  `--under-emission-mode shadow` tomorrow + accumulates a few
+  sessions, the trailing aggregate will surface a stable ROI
+  signal -- and the B4 paper-bet milestone progress counter will
+  start incrementing automatically.
+
+  **Tests**: 10 new in `tests/test_build_daily_human_review_report.py`
+  `UnderOutcomesCounterfactualHealthTests`:
+  - trailing_7d sub-block always present
+  - unions settled rows across dates (no double counting)
+  - by_date breakdown sorted chronologically
+  - date_range uses actual dates with data
+  - profitable alert fires at n>=50 with +ROI
+  - unprofitable alert fires at n>=50 with -ROI
+  - no trailing alert when n<50 (sample-size gate)
+  - status=`no_settled` when shadow_under exists but no outcomes
+  - status=`no_shadow_under_candidates` when no UNDER emission
+  - missing dates tolerated gracefully
+
+  **1383 tests + 41 subtests pass** (+10 from this ship; existing
+  14 per-day tests still pass unchanged after the helper extraction).
+
+  **Files**: `scripts/analysis/build_daily_human_review_report.py`
+  (added `timedelta` to datetime imports, 2 new constants
+  `UNDER_OUTCOMES_TRAILING_DAYS` + `UNDER_OUTCOMES_TRAILING_MIN_N_FOR_ALERT`,
+  3 extracted helpers, refactored block body + trailing-7d loop
+  + trailing alerts; net +~210 LOC),
+  `tests/test_build_daily_human_review_report.py` (+10 tests).
+
+- **Phase A5 follow-up #2: UNDER outcomes counterfactual block** *(2026-05-19)* --
+  the natural completion of the A5 -> UNDER coverage trilogy.
+  A5 ships UNDER candidate emission; the UNDER coverage block
+  surfaces decision distribution; this block answers the
+  operationally critical question "would the bot have made or
+  lost money trading UNDER?" -- the data point Phase B4
+  (60-session UNDER paper-bet validation milestone) ultimately
+  depends on.
+
+  **Block** (`scripts/analysis/build_daily_human_review_report.py`):
+  - New `_under_outcomes_counterfactual_health(session_date,
+    candidate_dir, stake_usdc)` reads today's `_candidates.jsonl`
+    + `_outcomes.jsonl` (existing artifacts; no new I/O needed).
+  - Filters `_candidates.jsonl` to `(side="under" AND
+    decision="shadow_under")` -- only the UNDER candidates that
+    cleared their min_edge gate.
+  - Builds `(game_pk, line_str) -> final_total` map from
+    `_outcomes.jsonl` (covers every game with a candidate -- one
+    row per (game_pk, line) regardless of side).
+  - Per shadow_under candidate, settles: UNDER wins iff
+    `final_total < line` (strictly less; MLB OU lines end in .5
+    so no pushes). Counterfactual P&L mirrors paper-mode OVER
+    taker math: `stake / entry_ask` if won, `-stake` if lost.
+    Stake configurable; defaults to $10.
+  - Aggregate metrics: `n_settled`, `n_won`, `n_lost`,
+    `win_rate`, `total_counterfactual_pnl`,
+    `total_counterfactual_stake`, `counterfactual_roi`,
+    `mean_under_ask`, `mean_under_fv`.
+  - 5-dimensional per-cohort breakdown (edge / inning / line /
+    ask / current_state_edge) consistent with the rest of the
+    daily review.
+  - Tracks `n_missing_outcome` (game settlement not yet in
+    outcomes.jsonl -- rerun later) + `n_missing_ask` (UNDER ask
+    None or out of (0,1) -- skipped from the counterfactual).
+
+  **Statuses**:
+  - `no_shadow_under_candidates`: 0 rows. Operator didn't opt
+    into A5 emission OR no candidate cleared UNDER min_edge.
+    No alert.
+  - `no_settled`: shadow_under rows exist but 0 have outcomes
+    (outcomes.jsonl not written yet). Surface; no alert.
+  - `ok`: have at least 1 settled outcome; alerts apply.
+  - `check_error`: file read errors. Diagnostic only.
+
+  **2 sample-size-gated alerts** (only when `status=ok`):
+  - **Profitable**: `n_settled >= 30` AND `counterfactual_roi >=
+    +5%` -> "UNDER candidates would have netted +X% ROI;
+    consider Phase B4 paper-bet milestone if durable."
+  - **Unprofitable**: `n_settled >= 30` AND `counterfactual_roi
+    <= -5%` -> "UNDER signal is loss-making; tune UNDER-specific
+    gates BEFORE any B4 flip."
+
+  Both mirror via Notes prefix `Under-outcomes:`.
+
+  **Fail-open**: any helper exception sets `status=check_error`;
+  daily review never blocks on this block.
+
+  **A5 wart fixed in the same patch** (`signal_pipeline.py
+  ::_maybe_emit_under_candidate`): `decision_ask` was inheriting
+  OVER's value via the dict copy because only `entry_ask` /
+  `decision_best_ask` were being overwritten. Cohort-by-ask
+  aggregation downstream would have bucketed UNDER candidates
+  by OVER's ask. Fixed by adding the explicit overwrite. Caught
+  during this block's design.
+
+  **First production run against yesterday's 2026-05-18 session**:
+  status=`no_shadow_under_candidates`, 0 alerts. Correct baseline
+  -- the A5 emission flag shipped today, so yesterday's session
+  predates it. Tomorrow's run (after the operator passes
+  `--under-emission-mode shadow`) will surface real
+  counterfactual P&L.
+
+  **What this unlocks**:
+  - Operator can read daily-review `Under-outcomes:` alerts to
+    monitor whether UNDER signals are profitable across the 7-day
+    paper-mode runway. If consistently positive at meaningful
+    sample, the Phase B4 paper-bet milestone is a config flip
+    away.
+  - Per-cohort table answers "WHICH UNDER candidates would have
+    been profitable" -- enables UNDER-specific gate tuning when
+    cohort sample grows (e.g., raise UNDER min_edge in cohorts
+    where Alt A is losing).
+  - Closes the A5 observability trilogy: emission (A5) ->
+    decision distribution (UNDER coverage) -> outcomes
+    counterfactual (this block).
+
+  **Tests**: 14 new in `tests/test_build_daily_human_review_report.py`
+  `UnderOutcomesCounterfactualHealthTests`:
+  - missing candidate file -> `check_error`
+  - 0 shadow_under rows -> `no_shadow_under_candidates`, no alerts
+  - shadow_under rows but no outcomes -> `no_settled`
+  - UNDER wins when `final_total < line` (math verified)
+  - UNDER loses when `final_total >= line` (math verified)
+  - profitable alert at >=5% ROI + >=30 settled
+  - unprofitable alert at <=-5% ROI + >=30 settled
+  - no alert at n<30 (sample-size gate)
+  - no alert at near-breakeven ROI (|roi| < 5%)
+  - per-cohort breakdown partitions correctly
+  - invalid ask values tracked in `n_missing_ask`
+  - missing outcome rows tracked in `n_missing_outcome`
+  - skip-decision rows (gate_min_edge / gate_no_under_liquidity)
+    excluded from shadow_under set
+  - Notes prefix is `Under-outcomes:`
+
+  **1373 tests + 41 subtests pass** (+14 from this ship).
+
+  **Files**: `scripts/analysis/build_daily_human_review_report.py`
+  (+~240 LOC: 4 new constants, new
+  `_under_outcomes_counterfactual_health` block + 2 sample-
+  size-gated alerts, `build_report` + `_build_notes` + return-
+  dict wiring), `scripts/trading/signal_pipeline.py` (+4 LOC:
+  fix `decision_ask` overwrite in `_maybe_emit_under_candidate`),
+  `tests/test_build_daily_human_review_report.py` (+14 tests).
+
+- **Shadow-override report cohort breakdown** *(2026-05-19)* --
+  the natural next consumer of today's morning fixes (schema
+  propagation + refresh `--mode both`) that landed Alt-A
+  diagnostics into the training table. Before this ship, the
+  shadow-override report presented a single aggregate number
+  ("Alt A reduces 30d bias by 6pp"); operators couldn't tell
+  WHERE Alt-A helps or whether it makes any cohort worse. This
+  ship surfaces 5-dimensional cohort cuts so the eventual
+  Active #8 ENFORCE flip can be SCOPED to specific cohorts
+  rather than all-or-nothing global.
+
+  **Schema extension** (`ShadowBet`):
+  - 3 new fields: `edge_at_ask`, `decision_ask`,
+    `current_state_value_edge` (with forward-compat fallback to
+    `edge` / `entry_ask` aliases for older training-table rows).
+
+  **5 cohort bucketers** (mirror `cohort_roi_health` /
+  `cohort_calibration_health` so cross-block comparison stays
+  consistent):
+  - `_edge_bucket`: <0.15 / 0.15-0.18 / 0.18-0.22 / >=0.22
+  - `_inning_bucket`: <=5 / 6 / 7 / >=8
+  - `_line_bucket`: <=7.5 / 8.5 / 9.5 / >=10.5
+  - `_ask_bucket`: <0.55 / 0.55-0.70 / 0.70-0.85 / >=0.85
+  - `_current_state_edge_bucket`: <0.00 / 0.00-0.03 / 0.03-0.06
+    / >=0.06
+
+  **Per-cohort aggregator** (`_aggregate_cohort`): production
+  vs Alt A bias delta + Alt B kept/blocked split. Slimmer than
+  `aggregate_window` because cohorts are sliced thinly --
+  source breakdown + recommendation subtree intentionally
+  excluded to keep the JSON readable.
+
+  **Top cohorts summary** (`build_cohort_breakdown` ->
+  `top_cohorts`):
+  - `most_improved`: cohorts ranked by `bias_delta_vs_prod_pp`
+    descending (where Alt A helps most)
+  - `regressions`: cohorts with negative `bias_delta` (where
+    Alt A makes bias WORSE)
+  - `highest_coverage`: cohorts where Alt A applies to most bets
+  - `largest_alt_b_savings`: cohorts with highest Alt B
+    counterfactual P&L savings (positive only in markdown view)
+  - All entries gated on `min_n_per_cohort=5` (5 chosen as the
+    floor where `mean(won)` starts to mean anything; below that
+    the bias delta is dominated by noise).
+
+  **Markdown render** (`_cohort_md`): per-dimension tables
+  (`bucket | n | prod_bias | alt_a_bias | delta_pp | coverage |
+  alt_b_blocked | alt_b_$`) plus the 4 top-cohort summary
+  sections. Section only renders when `n_bets_total > 0` so
+  empty windows don't pollute the output.
+
+  **Daily-review surface**
+  (`build_daily_human_review_report.py::_stage1_shadow_override_health`):
+  - New `cohort_breakdown_30d` block in the return dict
+    carrying compact (top-3) views of most_improved /
+    regressions / highest_coverage / largest_alt_b_savings.
+  - 2 new sample-size-gated alerts:
+    * **Scoped-promotion suggestion**: when the best cohort's
+      `bias_delta >= 1pp`, surfaces a Notes line "consider a
+      scoped promotion on this cohort before flipping Alt A
+      globally". Helps the operator see cohorts where ENFORCE
+      would clearly help even when the aggregate alert hasn't
+      fired (or has).
+    * **Regression warning**: when the worst cohort's
+      `bias_delta <= -2pp`, surfaces "REGRESSES under Alt A;
+      a global promote would hurt this cohort". The -2pp
+      threshold is stricter than improvements' +1pp because
+      regressions can hide inside an aggregate-positive Alt A
+      average, and acting on one would lock in damage.
+
+  **First live production run** (trailing 30d, 97 bets):
+  - **Top improvements**:
+    * `current_state_edge_bucket=<0.00` (n=19): +13.30pp delta,
+      53% coverage. Negative current-state-edge bets are where
+      Alt A helps MOST.
+    * `ask_bucket=0.55-0.70` (n=30): +8.94pp delta, 37%
+      coverage. Mid-ask range.
+    * `line_bucket=>=10.5` (n=16): +8.34pp delta, 50% coverage.
+      Highest-scoring lines.
+  - **Critical regression**: `inning_bucket=>=8` (n=7) sees
+    Alt A REGRESS by **-23.83pp** -- late innings are where Alt
+    A makes bias WORSE. A global Alt A ENFORCE flip would
+    significantly hurt this cohort. The scoped-promotion
+    pattern (enforce on cohorts where it helps + exclude
+    inning>=8) is now the operationally correct path.
+  - **Alt B savings concentrated on**: `line_bucket=>=10.5`
+    saves $14.29 (3 blocked), `edge_bucket=0.15-0.18` saves
+    $12.29 (3 blocked), `inning_bucket=6` saves $10.28 (5
+    blocked).
+  - 3 Notes alerts fire on the first run: existing aggregate
+    Alt A recommendation + NEW scoped-promotion suggestion for
+    the negative-current-state-edge cohort + NEW regression
+    warning for inning>=8.
+
+  **What this unlocks**: instead of an all-or-nothing
+  ENFORCE flip, the operator can now design a runtime-overrides
+  config that applies Alt A conditionally (e.g.,
+  `enforce_alt_a_when: current_state_value_edge < 0` AND
+  `inning < 8`). Reuses the existing
+  `cache/live_engine_overrides.json` lever shipped earlier;
+  no new infrastructure needed. The eventual Active #8
+  decision becomes: SCOPED ENFORCE on cohorts where Alt A
+  durably helps, leave production untouched where it doesn't.
+
+  **What v2 should add** (deferred; not blocking):
+  - **Cross-dimension cohort cuts** (e.g. edge>=0.22 AND
+    inning<8 simultaneously). Today the cohort cuts are
+    per-dimension only; cross-cuts would surface "Alt A helps
+    on high-edge late-game ONLY when current_state_edge is
+    negative." Useful but exponentially noisier; defer until
+    more sample.
+  - **Cohort-conditional recommendation engine**: today's
+    daily-review block surfaces the TOP cohort; a future
+    version could emit a structured recommendation row per
+    cohort that clears its own threshold, so the auto-daemon
+    can act on multi-cohort verdicts.
+
+  **Tests**: 16 new in
+  `tests/test_build_stage1_shadow_override_report.py`
+  `CohortBreakdownTests` + 5 new in
+  `tests/test_build_daily_human_review_report.py`
+  `Stage1ShadowOverrideHealthTests`:
+  - All 5 bucketers' ranges + missing-value handling
+  - `project_bet` carries the new cohort fields + falls back
+    to alias columns
+  - `_aggregate_cohort` empty case + bias delta computation
+  - `build_cohort_breakdown` groups by each dimension
+  - `top_cohorts` most_improved sorted descending
+  - `top_cohorts` regressions only negative deltas
+  - `top_cohorts` excludes cohorts below `min_n_per_cohort`
+  - `largest_alt_b_savings` includes positive entries
+  - Payload includes `cohort_breakdown_trailing_30d`
+  - Markdown renders the cohort section when present
+  - Daily-review block surfaces `cohort_breakdown_30d`
+  - Scoped-promotion alert fires on cohort >= 1pp improvement
+  - Small-improvement cohort does NOT fire scoped-promotion alert
+  - Regression alert fires on cohort <= -2pp
+  - Small regression does NOT fire regression alert
+
+  **1359 tests + 41 subtests pass** (+21 from this ship).
+
+  **Files**: `scripts/analysis/build_stage1_shadow_override_report.py`
+  (+~280 LOC: 3 new ShadowBet fields, 5 cohort bucketers,
+  `_aggregate_cohort` + `build_cohort_breakdown` +
+  `_cohort_md`, `COHORT_DIMENSIONS` constant,
+  `COHORT_MIN_N_FOR_AGGREGATE` constant; `build_payload` +
+  `render_markdown` extended),
+  `scripts/analysis/build_daily_human_review_report.py`
+  (+~70 LOC: extend `_stage1_shadow_override_health` with
+  cohort_breakdown_30d block + 2 new alert classes),
+  `tests/test_build_stage1_shadow_override_report.py` (+16
+  tests), `tests/test_build_daily_human_review_report.py` (+5
+  tests).
+
+- **Phase A5 follow-up: UNDER emission daily-review block** *(2026-05-19)* --
+  closes the observability loop on this morning's A5 ship. The
+  A5 helper emits sibling UNDER candidate rows when
+  `--under-emission-mode shadow`, but without a daily-review
+  surface the operator can't see whether emission is working or
+  whether the borrowed OVER thresholds are sensible on UNDER's
+  price dynamics. This block answers both questions in the daily
+  human-review JSON + markdown automatically.
+
+  **Block** (`scripts/analysis/build_daily_human_review_report.py`):
+  - New `_under_emission_health(session_date, candidate_dir)`
+    reads the per-date candidate log and surfaces:
+    * Coverage: `over_post_fv_count`, `under_emitted_count`,
+      `coverage_rate` (UNDER emitted / OVER FV-phase ticks; target
+      ~100% when mode=shadow with healthy UNDER liquidity).
+    * Decision breakdown: `n_shadow_under` (would-have-traded),
+      `n_gate_min_edge`, `n_gate_no_under_liquidity`, plus
+      `shadow_under_rate` and `liquidity_skip_rate`.
+    * Price quality: `mean_under_fv`, `mean_under_fv_raw`,
+      `mean_under_ask`, `mean_under_edge`,
+      `mean_under_calibration_delta`, FV histogram across 5
+      asymmetric buckets (0.00-0.20 / 0.20-0.40 / 0.40-0.60 /
+      0.60-0.80 / 0.80-1.00).
+    * `under_pair_available_rate`: pair availability surfaced
+      from the per-row flag (the existing aggregate version is
+      session-level; this is conditioned on the UNDER candidate
+      being emitted).
+
+  **3-way status** (matches the operational reality of A5 rollout):
+  - `not_emitting`: 0 UNDER rows. Operator did not pass
+    `--under-emission-mode shadow`. No alert.
+  - `no_liquidity`: UNDER rows exist but 100% are
+    `gate_no_under_liquidity` skips. Mode active but UNDER book
+    is empty across the session. Surface but no alert (could be
+    a market-wide issue, not actionable).
+  - `ok`: UNDER emission is producing decisions; sample-size-
+    gated alerts apply.
+
+  **3 sample-size-gated alert classes** (only fire when `status=ok`):
+  - **Coverage gap**: `coverage_rate < 50%` AND
+    `under_emitted >= 50` -> alert. Means more than half of OVER
+    FV-phase ticks have no UNDER candidate row; investigate
+    `_maybe_emit_under_candidate` skips or thin book liquidity.
+  - **Suspiciously loose UNDER gates**: `shadow_under_rate > 50%`
+    AND `n_under >= 20` -> alert. Either UNDER has genuine edge
+    OR the borrowed OVER `edge_threshold` is too loose for
+    UNDER's price dynamics. Human-read prompt.
+  - **Suspiciously tight UNDER gates**: `shadow_under_rate < 2%`
+    AND `n_under >= 100` -> alert. Borrowed OVER edge_threshold
+    likely too tight; tune UNDER-specific `min_edge` from the
+    accumulated shadow data.
+
+  All three mirror via Notes prefix `Under-coverage:`.
+
+  **Wired into `build_report`** with the same pattern as
+  `_promotion_lag_health` and other recent blocks (return-dict
+  key + `_build_notes` signature). Backward-compatible: the
+  parameter is `Optional[Dict[str, Any]] = None` so existing
+  callers (tests, ad-hoc scripts) don't break.
+
+  **Fail-open**: any helper exception sets `status=check_error`;
+  daily review never blocks on this block.
+
+  **First production run against yesterday's 2026-05-18 paper
+  session**: status=`not_emitting`, `over_post_fv_count=702`,
+  `under_emitted_count=0`, 0 alerts. This is the correct
+  baseline -- the A5 emission flag shipped today, so the operator
+  hadn't yet opted in for yesterday's session. Tomorrow's run
+  (after the operator passes `--under-emission-mode shadow`)
+  will surface real UNDER decision distribution.
+
+  **Tests**: 13 new in `tests/test_build_daily_human_review_report.py`
+  `UnderEmissionHealthTests`:
+  - missing candidate file -> `check_error`
+  - 0 UNDER rows -> `not_emitting`, no alerts
+  - 100% `gate_no_under_liquidity` -> `no_liquidity`, no alerts
+  - ok status: decision breakdown + coverage_rate computed
+  - coverage alert fires when rate < 50% AND n >= 50
+  - coverage alert SUPPRESSED when n < 50 (sample-size gate)
+  - shadow_under high alert fires when rate > 50% AND n >= 20
+  - shadow_under low alert fires when rate < 2% AND n >= 100
+  - shadow_under low SUPPRESSED when n < 100
+  - price-quality aggregates (mean_fv, mean_ask, mean_edge,
+    calibration delta) compute correctly
+  - FV bucket distribution counts each bucket correctly
+  - pair-available rate propagates
+  - Notes prefix is `Under-coverage:`
+
+  **1338 tests + 41 subtests pass** (+13 from this ship).
+
+  **Files**: `scripts/analysis/build_daily_human_review_report.py`
+  (+~210 LOC: 9 new constants, new `_under_emission_health` block,
+  `build_report` + `_build_notes` + return-dict wiring); 13 new
+  tests in `tests/test_build_daily_human_review_report.py`.
+
+- **Phase A5: live UNDER candidate emission (shadow mode)** *(2026-05-19)* --
+  the keystone for the bidirectional pivot. Before today, UNDER
+  analysis ran purely offline as the OVER candidate's synthesized
+  complement, carrying selection bias from OVER's gate funnel.
+  Now the live engine emits a sibling UNDER candidate row alongside
+  every OVER candidate that reaches the FV phase, with its own
+  calibrated FV, its own UNDER-side market data, and its own gate
+  evaluation -- writing to the same `_candidates.jsonl` log via the
+  standard candidate-decision path so the daily-review by_side
+  block, training table, loss-attribution, and shadow-override
+  reports all pick UNDER up automatically.
+
+  **CLI flag** (`scripts/trading/live_engine_cli.py` +
+  `scripts/trading/signal_config.py`):
+  - `--under-emission-mode {off, shadow}` (default `off`). `off`
+    preserves existing OVER-only behavior. `shadow` emits UNDER
+    candidate rows; NO UNDER bets are placed in either mode
+    (paper or live). Eventual UNDER paper-bet flip is a separate
+    ship gated by B4 60-session validation.
+  - `--prob-calibration-under-path PATH` (default
+    `data/analysis_output/calibration/signal_win_calibration_under.json`)
+    points at the separately-trained UNDER calibrator artifact.
+
+  **Engine startup** (`scripts/trading/signal_engine.py`):
+  - Reads `trade_args.under_emission_mode`. When `shadow`, loads the
+    UNDER `ProbabilityCalibrator` via `from_path(...)`, logs
+    method + path, stamps lineage via the existing
+    `_log_artifact_lineage_summary("calibrator_under", ...)` hook.
+  - Fail-open: a missing/unreadable UNDER calibrator logs a
+    warning and falls back to identity calibration
+    (`under_fv = 1 - over_fv_raw` uncalibrated) -- emission still
+    happens so the operator sees the gap.
+
+  **Helper** (`scripts/trading/signal_pipeline.py`):
+  - New `_maybe_emit_under_candidate(engine, ctx, over_fv_phase,
+    over_candidate_payload)`. No-op when mode != shadow. When
+    active:
+    * Computes `under_fv_raw = 1 - over_fv_raw`
+    * Calibrates through the UNDER calibrator (identity when
+      none loaded)
+    * Reads `under_best_ask` / `under_best_bid` /
+      `under_pair_available` from the tick book
+    * Builds an UNDER candidate payload by COPYING the OVER row
+      (preserves state-value / weather / Stage-1 support
+      metadata) and overwriting side-specific fields:
+      `side="under"`, `bet_id="<over>_under_shadow"`,
+      `over_bet_id=<over>`, `entry_ask=under_ask`,
+      `fair_value=under_fv`, `fair_value_raw=under_fv_raw`,
+      `base_fair_value=1 - over_base`,
+      `stage2_run_env_delta=-over_s2`,
+      `team_offense_delta=-over_s3` (logit-additive deltas on
+      OVER => equivalent magnitude opposite sign on UNDER)
+    * Applies a minimal gate (`min_edge` using OVER's
+      `edge_threshold` for the MVP; UNDER-specific thresholds
+      get tuned from the shadow data as it accumulates)
+    * Decision = `shadow_under` if UNDER gates pass, else
+      `skip` with reason (`gate_min_edge` or
+      `gate_no_under_liquidity` when UNDER ask is None)
+    * Writes via `engine._record_candidate_decision(payload)` so
+      the row lands in the same `_candidates.jsonl` as OVER
+  - Hooked into `process_tick` right after
+    `_maybe_emit_shadow_quote` (line 394) and BEFORE OVER's
+    late-stage gates run, so UNDER coverage is not correlated
+    with OVER's post-FV gate filtering.
+  - Fail-open throughout: any helper exception logs at DEBUG
+    and continues; OVER's pipeline is unaffected.
+
+  **`live_engine.py` bridge**: `trade_args.under_emission_mode =
+  getattr(live_args, "under_emission_mode", "off")` before
+  `super().__init__(...)`. Mirrors the existing
+  `stage1_shadow_empirical_mode` bridge pattern.
+
+  **What this unlocks**:
+  - The 7-day paper-mode runway now collects UNDER candidate data
+    in addition to OVER. At the bot's typical ~600 OVER candidates
+    per session, that's ~600 UNDER rows per day too -- enough to
+    populate the daily review's `by_side.under` subtotals
+    meaningfully within a week.
+  - Phase B1 side-aware drift alerts (already shipped for
+    `calibration_health`) can now compare OVER vs UNDER signal
+    quality on like-with-like data instead of OVER's complement
+    bias.
+  - Future B4 paper-mode UNDER-bet validation (the 60-session
+    milestone before any UNDER live trading) becomes a config
+    flip -- the data pipeline already exists.
+  - Phase C two-sided quoting (`--quote-engine-mode` shadow,
+    shipped 2026-05-17) already reads `under_best_ask` from the
+    book; with this ship, the quote engine's UNDER-side
+    reasoning is now backed by a calibrated UNDER FV from the
+    same pipeline that produces OVER FV.
+
+  **What this MVP intentionally does not do** (deferred):
+  - **No UNDER paper bets**: pure logging only. Adds UNDER rows
+    with `decision=shadow_under` (when gates pass) or `skip`
+    (when gates fail); never calls `_place_bet`. The eventual
+    paper-bet flip is gated by enough shadow data to characterize
+    UNDER calibration reliability + win rate distribution.
+  - **No UNDER-specific gate thresholds**: rides OVER's
+    `edge_threshold` for UNDER `min_edge` for now. UNDER market
+    dynamics differ (typically high asks when UNDER is favored);
+    tune from data once enough shadow rows accumulate.
+  - **No UNDER-side post-FV gates** (extreme_edge, FV/ask gap,
+    inning floors): MVP just applies `min_edge`. The full UNDER
+    gate stack lands when B4 paper-bet validation starts.
+
+  **Tests**: 12 new in `tests/test_under_candidate_emission.py`:
+  - mode='off' is a no-op
+  - mode='shadow' emits row with side='under' + correct bet_id
+  - UNDER calibrator called with `(1 - over_fv_raw)`
+  - missing UNDER ask -> `gate_no_under_liquidity` skip
+  - UNDER edge above threshold -> `shadow_under` decision
+  - UNDER edge below threshold -> `gate_min_edge` skip
+  - Stage-2 + Stage-3 deltas propagate with inverted sign
+  - `under_pair_available` propagates
+  - Helper is fail-open on internal exceptions
+  - No-op when `over_fv_raw` is None (undefined complement)
+  - No-calibrator falls back to identity complement
+  - live_engine.py bridge source-string check
+
+  **Smoke test against the live import graph**: CLI flag parses
+  cleanly through both `signal_config.parse_trade_args` and
+  `live_engine_cli.parse_live_args`; helper produces UNDER row
+  with correct side, bet_id suffix, calibrated FV, inverted
+  Stage-2/3 deltas, `decision=shadow_under`, `gate=passes`. End-
+  to-end wiring confirmed.
+
+  **1325 tests + 41 subtests pass** (+13 new tests this ship).
+
+  **Files**: `scripts/trading/signal_config.py` (+~50 LOC: new
+  `DEFAULT_PROB_CALIBRATION_UNDER_PATH` /
+  `DEFAULT_UNDER_EMISSION_MODE` / `UNDER_EMISSION_MODES`
+  constants; new `--under-emission-mode` +
+  `--prob-calibration-under-path` argparse entries),
+  `scripts/trading/signal_engine.py` (+~45 LOC: load UNDER
+  calibrator + lineage stamp + fail-open warning),
+  `scripts/trading/signal_pipeline.py` (+~120 LOC: new
+  `_maybe_emit_under_candidate` helper + wire site in
+  `process_tick`), `scripts/trading/live_engine_cli.py` (+~18
+  LOC: new CLI flag),
+  `scripts/trading/live_engine.py` (+~4 LOC: trade_args bridge),
+  new `tests/test_under_candidate_emission.py` (12 tests).
+
+- **Refresh `--mode live` hardcode fix (paper-mode propagation)**
+  *(2026-05-19)* -- closes the wiring defect discovered during
+  yesterday's paper-trading audit. The user is in paper-mode for a
+  week explicitly to validate Alt-A, but `run_daily_refresh.py`
+  hardcoded `--mode live` on the `unified_signals` and
+  `signal_training_table` steps -- so paper bets never reached
+  loss-attribution, shadow-override, training table, or any other
+  downstream analysis. The paper-mode runway's whole purpose
+  (Alt-A validation evidence) was being silently starved.
+
+  **Fix**: both steps changed to `--mode both`. Safe because the
+  consumers that matter (loss-attribution, shadow-override,
+  cohort-calibration) use the `won` boolean (counterfactual:
+  did over/under hit), which is identical for paper and live
+  bets and independent of paper's 100% taker assumption. Steps
+  that DO use realized P&L or fill behavior (`clv_report`,
+  `execution_diagnostics`, `ev_policy_backtest`,
+  `queue_aware_execution_replay`) stay `--mode live`
+  intentionally.
+
+  **Verified end-to-end after re-running both steps**: training
+  table grew from 182 -> 247 rows (+65 paper rows from
+  accumulated sessions); **12 rows now carry Alt-A diagnostics
+  populated** (the 12 placed bets from yesterday's 2026-05-18
+  paper session, all under `mode=paper`). Combined with this
+  morning's earlier `unified_signal_table` schema fix that added
+  the 6 Alt-A field extractors, the candidate -> training-table
+  Alt-A propagation pipeline is now fully closed.
+
+  **Tests**: 1 new in `tests/test_run_daily_refresh.py`:
+  asserts unified_signals + signal_training_table run
+  `--mode both` AND asserts fill-aware steps (clv_report,
+  execution_diagnostics) stay `--mode live` -- guards against
+  an over-eager future refactor that batch-converts everything.
+
+  **Files**: `scripts/analysis/run_daily_refresh.py` (2 changed
+  steps + descriptive comments explaining why each direction
+  is correct).
+
+- **Active #15: promotion-lag tracker + operator doc** *(2026-05-19)* --
+  closes the last open Hygiene item. Every promote.py file-swap
+  mutates a cache (or the runtime-overrides JSON) immediately, but
+  the live engine doesn't pick up the new file until it boots its
+  next session. Operators have asked "is my promote in effect yet?"
+  enough times to deserve a structured answer in the daily review.
+
+  **Daily-review block**
+  (`scripts/analysis/build_daily_human_review_report.py`):
+  - New `_promotion_lag_health` block returns per-lever verdicts for
+    the 5 promote.py levers (stage1, stage2, stage3_v2,
+    stake_scaling, gate_threshold).
+  - Compares each lever's cache mtime against the most recent
+    engine-boot timestamp, proxied by the first bet's `placed_at`
+    from the latest session file across BOTH `data/live_trading/
+    sessions/` and `data/paper_trading/sessions/` (so an operator
+    in paper-mode -- today's scenario -- still gets accurate
+    answers).
+  - 5 per-lever statuses: `effective_in_runtime` (cache mtime <=
+    boot, engine already loaded this version), `pending_next_
+    session_boot` (cache newer than boot, restart will pick it up),
+    `cache_missing` (lever never promoted -- first-time state),
+    `no_session_history` (fresh install, no boot proxy),
+    `check_error` (filesystem error, diagnostic only).
+  - Alert when a lever is `pending_next_session_boot` AND lag
+    exceeds 24h (operator promoted but forgot to restart). Mirrors
+    via Notes prefix `Promotion-lag:`.
+
+  **Helper functions**:
+  - `_parse_iso_to_epoch_safe(value)`: fail-open ISO->epoch parser
+    that returns None on bad input rather than raising. Used to
+    compare session timestamps against file mtimes.
+  - `_latest_session_start_utc(project_root, session_roots)`: walks
+    both trading roots, returns `(filename, epoch, iso)` for the
+    latest session's first bet `placed_at`. Falls back to session
+    `generated_at` for sessions that placed zero bets.
+
+  **shared-file lever handling**: `stake_scaling` and
+  `gate_threshold` both mutate `cache/live_engine_overrides.json`.
+  Any promote of either bumps the same mtime, so both levers report
+  the same status; we surface them separately so an alert filed
+  under the lever name you actually promoted is easy to grep for.
+
+  **Operator doc** (`docs/operational/promotion_lag.md`): one-page
+  reference explaining promote-time vs effect-time for each lever,
+  how the tracker decides, how to clear a pending status, what the
+  tracker doesn't catch (engine cache-loading bugs, hot-reload
+  semantics), and pointers to related health blocks
+  (`cache_lineage_freshness_health`,
+  `cross_artifact_consistency_health`,
+  `stage1_alt_a_staging_health`).
+
+  **First production run on 2026-05-19**: last engine boot detected
+  at 2026-05-19T00:07:38Z (first bet of the 2026-05-18 paper
+  session). All 5 lever verdicts correct:
+  - stage1: `pending_next_session_boot` (today's refresh rebuilt
+    cache 0.32h ago; lag well under 24h, no alert)
+  - stage2: `effective_in_runtime` (cache from 2026-05-09, picked
+    up 239.5h before the boot)
+  - stage3_v2, stake_scaling, gate_threshold: `cache_missing` (no
+    operator has promoted these yet -- expected first-time state)
+  - 0 alerts.
+
+  **Files**: `scripts/analysis/build_daily_human_review_report.py`
+  (+~180 LOC: new `PROMOTION_LAG_LEVERS` /
+  `PROMOTION_LAG_SESSION_ROOTS` /
+  `PROMOTION_LAG_PENDING_HOURS_WARN` constants;
+  `_parse_iso_to_epoch_safe` +
+  `_latest_session_start_utc` helpers; new `_promotion_lag_health`
+  block; `build_report` + `_build_notes` + return-dict wiring); new
+  `docs/operational/promotion_lag.md`. 12 new tests in
+  `test_build_daily_human_review_report.py` covering both helpers +
+  all 5 status outcomes + the alert threshold + the shared-file
+  case + the Notes prefix. **1312 tests + 41 subtests pass.**
+
+  **Hygiene section status**: with this ship, all three originally-
+  listed Hygiene items are closed (#14 backup retention + PSI-history
+  GC, #15 promotion-lag tracker, #16 model lineage tracking through
+  v4 cross-artifact consistency). Future Hygiene additions only.
+
+- **Unified-signal-table Alt-A propagation fix** *(2026-05-19)* --
+  closes a wiring defect discovered during the 2026-05-18 paper-
+  trading audit. The 2026-05-17 Stage-1 Alt-A runtime shadow ship
+  populated 6 new fields on every score-event-family candidate row
+  (`stage1_shadow_empirical_mode`, `fair_value_alt_empirical`, etc.)
+  but the intermediate unified-signal-table builder
+  (`scripts/analysis/unified_signal_table/`) uses an explicit
+  allow-list pattern for both `SCHEMA_COLS` and the `build_row`
+  field extractor. The 6 fields fell through the gap: the
+  downstream training table declared the columns (added 2026-05-17)
+  but populated 0 rows, breaking loss-attribution + shadow-override
+  reports' ability to see runtime Alt-A on filled bets.
+
+  **Fix** (small, mechanical):
+  - Added 6 fields to `unified_signal_table/schema.py::SCHEMA_COLS`
+    immediately after the `INFERENCE_PANEL_COLUMNS` block.
+  - Added `_build_alt_a_shadow_fields(...)` helper in
+    `unified_signal_table/row_builder.py` and wired it into the
+    `build_row` call site so the extractor runs alongside the
+    existing `_build_inferred_state_fields`, etc.
+
+  **Tests**: 2 new tests in
+  `tests/test_build_unified_signal_table.py`:
+  - `test_build_master_rows_propagates_stage1_alt_a_shadow_fields`:
+    feeds a candidate row carrying all 6 Alt-A fields, asserts they
+    land on the master row + appear in `master_columns` (so the CSV
+    writer doesn't drop them).
+  - `test_build_master_rows_alt_a_fields_default_to_none_when_off`:
+    pre-Alt-A candidate row (no shadow fields) propagates as
+    None/False without raising.
+
+  **What this enables**: once the next refresh folds in paper bets
+  carrying Alt-A (currently blocked by the refresh's
+  `--mode live` hardcode at `run_daily_refresh.py:1929` -- a
+  separate follow-up), loss-attribution + shadow-override reports
+  can start reading **runtime-decided** Alt-A instead of
+  recomputing it offline. The 7-day paper-mode runway will
+  generate the per-bet evidence Active #8's ENFORCE flip needs.
+
+  **Files**: `scripts/analysis/unified_signal_table/schema.py`
+  (+13 LOC: 6 field names + leading comment),
+  `scripts/analysis/unified_signal_table/row_builder.py` (+72 LOC:
+  new `_build_alt_a_shadow_fields` helper + call site).
+
+- **Active #8 prep: Stage-1 Alt-A staging cache builder + refresh +
+  daily-review surface** *(2026-05-18)* -- the natural consumer of
+  yesterday's full Alt-A scaffolding (loss attribution → cell drill
+  → shadow-override report → runtime shadow logging → promote.py
+  stage1 subcommand). Before today, every piece existed EXCEPT a
+  real on-disk Alt-A cache file for `promote.py stage1` to swap into
+  production. The runtime's on-the-fly Alt-A shadow proved Alt A
+  reduces 30d aggregate bias by 6pp (27.1pp -> 21.2pp on 37%
+  coverage) but had no materialized artifact behind it. This ships
+  the artifact + the refresh that keeps it fresh + the daily-review
+  visibility so the operator can see it.
+
+  **Builder change** (`cache/build_mlb_ou_cache.py`):
+  - New `--smoothing-mode {poisson, empirical_when_available}` flag
+    (default `poisson` -- production behavior unchanged).
+  - New `--min-empirical-n-for-override INT` (default 0 to match the
+    runtime shadow path's "always override when empirical present"
+    behavior; raise the threshold to gate on per-cell sample size).
+  - When `empirical_when_available`, new `_apply_alt_a_smoothing`
+    helper walks every cell post-build and overwrites the `poXX`
+    field with the same cell's `oXX` value whenever the empirical is
+    a valid (0,1) probability AND `n_samples >= threshold`. Cells
+    where empirical is at the 0/1 boundary (would blow up the
+    logit-additive FV math) keep the Poisson smoothing.
+  - New `alt_a_smoothing` block in cache meta records: `enabled`,
+    `mode`, `min_empirical_n_for_override`, `cells_total`,
+    `cells_overridden`, `cells_kept_poisson_low_n`,
+    `cells_kept_poisson_no_empirical`,
+    `cells_kept_poisson_invalid_empirical`, per-line override counts,
+    `mean_abs_delta_logit`, `mean_signed_delta`, `n_line_deltas`.
+    Diagnostic only; the runtime doesn't read it.
+  - Lineage `cli_args_summary` extended with `smoothing_mode` +
+    `min_empirical_n_for_override` so the existing
+    `cross_artifact_consistency_health` block can distinguish Alt-A
+    builds from poisson builds.
+
+  **Refresh integration** (`scripts/analysis/run_daily_refresh.py`):
+  - New `stage1_ou_cache_alt_a` step runs the builder with
+    `--smoothing-mode empirical_when_available --out
+    cache/mlb_ou_cache_alt_a.staging.json`. Same history window
+    (`--min-season` / `--max-season`) as the production Stage-1
+    step.
+  - **NEVER auto-promoted**: no companion inline promote step.
+    Operator runs `promote.py stage1 --source
+    cache/mlb_ou_cache_alt_a.staging.json` manually after paper-
+    mode validation clears its bar.
+  - Same `StalenessCheck` on `data/games/regular/` as the production
+    step, so the Alt-A rebuild only fires when game data changes.
+
+  **Daily-review block**
+  (`scripts/analysis/build_daily_human_review_report.py`):
+  - New `_stage1_alt_a_staging_health` reads the staging cache +
+    surfaces: existence, history window, total_games, valid_cells,
+    `alt_a_smoothing` summary (cells_overridden + per-line counts +
+    mean_signed_delta), lineage (built_at_utc + git_sha +
+    builder_path), build_age_days, and **cross-cache input-hash
+    divergence vs the production cache**.
+  - Alerts on: (1) missing staging cache, (2) corrupt JSON, (3)
+    `built_at_utc` > 14d ago, (4) staging built in `poisson` mode
+    instead of Alt-A (operator typo), (5) staging + production
+    disagree on `data/games/regular/` input hash (one of them is
+    built on a stale corpus).
+  - Mirrors alerts via top-level Notes with prefix
+    `Stage1-alt-a-staging:`.
+
+  **First live production build** (2026-05-18, full 5-season window):
+  - **4,200 of 4,298 cells (97.7%) had `poXX` overwritten with
+    `oXX`**.
+  - **mean_signed_delta = -0.0274 (2.74pp lower than production)** --
+    Alt-A is systematically more conservative, exactly the direction
+    needed to reduce the +27pp over-prediction bias.
+  - mean_abs_delta_logit = 0.84 -- the Poisson smoothing was
+    pulling probabilities meaningfully away from empirical in
+    logit space.
+  - 21,240 individual (cell, line) overrides recorded across 6
+    lines (po65 / po75 / po85 / po95 / po105 / po115).
+  - 3,568 (cell, line) pairs kept Poisson because empirical was at
+    the 0/1 boundary; the Poisson smoothing's value here.
+  - 0 alerts fired in the daily-review block; 0 input divergences
+    vs the current production cache (both share the same
+    `data/games/regular/` hash).
+
+  **What this unlocks**: the 7-day paper-mode validation runway
+  starting today (per yesterday's CLI command shipment) accumulates
+  shadow Alt-A diagnostics on every candidate. When the operator is
+  ready to flip Active #8 to ENFORCE, the workflow becomes one
+  command: `python scripts/analysis/promote.py stage1 --source
+  cache/mlb_ou_cache_alt_a.staging.json`. The promote.py stage1
+  subcommand (shipped yesterday) handles the atomic swap + backup
+  + audit row + post-flip ops checklist; the daily refresh keeps
+  the staging artifact current; the daily review surfaces its
+  freshness and override stats.
+
+  **What v2 should add** (deferred; not blocking):
+  - **Cell-level diff report** in `data/analysis_output/` that
+    surfaces the top-N cells with the largest poisson->empirical
+    deltas so the operator can spot-check the override before
+    promoting (the cell-conditional drill from yesterday partially
+    answers this on the bet-side; this would do it on the
+    cell-side).
+  - **Auto-recommend** in the daily review: after N consecutive
+    days of stable Alt-A staging + paper-mode bias-reduction
+    confirmed, surface a "you may now promote" notes line.
+
+  **Files**: `cache/build_mlb_ou_cache.py` (+~120 LOC: new flags,
+  `_apply_alt_a_smoothing` helper, meta block wiring, lineage
+  cli_args_summary extension, end-of-run print summary),
+  `scripts/analysis/run_daily_refresh.py` (new
+  `stage1_ou_cache_alt_a` RefreshStep + StalenessCheck),
+  `scripts/analysis/build_daily_human_review_report.py`
+  (`DEFAULT_STAGE1_ALT_A_STAGING_PATH` constant, new
+  `_stage1_alt_a_staging_health` block + `build_report` +
+  `_build_notes` + return-dict wiring),
+  `tests/test_build_mlb_ou_cache.py` (+5 builder tests),
+  `tests/test_run_daily_refresh.py` (+2 refresh-step tests),
+  `tests/test_build_daily_human_review_report.py` (+8 health-block
+  tests). **1295 tests + 41 subtests pass.**

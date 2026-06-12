@@ -70,6 +70,11 @@ from signal_config import (
     DEFAULT_MAX_CORRELATED_OVER_LINES_PER_GAME,
     DEFAULT_MIN_CORRELATED_LINE_GAP,
     DEFAULT_MAX_REFRESH_AGE_HOURS,
+    # 2026-06-11 (pre-run observability fix): the 06-04 phantom-risk
+    # gate and 06-03 Alt-A runtime-shadow levers were invisible in
+    # session params, so post-session audits could not verify whether
+    # either was active in the run that produced the bets.
+    DEFAULT_MAX_PHANTOM_RISK_SCORE,
 )
 
 if TYPE_CHECKING:
@@ -209,6 +214,17 @@ def build_paper_session_payload(engine: "SignalEngine") -> Dict[str, Any]:
             "stage1_alt_a_scope_mode": str(getattr(
                 trade_args, "stage1_alt_a_scope_mode",
                 DEFAULT_STAGE1_ALT_A_SCOPE_MODE,
+            )),
+            # 2026-06-11: phantom-risk gate (shipped 06-04) + Alt-A
+            # runtime-shadow (shipped 06-03) were missing from params,
+            # making post-session "was this lever active?" audits
+            # impossible from artifacts alone.
+            "max_phantom_risk_score": float(getattr(
+                trade_args, "max_phantom_risk_score",
+                DEFAULT_MAX_PHANTOM_RISK_SCORE,
+            )),
+            "stage1_shadow_empirical_mode": str(getattr(
+                trade_args, "stage1_shadow_empirical_mode", "off",
             )),
             "max_correlated_over_lines_per_game": int(getattr(
                 trade_args, "max_correlated_over_lines_per_game",
@@ -506,6 +522,18 @@ def build_live_session_payload(
             "fv_ask_gap_min_inning": trade_args.fv_ask_gap_min_inning,
             "extreme_edge_max": float(getattr(trade_args, "extreme_edge_max", DEFAULT_EXTREME_EDGE_MAX)),
             "ltp_ask_gap_max": float(getattr(trade_args, "ltp_ask_gap_max", DEFAULT_LTP_ASK_GAP_MAX)),
+            # 2026-06-11: same observability fix as the paper writer --
+            # the 06-04 phantom gate + 06-03 Alt-A shadow levers must be
+            # verifiable from the session artifact (override-file levers
+            # only take effect on engine boot, so params is the proof
+            # of what was actually live).
+            "max_phantom_risk_score": float(getattr(
+                trade_args, "max_phantom_risk_score",
+                DEFAULT_MAX_PHANTOM_RISK_SCORE,
+            )),
+            "stage1_shadow_empirical_mode": str(getattr(
+                trade_args, "stage1_shadow_empirical_mode", "off",
+            )),
             "prob_calibration_mode": str(getattr(
                 trade_args, "prob_calibration_mode",
                 DEFAULT_PROB_CALIBRATION_MODE,
@@ -580,6 +608,13 @@ def build_live_session_payload(
             "cooldown_ticks": DEFAULT_COOLDOWN_TICKS,
             # Live-specific
             "spread_factor": live_args.spread_factor,
+            # 2026-06-11: placement fill-gap floor (shipped 06-04 as a
+            # live-only CLI flag). 0.02 caps the limit at ask-2c; the
+            # pre-fix behavior (no cap) is represented by 1.0. Recorded
+            # so fill-rate audits can split pre/post-cap cohorts.
+            "max_limit_gap_below_ask": float(getattr(
+                live_args, "max_limit_gap_below_ask", 1.0,
+            )),
             "order_timeout_secs": live_args.order_timeout_secs,
             "fv_cancel_min_edge": getattr(live_args, "fv_cancel_min_edge", FV_CANCEL_MIN_EDGE),
             "fv_decay_min_age_secs": getattr(live_args, "fv_decay_min_age_secs", DEFAULT_FV_DECAY_MIN_AGE_SECS),

@@ -248,6 +248,43 @@ PRESETS: Dict[str, List[str]] = {
     # fast Wilson-UB demote check; J_no_phantom_filter (cap=1.0)
     # continues to provide the edge>0.30 counterfactual cohort.
     # Definition removed -- see git history.
+    #
+    # 2026-06-11: O + P are the first MODEL-VERSION arms (the fleet
+    # audit's core recommendation: test model versions, not just gate
+    # variants). Both are A_current + a Stage-1 cache swap, calibrator
+    # ON so the RF2 interaction (redundant correction between FV-level
+    # fixes and the calibrator) is measured, not assumed. The paired-
+    # delta daily-review block reads both vs A_current automatically.
+    # Caches are staging artifacts the daily refresh keeps fresh; they
+    # are NEVER auto-promoted (promote.py stage1 is the manual gate).
+    "O_nb_stage1": [
+        # Hygiene #3: negative-binomial Stage-1 tail. Same data window
+        # as production; only the smoothing differs (per-phase NB
+        # dispersion via method of moments; non-overdispersed phases
+        # keep Poisson). Tests the structural fix for the chronic
+        # +18pp raw-FV bias (4-7pp poisson>empirical at FV>=0.85).
+        "--prob-calibration-mode", "enforce",
+        "--stage1-shadow-empirical-mode", "shadow",
+        "--stage1-alt-a-scope-mode", "enforce",
+        "--under-emission-mode", "shadow",
+        "--quote-engine-mode", "shadow",
+        "--extreme-edge-max", "0.3",
+        "--cache-path", "cache/mlb_ou_cache_nb.staging.json",
+    ],
+    "P_alt_a_cache": [
+        # Active #8: the FULL Alt-A cache (empirical_when_available) as
+        # Stage-1 -- the exact artifact promote.py stage1 would swap in.
+        # Live-fire evidence for the promotion candidate; pairs with
+        # O so the RF2 decision (~06-17) compares both Stage-1 fixes
+        # under the production calibrator.
+        "--prob-calibration-mode", "enforce",
+        "--stage1-shadow-empirical-mode", "shadow",
+        "--stage1-alt-a-scope-mode", "enforce",
+        "--under-emission-mode", "shadow",
+        "--quote-engine-mode", "shadow",
+        "--extreme-edge-max", "0.3",
+        "--cache-path", "cache/mlb_ou_cache_alt_a.staging.json",
+    ],
 }
 
 PRESET_ALIASES = {
@@ -397,9 +434,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
             "Config preset or label:preset. Presets: A_current, "
             "B_cal_only, C_raw, D_scope_only, F_no_dedup, "
             "H_late_innings, I_extreme_018, J_no_phantom_filter, "
-            "K_line5p5_block, L_enforce_min_raw_095, M_under_paper. "
+            "K_line5p5_block, L_enforce_min_raw_095, M_under_paper, "
+            "O_nb_stage1, P_alt_a_cache. "
             "Aliases: enforce_enforce, enforce_shadow, shadow_shadow. "
-            "May be repeated. Default (no --config): all 11 presets."
+            "May be repeated. Default (no --config): all 13 presets."
         ),
     )
     p.add_argument(
@@ -1205,11 +1243,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # N_extreme_edge_022 NULL (identical bet set to A_current -- its
     # "production runs at 1.0" premise was wrong). See the retirement
     # comments in PRESETS above for the full evidence.
+    # 2026-06-11: O_nb_stage1 + P_alt_a_cache added (13 total) -- the
+    # first model-version arms: Stage-1 cache swaps (NB tail / full
+    # Alt-A) under the production calibrator, feeding the RF2 +
+    # Active #8 decision with live-fire paper evidence.
     raw_configs = args.config or [
         "A_current", "B_cal_only", "C_raw", "D_scope_only",
         "F_no_dedup", "H_late_innings",
         "I_extreme_018", "J_no_phantom_filter", "K_line5p5_block",
         "L_enforce_min_raw_095", "M_under_paper",
+        "O_nb_stage1", "P_alt_a_cache",
     ]
     configs = [_resolve_config(raw, Path(args.paper_root_prefix)) for raw in raw_configs]
 

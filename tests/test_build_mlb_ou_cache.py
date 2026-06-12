@@ -230,3 +230,126 @@ def test_smoothing_mode_lineage_records_alt_a_args(tmp_path):
     builder_args = cache["meta"]["builder_args"]
     assert builder_args["smoothing_mode"] == "empirical_when_available"
     assert builder_args["min_empirical_n_for_override"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Hygiene #3 negative-binomial smoothing-mode tests (2026-06-11).
+#
+# The Poisson is structurally thin-tailed for run scoring (4-7pp
+# poisson > empirical at FV >= 0.85 per the 2026-05-19 audit). The NB
+# mode fits per-phase dispersion via method of moments and computes
+# poXX from the NB survival function; phases that are not overdispersed
+# (or too thin) keep Poisson.
+# ---------------------------------------------------------------------------
+
+
+def test_fit_nb_dispersion_method_of_moments():
+    # mean 9, var 81 -> r = 81 / 72 = 1.125
+    r = builder.fit_nb_dispersion(9.0, 81.0, 500, min_phase_n=200)
+    assert abs(r - 1.125) < 1e-9
+
+
+def test_fit_nb_dispersion_keeps_poisson_when_not_overdispersed():
+    # var == mean (pure Poisson) and var < mean both decline the fit.
+    assert builder.fit_nb_dispersion(5.0, 5.0, 500, min_phase_n=200) is None
+    assert builder.fit_nb_dispersion(5.0, 3.0, 500, min_phase_n=200) is None
+
+
+def test_fit_nb_dispersion_keeps_poisson_when_thin_or_degenerate():
+    assert builder.fit_nb_dispersion(9.0, 81.0, 199, min_phase_n=200) is None
+    assert builder.fit_nb_dispersion(0.0, 1.0, 500, min_phase_n=200) is None
+
+
+def test_nb_over_prob_boundary_cases_match_poisson_helper():
+    # needed <= 0 -> certain over; lam <= 0 -> impossible over.
+    assert builder.nb_over_prob(7, 9, 4.0, 1.5) == 1.0
+    assert builder.nb_over_prob(7, 2, 0.0, 1.5) == 0.0
+
+
+def test_nb_over_prob_falls_back_to_poisson_when_no_dispersion():
+    po = builder.poisson_over_prob(7, 2, 4.5)
+    nb = builder.nb_over_prob(7, 2, 4.5, None)
+    assert abs(po - nb) < 1e-12
+
+
+def test_nb_over_prob_matches_scipy_and_corrects_downward():
+    """Overdispersion puts more mass at zero remaining runs, so for the
+    high-FV shape (small `needed` vs lam) NB must give LOWER P(over)
+    than Poisson -- the direction of the audit's +4-7pp correction."""
+    from scipy.stats import nbinom as scipy_nbinom
+
+    lam, r = 9.0, 1.125
+    p = r / (r + lam)
+    needed = 1  # high-FV cell: one run needed, lots of game left
+    expected = float(scipy_nbinom.sf(needed - 1, r, p))
+    got = builder.nb_over_prob(needed, 0, lam, r)
+    assert abs(got - expected) < 1e-12
+    assert got < builder.poisson_over_prob(needed, 0, lam)
+
+
+def test_smoothing_mode_negative_binomial_build_integration(tmp_path):
+    """End-to-end: an overdispersed fixture (half 0-0 finals, half 9-9)
+    must produce NB cells with lower po65 than the Poisson build, an
+    nb_r diagnostic, an enabled nb_smoothing meta block, and NO Alt-A
+    empirical overrides (the mode-gate fix)."""
+    root = tmp_path / "data" / "games" / "regular"
+    for i in range(10):
+        away, home = (0, 0) if i % 2 == 0 else (9, 9)
+        _write_game(
+            root / "2016" / "04" / f"{i + 1:02d}" / f"{i + 1}.json",
+            game_pk=i + 1,
+            official_date=f"2016-04-{i + 1:02d}",
+            away=away,
+            home=home,
+        )
+
+    nb_cache = builder.build_cache(
+        _args(tmp_path, smoothing_mode="negative_binomial", nb_min_phase_n=5),
+    )
+    po_cache = builder.build_cache(_args(tmp_path))
+
+    nb_cell = nb_cache["cells"]["0_0_1_T_0_0"]
+    po_cell = po_cache["cells"]["0_0_1_T_0_0"]
+    # mean remaining = 9, var = 81 -> overdispersed -> NB fit.
+    assert nb_cell["nb_r"] is not None and nb_cell["nb_r"] > 0
+    assert nb_cell["po65"] < po_cell["po65"]
+    # Empirical rate is untouched in both modes.
+    assert nb_cell["o65"] == po_cell["o65"]
+
+    nb_meta = nb_cache["meta"]["nb_smoothing"]
+    assert nb_meta["enabled"] is True
+    assert nb_meta["phases_nb_fit"] >= 1
+    assert nb_meta["mean_dispersion_ratio"] > 1.0
+    # The Alt-A pass must NOT fire in NB mode (mode-gate fix: was
+    # `== poisson` early-return, which would have clobbered NB values
+    # with empirical overrides).
+    alt_a = nb_cache["meta"]["alt_a_smoothing"]
+    assert alt_a["enabled"] is False
+    assert alt_a["cells_overridden"] == 0
+    # Poisson-mode meta carries a disabled nb block for symmetry.
+    assert po_cache["meta"]["nb_smoothing"]["enabled"] is False
+
+
+def test_smoothing_mode_negative_binomial_thin_phase_keeps_poisson(tmp_path):
+    """Below --nb-min-phase-n the phase keeps Poisson: identical poXX
+    to a poisson-mode build and nb_r None on the cell."""
+    root = tmp_path / "data" / "games" / "regular"
+    for i in range(4):
+        away, home = (0, 0) if i % 2 == 0 else (9, 9)
+        _write_game(
+            root / "2016" / "04" / f"{i + 1:02d}" / f"{i + 1}.json",
+            game_pk=i + 1,
+            official_date=f"2016-04-{i + 1:02d}",
+            away=away,
+            home=home,
+        )
+
+    nb_cache = builder.build_cache(
+        _args(tmp_path, smoothing_mode="negative_binomial", nb_min_phase_n=200),
+    )
+    po_cache = builder.build_cache(_args(tmp_path))
+
+    nb_cell = nb_cache["cells"]["0_0_1_T_0_0"]
+    assert nb_cell["nb_r"] is None
+    assert nb_cell["po65"] == po_cache["cells"]["0_0_1_T_0_0"]["po65"]
+    assert nb_cache["meta"]["nb_smoothing"]["phases_kept_poisson"] >= 1

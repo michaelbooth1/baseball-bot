@@ -144,6 +144,42 @@ def build_preflight_and_caches_steps(
                 ),
             )
         )
+        steps.append(
+            RefreshStep(
+                name="stage1_ou_cache_nb",
+                description=(
+                    "Hygiene #3 (2026-06-11): rebuild Stage-1 O/U cache "
+                    "in negative-binomial mode to a SEPARATE staging "
+                    "path. Per-phase NB dispersion (method of moments) "
+                    "replaces the thin-tailed Poisson; first build "
+                    "closed 93% of the +10.7pp poisson-vs-empirical "
+                    "gap at FV>=0.85. Consumed by the O_nb_stage1 fleet "
+                    "arm via --cache-path. No auto-promote; promote.py "
+                    "stage1 is the manual gate after fleet evidence."
+                ),
+                command=[
+                    _python(),
+                    _script("cache/build_mlb_ou_cache.py"),
+                    "--season-type",
+                    "regular",
+                    "--min-season",
+                    str(stage1_min_season),
+                    "--max-season",
+                    str(stage1_max_season),
+                    "--smoothing-mode",
+                    "negative_binomial",
+                    "--out",
+                    str(_config.PROJECT_DIR / "cache" / "mlb_ou_cache_nb.staging.json"),
+                ],
+                staleness_check=StalenessCheck(
+                    output_path=_config.PROJECT_DIR / "cache" / "mlb_ou_cache_nb.staging.json",
+                    input_paths=(),
+                    input_dir_mtime_roots=(
+                        _config.PROJECT_DIR / "data" / "games" / "regular",
+                    ),
+                ),
+            )
+        )
 
     if config.refresh_active_schedule:
         prior_month_start = _first_of_prior_month(config.active_date)

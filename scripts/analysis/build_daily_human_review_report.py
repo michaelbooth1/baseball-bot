@@ -317,7 +317,19 @@ def build_report(
     rollup_path = candidate_dir / f"{session_date}_candidate_rollup.json"
     log_path = log_dir / f"{session_date}.log"
 
-    session = _load_json(session_path)
+    # Hygiene #7 (2026-06-11): degrade instead of raise when the
+    # live-root session file is missing (crash day, operator skip,
+    # pure-fleet day). Before this guard a missing session killed the
+    # ENTIRE daily review -- including the fleet paired-delta, B4
+    # milestone, and artifact-health blocks that read other roots and
+    # don't need a live session at all. Session-dependent blocks now
+    # publish zeros/empties; `session_missing: true` is stamped on the
+    # report and surfaced as the first Note.
+    session_missing = not session_path.exists()
+    if session_missing:
+        session = {"mode": None, "params": {}, "summary": {}, "bets": []}
+    else:
+        session = _load_json(session_path)
     candidate_rollup = _load_json(rollup_path) if rollup_path.exists() else (
         session.get("summary", {}).get("candidate_rollup") or {}
     )
@@ -560,6 +572,14 @@ def build_report(
         under_paper_b4_milestone_health,
         fleet_paired_delta_health,
     )
+    if session_missing:
+        notes.insert(0, (
+            f"Session-missing: no live-root session file for {session_date} "
+            f"at {session_path}; session-dependent blocks (bets, fill rate, "
+            "shadow diagnostics) report empty values. Fleet / B4 / artifact "
+            "blocks below are unaffected. If the dry-run engine was supposed "
+            "to run today (paper-only week posture), check why it didn't."
+        ))
     stake_usdc = _safe_float((session.get("params") or {}).get("stake"), 10.0)
     stage2_audit = _stage2_suppression_dollar_audit(
         session_date=session_date,
@@ -572,6 +592,7 @@ def build_report(
         "generated_at_utc": _now_iso(),
         "session_date": session_date,
         "mode": session.get("mode"),
+        "session_missing": session_missing,
         "source_files": {
             "session": str(session_path),
             "candidate_rollup": str(rollup_path) if rollup_path.exists() else None,

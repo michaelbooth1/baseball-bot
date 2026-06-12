@@ -6886,3 +6886,61 @@ class SameGameMultiFireHealthTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SessionMissingGuardTests(unittest.TestCase):
+    """Hygiene #7 (2026-06-11): a missing live-root session file must
+    degrade the daily review, not kill it. Before the guard,
+    build_report raised on the _load_json call and the WHOLE review --
+    including fleet/B4/artifact blocks that read other roots -- never
+    published."""
+
+    def test_missing_session_degrades_instead_of_raising(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            sessions_dir = root / "sessions"
+            candidates_dir = root / "candidates"
+            log_dir = root / "logs"
+            for d in (sessions_dir, candidates_dir, log_dir):
+                d.mkdir(parents=True, exist_ok=True)
+            # No session file written at all.
+            report = bdhr.build_report(
+                session_date="2026-06-11",
+                sessions_dir=sessions_dir,
+                candidate_dir=candidates_dir,
+                log_dir=log_dir,
+                output_root=root / "out",
+            )
+            self.assertTrue(report["session_missing"])
+            self.assertEqual(report["bets"], [])
+            self.assertEqual(report["bet_totals"].get("total_bets", 0), 0)
+            # The warning leads the Notes feed.
+            self.assertTrue(report["notes"])
+            self.assertIn("Session-missing:", report["notes"][0])
+            # Non-session blocks still present in the payload.
+            self.assertIn("fleet_paired_delta_health", report)
+            self.assertIn("under_paper_b4_milestone_health", report)
+
+    def test_present_session_stamps_false(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            sessions_dir = root / "sessions"
+            candidates_dir = root / "candidates"
+            log_dir = root / "logs"
+            for d in (sessions_dir, candidates_dir, log_dir):
+                d.mkdir(parents=True, exist_ok=True)
+            (sessions_dir / "2026-06-11_session.json").write_text(
+                json.dumps({"mode": "live", "params": {}, "summary": {}, "bets": []}),
+                encoding="utf-8",
+            )
+            report = bdhr.build_report(
+                session_date="2026-06-11",
+                sessions_dir=sessions_dir,
+                candidate_dir=candidates_dir,
+                log_dir=log_dir,
+                output_root=root / "out",
+            )
+            self.assertFalse(report["session_missing"])
+            self.assertFalse(
+                any(n.startswith("Session-missing:") for n in report["notes"]),
+            )

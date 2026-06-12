@@ -99,10 +99,11 @@ class ParallelEnginesMvpTests(unittest.TestCase):
         self.assertEqual(d_flags[cal_idx + 1], "shadow")
         self.assertEqual(d_flags[scope_idx + 1], "enforce")
 
-    def test_eleven_preset_fleet_after_2026_06_10_prune(self):
-        """2026-06-10 prune: E_tight_edge + G_loose_edge concluded
-        (edge floor locally optimal both directions), N_extreme_edge_022
-        null (identical bet set to A_current). 14 -> 11 presets."""
+    def test_thirteen_preset_fleet_after_2026_06_11_model_arms(self):
+        """2026-06-10 prune (E/G concluded, N null: 14 -> 11), then
+        2026-06-11 model-version arms added (O_nb_stage1 +
+        P_alt_a_cache: Stage-1 cache swaps under the production
+        calibrator, feeding the RF2 / Active #8 decision): 13 total."""
         self.assertEqual(
             set(lpe.PRESETS.keys()),
             {
@@ -110,8 +111,40 @@ class ParallelEnginesMvpTests(unittest.TestCase):
                 "F_no_dedup", "H_late_innings",
                 "I_extreme_018", "J_no_phantom_filter", "K_line5p5_block",
                 "L_enforce_min_raw_095", "M_under_paper",
+                "O_nb_stage1", "P_alt_a_cache",
             },
         )
+
+    def test_o_and_p_model_version_arms_swap_stage1_cache_only(self):
+        """O (NB tail) and P (full Alt-A) must be A_current + a
+        --cache-path swap and NOTHING else -- the paired-delta
+        comparison vs A_current attributes any divergence to the
+        Stage-1 cache. Both keep the calibrator ON so the RF2
+        redundant-correction interaction is measured, not assumed."""
+        a_flags = lpe.PRESETS["A_current"]
+        for label, cache_file in (
+            ("O_nb_stage1", "cache/mlb_ou_cache_nb.staging.json"),
+            ("P_alt_a_cache", "cache/mlb_ou_cache_alt_a.staging.json"),
+        ):
+            flags = lpe.PRESETS[label]
+            self.assertEqual(
+                flags[flags.index("--cache-path") + 1], cache_file,
+            )
+            # Identical to A_current once the cache swap is removed.
+            stripped = list(flags)
+            idx = stripped.index("--cache-path")
+            del stripped[idx:idx + 2]
+            self.assertEqual(
+                stripped, a_flags,
+                f"{label} must differ from A_current ONLY by --cache-path",
+            )
+            for f in flags:
+                if not f.startswith("--"):
+                    continue
+                self.assertNotIn(
+                    f, lpe.LIVE_ONLY_ENGINE_FLAGS,
+                    f"{label} contains LIVE_ONLY flag {f}",
+                )
 
     def test_a_current_mirrors_live_extreme_edge_override(self):
         """2026-06-10 fidelity re-sync: live runs gate_extreme_edge=0.30

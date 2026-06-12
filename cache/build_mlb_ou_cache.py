@@ -30,7 +30,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from scipy.stats import poisson
+from scipy.stats import nbinom, poisson
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_DATA_DIR = PROJECT_DIR / "data"
@@ -57,12 +57,29 @@ EPS = 1e-6
 # matches the on-the-fly Alt-A shadow logged on every candidate.
 SMOOTHING_MODE_POISSON = "poisson"
 SMOOTHING_MODE_EMPIRICAL_WHEN_AVAILABLE = "empirical_when_available"
+# Hygiene #3 (2026-06-11): negative-binomial tail. The Poisson is
+# structurally too thin-tailed for run scoring -- the 2026-05-19 audit
+# measured poisson > empirical by 4-7pp at every line where
+# poisson >= 0.85 (845-1,919 well-supported cells per line), and the
+# 2026-06-06 retrain experiment proved the bias is the smoothing, not
+# stale data. `negative_binomial` fits per-phase dispersion via method
+# of moments on the remaining-runs samples (r = mean^2/(var-mean) when
+# overdispersed) and computes poXX from the NB survival function;
+# phases that are NOT overdispersed (var <= mean) or too thin keep the
+# Poisson. The fallback-calibration pass (pass 2) uses the same
+# distribution so the logit-delta table stays consistent with the
+# smoothing it corrects.
+SMOOTHING_MODE_NEGATIVE_BINOMIAL = "negative_binomial"
 SMOOTHING_MODES = (
     SMOOTHING_MODE_POISSON,
     SMOOTHING_MODE_EMPIRICAL_WHEN_AVAILABLE,
+    SMOOTHING_MODE_NEGATIVE_BINOMIAL,
 )
 DEFAULT_SMOOTHING_MODE = SMOOTHING_MODE_POISSON
 DEFAULT_MIN_EMPIRICAL_N_FOR_OVERRIDE = 0
+# Minimum remaining-runs samples a phase needs before its NB
+# dispersion estimate is trusted; thinner phases keep Poisson.
+DEFAULT_NB_MIN_PHASE_N = 200
 
 
 def parse_args() -> argparse.Namespace:
@@ -189,6 +206,17 @@ def parse_args() -> argparse.Namespace:
             "the empirical is a valid (0,1) probability. The runtime reads "
             "only poXX, so this materializes the on-the-fly Alt-A shadow "
             "as a real cache file ready for promote.py stage1."
+        ),
+    )
+    p.add_argument(
+        "--nb-min-phase-n",
+        type=int,
+        default=DEFAULT_NB_MIN_PHASE_N,
+        help=(
+            "Hygiene #3: minimum remaining-runs samples a phase needs "
+            "before --smoothing-mode negative_binomial trusts its "
+            "method-of-moments dispersion fit; thinner phases keep "
+            f"Poisson (default: {DEFAULT_NB_MIN_PHASE_N})."
         ),
     )
     p.add_argument(
@@ -609,6 +637,44 @@ def poisson_over_prob(threshold: int, current_total: int, lam_remaining: float) 
     return float(1.0 - poisson.cdf(needed - 1, lam_remaining))
 
 
+def fit_nb_dispersion(
+    mean: float, var: float, n: int, *, min_phase_n: int = DEFAULT_NB_MIN_PHASE_N,
+) -> Optional[float]:
+    """Method-of-moments negative-binomial size parameter `r` for a
+    phase's remaining-runs distribution. Returns None when the phase
+    should keep Poisson: not overdispersed (var <= mean -- NB cannot
+    represent it), degenerate mean, or too few samples to trust the
+    variance estimate."""
+    if n < min_phase_n or mean <= 0:
+        return None
+    if var <= mean:
+        return None
+    return (mean * mean) / (var - mean)
+
+
+def nb_over_prob(
+    threshold: int,
+    current_total: int,
+    lam_remaining: float,
+    nb_r: Optional[float],
+) -> float:
+    """P(final_total >= threshold) with remaining runs ~ NB(mean=lam,
+    size=r). NB parameterization: p = r / (r + mean), so
+    P(X >= k) = nbinom.sf(k - 1, r, p). Falls back to Poisson when the
+    phase has no trusted dispersion fit (nb_r None) -- the NB cache is
+    therefore a strict superset of the Poisson cache: identical where
+    overdispersion is unmeasurable, fatter-tailed where it is."""
+    needed = threshold - current_total
+    if needed <= 0:
+        return 1.0
+    if lam_remaining <= 0:
+        return 0.0
+    if nb_r is None or nb_r <= 0:
+        return float(1.0 - poisson.cdf(needed - 1, lam_remaining))
+    p = nb_r / (nb_r + lam_remaining)
+    return float(nbinom.sf(needed - 1, nb_r, p))
+
+
 def _apply_alt_a_smoothing(
     cells: Dict[str, dict],
     *,
@@ -651,7 +717,11 @@ def _apply_alt_a_smoothing(
         "mean_signed_delta": 0.0,
         "n_line_deltas": 0,
     }
-    if smoothing_mode == SMOOTHING_MODE_POISSON:
+    # Only the empirical_when_available mode overrides poXX with oXX.
+    # 2026-06-11: was `== SMOOTHING_MODE_POISSON`, which would have let
+    # the new negative_binomial mode fall through and get its NB values
+    # clobbered by empirical overrides.
+    if smoothing_mode != SMOOTHING_MODE_EMPIRICAL_WHEN_AVAILABLE:
         return summary
 
     threshold = int(min_empirical_n_for_override)
@@ -789,6 +859,11 @@ def build_cache(args: argparse.Namespace) -> dict:
     phase_remaining_n: dict[tuple, int] = defaultdict(int)
     phase_weighted_remaining_sum: dict[tuple, float] = defaultdict(float)
     phase_weighted_n: dict[tuple, float] = defaultdict(float)
+    # Hygiene #3 (2026-06-11): sum of squares so the NB smoothing mode
+    # can fit per-phase dispersion (var = E[X^2] - mean^2). Accumulated
+    # unconditionally (cheap) so the same pass serves every mode.
+    phase_remaining_sumsq: dict[tuple, float] = defaultdict(float)
+    phase_weighted_remaining_sumsq: dict[tuple, float] = defaultdict(float)
 
     games_loaded = 0
     weighted_games_loaded = 0.0
@@ -857,6 +932,10 @@ def build_cache(args: argparse.Namespace) -> dict:
             phase_remaining_n[phase_key] += 1
             phase_weighted_remaining_sum[phase_key] += remaining_runs * game_weight
             phase_weighted_n[phase_key] += game_weight
+            phase_remaining_sumsq[phase_key] += remaining_runs * remaining_runs
+            phase_weighted_remaining_sumsq[phase_key] += (
+                remaining_runs * remaining_runs * game_weight
+            )
 
     if games_loaded == 0:
         raise RuntimeError("No valid final games loaded.")
@@ -875,6 +954,46 @@ def build_cache(args: argparse.Namespace) -> dict:
         else:
             n = phase_remaining_n[k]
             phase_lambda[k] = (total_remaining / n) if n else 0.0
+
+    # Hygiene #3: per-phase NB dispersion (size r). None = keep Poisson
+    # for that phase. Only consumed when smoothing_mode is
+    # negative_binomial; computed unconditionally for the meta summary.
+    smoothing_mode = str(getattr(args, "smoothing_mode", DEFAULT_SMOOTHING_MODE))
+    nb_active = smoothing_mode == SMOOTHING_MODE_NEGATIVE_BINOMIAL
+    nb_min_phase_n = int(getattr(args, "nb_min_phase_n", DEFAULT_NB_MIN_PHASE_N))
+    phase_nb_r: dict[tuple, Optional[float]] = {}
+    nb_phase_summary = {
+        "phases_total": len(phase_lambda),
+        "phases_nb_fit": 0,
+        "phases_kept_poisson": 0,
+        "dispersion_ratios": [],  # var/mean per fitted phase, summarized below
+    }
+    for k, mean in phase_lambda.items():
+        if season_weighting_enabled:
+            n_w = phase_weighted_n[k]
+            ex2 = (phase_weighted_remaining_sumsq[k] / n_w) if n_w else 0.0
+            n_for_fit = int(phase_remaining_n[k])  # trust raw sample count for the floor
+        else:
+            n_raw = phase_remaining_n[k]
+            ex2 = (phase_remaining_sumsq[k] / n_raw) if n_raw else 0.0
+            n_for_fit = int(n_raw)
+        var = max(0.0, ex2 - mean * mean)
+        r = fit_nb_dispersion(mean, var, n_for_fit, min_phase_n=nb_min_phase_n)
+        phase_nb_r[k] = r
+        if r is not None:
+            nb_phase_summary["phases_nb_fit"] += 1
+            nb_phase_summary["dispersion_ratios"].append(var / mean if mean > 0 else 0.0)
+        else:
+            nb_phase_summary["phases_kept_poisson"] += 1
+
+    def _phase_over_prob(threshold: int, current_total: int, pkey: tuple) -> float:
+        """Smoothing-mode-aware P(over). The fallback-calibration pass
+        and the cell builder both route through this so the calibration
+        deltas correct the SAME distribution the cells carry."""
+        lam_ = phase_lambda.get(pkey, 0.0)
+        if nb_active:
+            return nb_over_prob(threshold, current_total, lam_, phase_nb_r.get(pkey))
+        return poisson_over_prob(threshold, current_total, lam_)
 
     # Calibration pass: only on fallback-domain states (games_n < min_games)
     print("Parsing pass 2 for fallback calibration ...")
@@ -926,7 +1045,6 @@ def build_cache(args: argparse.Namespace) -> dict:
 
             current_total = s["away"] + s["home"]
             pkey = (s["inning_bucket"], s["half"], s["outs"], s["bases"])
-            lam = phase_lambda.get(pkey, 0.0)
             phase_bucket = f"{s['inning_bucket']}_{s['half']}_{s['outs']}"
 
             cal_samples_used += 1
@@ -935,7 +1053,7 @@ def build_cache(args: argparse.Namespace) -> dict:
                 needed = threshold - current_total
                 if needed <= 0:
                     continue
-                raw_p = poisson_over_prob(threshold, current_total, lam)
+                raw_p = _phase_over_prob(threshold, current_total, pkey)
                 bucket = cal_stats[line][phase_bucket][needed]
                 bucket["n"] += 1
                 bucket["weighted_n"] += game_weight
@@ -1022,6 +1140,11 @@ def build_cache(args: argparse.Namespace) -> dict:
             "lam": round(lam, 4),
             "label": state_label(ib, half, outs, bases, args.extras_bucket),
         }
+        if nb_active:
+            # Diagnostic only -- the runtime reads poXX. None means the
+            # phase kept Poisson (not overdispersed or too thin).
+            r_diag = phase_nb_r.get(pkey)
+            cell["nb_r"] = round(r_diag, 4) if r_diag is not None else None
         if season_weighting_enabled:
             cell.update(
                 {
@@ -1045,12 +1168,11 @@ def build_cache(args: argparse.Namespace) -> dict:
                 hits = st["over_hits"][emp_key]
                 denom = n_samples
             cell[emp_key] = round(hits / denom, 4) if denom else 0.0
-            cell[poi_key] = round(poisson_over_prob(threshold, combined, lam), 4)
+            cell[poi_key] = round(_phase_over_prob(threshold, combined, pkey), 4)
 
         skey = f"{away}_{home}_{ib}_{half}_{outs}_{bases}"
         cells[skey] = cell
 
-    smoothing_mode = str(getattr(args, "smoothing_mode", DEFAULT_SMOOTHING_MODE))
     min_emp_override = int(
         getattr(args, "min_empirical_n_for_override", DEFAULT_MIN_EMPIRICAL_N_FOR_OVERRIDE)
     )
@@ -1060,6 +1182,21 @@ def build_cache(args: argparse.Namespace) -> dict:
         smoothing_mode=smoothing_mode,
         min_empirical_n_for_override=min_emp_override,
     )
+
+    # Hygiene #3: NB smoothing diagnostics for the meta block. The
+    # dispersion ratio (var/mean) quantifies HOW overdispersed run
+    # scoring is per phase -- 1.0 would mean Poisson was right.
+    ratios = nb_phase_summary.pop("dispersion_ratios")
+    nb_meta_summary = {
+        "enabled": nb_active,
+        "mode": smoothing_mode,
+        "min_phase_n": nb_min_phase_n,
+        **nb_phase_summary,
+        "mean_dispersion_ratio": (
+            round(sum(ratios) / len(ratios), 4) if ratios else None
+        ),
+        "max_dispersion_ratio": round(max(ratios), 4) if ratios else None,
+    }
 
     line_meta = {line_to_emp_key(line): f"over {line}" for line in lines}
     history_start = min(loaded_game_dates) if loaded_game_dates else ""
@@ -1121,6 +1258,7 @@ def build_cache(args: argparse.Namespace) -> dict:
             ),
             "lines": line_meta,
             "alt_a_smoothing": alt_a_summary,
+            "nb_smoothing": nb_meta_summary,
         },
         "poisson_calibration": {
             "method": "logit_delta_by_line_inningHalfOut_needed",
@@ -1157,6 +1295,14 @@ def build_cache(args: argparse.Namespace) -> dict:
             f"cells_overridden={alt_a_summary['cells_overridden']}/{alt_a_summary['cells_total']}, "
             f"mean_signed_delta={alt_a_summary['mean_signed_delta']:+.4f}, "
             f"mean_abs_delta_logit={alt_a_summary['mean_abs_delta_logit']:.4f}"
+        )
+    if nb_meta_summary.get("enabled"):
+        print(
+            f"  NB smoothing: phases_nb_fit={nb_meta_summary['phases_nb_fit']}/"
+            f"{nb_meta_summary['phases_total']} "
+            f"(kept_poisson={nb_meta_summary['phases_kept_poisson']}), "
+            f"mean_dispersion_ratio={nb_meta_summary['mean_dispersion_ratio']}, "
+            f"max={nb_meta_summary['max_dispersion_ratio']}"
         )
 
     sample_keys = [
