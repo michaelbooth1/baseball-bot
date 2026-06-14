@@ -17,6 +17,36 @@ form.
 
 ## Review log
 
+Last roadmap review: **2026-06-14** (week-log audit of 06-07→06-13, plus
+acting on the resulting task list). **Findings:** (1) Calibrator-enforce
+blocked net-winning would-bets all 7 days (≈−$94 cumulative would-block
+counterfactual); the `calibration_edge_shaving` deep dive shows the
+[0.95,1.0) band is correctly blocked (−17% ROI) while [0.90,0.95) is
+~breakeven — recommend `enforce_min_raw` 0.90→0.95 (new Hygiene #9), held
+for `L_enforce_min_raw_095` to firm up + sign-off. (2) `gate_max_base_fv`
+0.99→0.95 recommended (new Hygiene #10): gate_counterfactual +$73/30d /
++$152 lifetime / +$93 post-cal, no window-reversal, and the cert's own
+sweep agrees (kept ROI +4.85%→+11.6%); the cert's `KEEP` is a heuristic
+artifact that only inspects the current threshold. (3) **Live-root gap
+06-07→06-10** — real-money fills stopped after 06-06 and the dry-run
+continuity engine didn't start until 06-11, so concept-drift PSI ran on 8
+rows (`insufficient_data`) exactly when the calibrator alert needed it; new
+runbook `docs/operational/live-pause-continuity.md`. (4) Stage-1 decision
+**slipped ~06-17 → ~late-July**: the paper-week volume drop pushed
+`B_cal_only` from t=1.71/~6d (06-11) to t=1.09/~45d (06-13) and the O/P
+Stage-1 arms have only 2 days of data. (5) `stage3_v2_weights` stale 25d +
+`phase4_models.json` hash mismatch — benign (daemon: research==active at
+9e-05) but recommend `promote.py stage3-v2` to clear lineage. (6)
+no_score_drift calibrator method flip-flop is a symptom of the live-data
+gap freezing the selection history, not a missing gate (the modal stability
+gate already exists). **Shipped this pass** (diagnostics only, no trading
+behavior changed): calibrator-enforce blocked-outcomes split by raw-FV band
+(`by_raw_fv_band` + band-aware muting-winners alert; the daily review now
+distinguishes the toxic tail from the muted breakeven band); retired fleet
+presets (E/G/N) excluded from the paired-delta block so concluded
+experiments stop emitting stale DEAD alerts. Full suite green (282
+daily-review + 20 fleet). Prior review **2026-06-11** below.
+
 Last roadmap review: **2026-06-11** (full-document audit during the
 paper-only tuning week kickoff). Changes in this review: dashboard
 refreshed for the first time since 05-27 (Active #1 now **READY** —

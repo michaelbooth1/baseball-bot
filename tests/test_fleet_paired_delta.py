@@ -99,6 +99,24 @@ class FleetPairedDeltaTests(unittest.TestCase):
         payload = self._run(excluded_root_names=("paper_trading",))
         self.assertEqual(payload["status"], "no_fleet_roots")
 
+    def test_retired_presets_excluded_by_default(self):
+        """Retired fleet presets (E/G/N, removed from the launcher
+        PRESETS on 2026-06-10) keep their data/paper_<label> root until
+        sessions age out of the 30d window. They must NOT be compared by
+        default -- otherwise N_extreme_edge_022 keeps firing its DEAD
+        alert for ~30 days after retirement (the exact 2026-06-13 noise
+        this exclusion removes)."""
+        shared = _bet(100, 7.5, 6, True, 5.0)
+        _write_session(self.root, "A_current", ANCHOR, [shared])
+        _write_session(self.root, "N_extreme_edge_022", ANCHOR, [shared])
+        _write_session(
+            self.root, "Z_live_variant", ANCHOR,
+            [shared, _bet(400, 9.5, 8, False, -10.0)],
+        )
+        payload = self._run()  # default excluded_root_names
+        self.assertIn("Z_live_variant", payload["engines"])
+        self.assertNotIn("N_extreme_edge_022", payload["engines"])
+
     # ------------------------------------------------------------------
     # Shared / unique arithmetic
     # ------------------------------------------------------------------

@@ -300,6 +300,25 @@ def _calibrator_enforce_shipment_health(
     undecided = 0
     saved_dollars = 0.0
     stake = CALIBRATOR_ENFORCE_BLOCKED_OUTCOMES_DEFAULT_STAKE
+    # 2026-06-14: stratify blocked outcomes by raw-FV band. The pooled
+    # WR / counterfactual lumps the toxic [0.95,1.0) tail (realized
+    # ~-17% ROI per the 2026-06-13 edge-shaving deep dive) together
+    # with the ~breakeven [0.90,0.95) band. That made the "muting
+    # winners" alert fire indiscriminately and disagree with the
+    # band-stratified edge_shaving verdict (which said the floor should
+    # move 0.90 -> 0.95, not that the gate is broken). Splitting the
+    # outcomes shows WHICH band is being muted, so the alert can point
+    # at "raise enforce_min_raw to 0.95" instead of a blanket refit.
+    band_stats: Dict[str, Dict[str, Any]] = {
+        "0.90-0.95": {
+            "settled": 0, "would_win": 0, "would_lose": 0,
+            "saved_dollars": 0.0,
+        },
+        ">=0.95": {
+            "settled": 0, "would_win": 0, "would_lose": 0,
+            "saved_dollars": 0.0,
+        },
+    }
     for br in deduped_blocked_rows:
         side = str(br.get("side") or "over").lower()
         key = (br.get("game_pk"), str(br.get("line") or ""), side)
@@ -307,18 +326,33 @@ def _calibrator_enforce_shipment_health(
         if ov is None:
             undecided += 1
             continue
+        try:
+            raw_fv_row = float(br.get("raw_fv") or 0.0)
+        except (TypeError, ValueError):
+            raw_fv_row = 0.0
+        bs = band_stats[">=0.95" if raw_fv_row >= 0.95 else "0.90-0.95"]
         won_if_placed = bool(ov)
         settled += 1
+        bs["settled"] += 1
         if won_if_placed:
             would_win += 1
+            bs["would_win"] += 1
             ask_d = float(br.get("decision_ask") or 0.0)
             if ask_d > 0:
                 lost_profit = (stake / ask_d) - stake
                 saved_dollars -= lost_profit
+                bs["saved_dollars"] -= lost_profit
         else:
             would_lose += 1
+            bs["would_lose"] += 1
             saved_dollars += stake
+            bs["saved_dollars"] += stake
     wr_settled = (would_win / settled) if settled else None
+    for _bs in band_stats.values():
+        _bs["saved_dollars"] = round(_bs["saved_dollars"], 2)
+        _bs["win_rate_among_settled"] = (
+            _bs["would_win"] / _bs["settled"] if _bs["settled"] else None
+        )
 
     payload["today"]["enforce_effect"] = {
         "attribution_label": attribution_label,
@@ -351,6 +385,12 @@ def _calibrator_enforce_shipment_health(
                 "default_stake": stake,
                 "computed_on": "unique_opportunities_dedup_by_game_line_side",
             },
+            # Per raw-FV band, so the operator can see the toxic
+            # [0.95,1.0) tail (enforce JUSTIFIED) separately from the
+            # ~breakeven [0.90,0.95) band (the one enforce mutes). A
+            # negative saved_dollars on [0.90,0.95) with a positive one
+            # on >=0.95 is the signature that says "raise the floor".
+            "by_raw_fv_band": band_stats,
         },
     }
 
@@ -435,6 +475,28 @@ def _calibrator_enforce_shipment_health(
             "calibrator-attributable."
         )
 
+    b_low = band_stats["0.90-0.95"]
+    b_high = band_stats[">=0.95"]
+    band_clause = (
+        f" By raw-FV band: [0.90,0.95) {b_low['would_win']}/"
+        f"{b_low['settled']} won, saved ${b_low['saved_dollars']:+.2f}; "
+        f"[0.95,1.0) {b_high['would_win']}/{b_high['settled']} won, "
+        f"saved ${b_high['saved_dollars']:+.2f}."
+    )
+    # Signature of "raise the floor, don't refit": the breakeven
+    # [0.90,0.95) band is net-negative to block (muting winners) while
+    # the [0.95,1.0) tail is net-positive to block (correctly toxic).
+    floor_raise_indicated = (
+        b_low["saved_dollars"] < 0 <= b_high["saved_dollars"]
+        and b_low["settled"] > 0
+    )
+    if floor_raise_indicated:
+        band_clause += (
+            " The mute is concentrated in [0.90,0.95) while the "
+            "[0.95,1.0) tail is correctly blocked -- raise "
+            "enforce_min_raw to 0.95 (cf. L_enforce_min_raw_095 + the "
+            "edge-shaving deep dive), not a full refit."
+        )
     if (
         settled >= CALIBRATOR_ENFORCE_BLOCKED_OUTCOMES_MIN_FOR_ALERT
         and wr_settled is not None
@@ -449,6 +511,7 @@ def _calibrator_enforce_shipment_health(
             "close to the post-calibrated break-even, suggesting the "
             "Platt fit is too aggressive at the current regime "
             "(consider band-gate raise or per-line refit)."
+            + band_clause
         )
     if (
         settled >= CALIBRATOR_ENFORCE_BLOCKED_OUTCOMES_MIN_FOR_ALERT

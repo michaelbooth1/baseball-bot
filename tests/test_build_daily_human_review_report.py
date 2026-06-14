@@ -6715,6 +6715,65 @@ class CalibratorEnforceShipmentHealthTests(unittest.TestCase):
                 bo["counterfactual_pnl"]["saved_dollars"], -4.29, places=2,
             )
 
+    def test_blocked_outcomes_stratified_by_raw_fv_band(self) -> None:
+        """2026-06-14: the blocked-outcome counterfactual is split into
+        the [0.90,0.95) and [0.95,1.0) raw-FV bands so the operator can
+        see the toxic tail (correctly blocked) separately from the
+        ~breakeven band (the one enforce mutes). When the [0.90,0.95)
+        band is net-negative to block (winners muted) while [0.95,1.0)
+        is net-positive (losers blocked), the muting-winners alert must
+        recommend raising enforce_min_raw to 0.95, not a full refit.
+
+        Setup (all line 9.5 over, distinct game_pk so no dedup):
+          - 5 bets raw 0.92, ask 0.70 -> WOULD BLOCK, all WIN
+            ([0.90,0.95) band: muted winners; saved < 0)
+          - 3 bets raw 0.98, ask 0.83 -> WOULD BLOCK, all LOSE
+            ([0.95,1.0) tail: correctly blocked; saved > 0)
+        Overall WR = 5/8 = 62.5% >= 60% so muting-winners fires.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            cdir = Path(td) / "cu"
+            rows = []
+            outcomes = []
+            for gp in range(1, 6):  # [0.90,0.95) band, wins
+                rows.append(dict(self._trade_row(
+                    raw_fv=0.92, cal_fv=0.73, decision_ask=0.70, line=9.5,
+                ), game_pk=gp, side="over"))
+                outcomes.append({"game_pk": gp, "line": "9.5", "over_hit": True})
+            for gp in range(6, 9):  # [0.95,1.0) tail, losses
+                rows.append(dict(self._trade_row(
+                    raw_fv=0.98, cal_fv=0.72, decision_ask=0.83, line=9.5,
+                ), game_pk=gp, side="over"))
+                outcomes.append({"game_pk": gp, "line": "9.5", "over_hit": False})
+            self._write_candidates(cdir, "2026-05-19", rows)
+            self._write_outcomes(cdir, "2026-05-19", outcomes)
+            out = bdhr._calibrator_enforce_shipment_health(
+                session_date="2026-05-19",
+                candidate_dir=cdir,
+                trailing_reviews=[],
+            )
+            bands = (out["today"]["enforce_effect"]["blocked_outcomes"]
+                     ["by_raw_fv_band"])
+            low = bands["0.90-0.95"]
+            high = bands[">=0.95"]
+            # Breakeven band: 5 muted winners, saved is NEGATIVE.
+            self.assertEqual(low["settled"], 5)
+            self.assertEqual(low["would_win"], 5)
+            self.assertEqual(low["would_lose"], 0)
+            # 5 * -(10/0.70 - 10) = 5 * -4.2857 = -21.43
+            self.assertAlmostEqual(low["saved_dollars"], -21.43, places=2)
+            self.assertAlmostEqual(low["win_rate_among_settled"], 1.0, places=4)
+            # Toxic tail: 3 blocked losers, saved is POSITIVE.
+            self.assertEqual(high["settled"], 3)
+            self.assertEqual(high["would_win"], 0)
+            self.assertEqual(high["would_lose"], 3)
+            self.assertAlmostEqual(high["saved_dollars"], 30.0, places=2)
+            # The muting-winners alert fires AND names the floor-raise fix.
+            muting = [a for a in out["alerts"] if "muting winners" in a]
+            self.assertEqual(len(muting), 1)
+            self.assertIn("raise enforce_min_raw to 0.95", muting[0])
+            self.assertIn("[0.90,0.95)", muting[0])
+
 
 class SameGameMultiFireHealthTests(unittest.TestCase):
     """Generic dedup-leak detector (2026-06-03). Catches the bug shape

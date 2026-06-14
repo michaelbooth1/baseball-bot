@@ -198,6 +198,17 @@ def render_markdown(report: Dict[str, Any]) -> str:
             ce_effect.get("blocked_outcomes") or {},
             (ce_effect.get("blocked_outcomes") or {}).get("counterfactual_pnl") or {},
         ),
+        (
+            lambda bb: (
+                f"- Blocked outcomes by raw-FV band: "
+                f"[0.90,0.95) {bb.get('0.90-0.95', {}).get('would_win', 0)}/"
+                f"{bb.get('0.90-0.95', {}).get('settled', 0)} won "
+                f"(save ${bb.get('0.90-0.95', {}).get('saved_dollars', 0.0):+.2f}); "
+                f"[0.95,1.0) {bb.get('>=0.95', {}).get('would_win', 0)}/"
+                f"{bb.get('>=0.95', {}).get('settled', 0)} won "
+                f"(save ${bb.get('>=0.95', {}).get('saved_dollars', 0.0):+.2f})"
+            )
+        )((ce_effect.get("blocked_outcomes") or {}).get("by_raw_fv_band") or {}),
         f"- Trailing baseline: "
         f"today {ce_baseline.get('today_trades', 0)} trades vs "
         f"{ce_baseline.get('baseline_days_used', 0)}d mean "

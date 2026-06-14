@@ -55,7 +55,7 @@ operator should read next. Use this to triage; full text is below.
 | 5 | Calibrated-edge stake scaling (Active #6 part 2) | Shadow; 11/30 sessions accumulated (2026-06-06) | 19 more live shadow sessions; paused during paper-only week | Weekly rollup → "Active #6 stake-scaling promotion" panel |
 | 6 | Learned execution policy → replace fixed spread heuristic | Prototype refreshes daily; fill-gap cap (`--max-limit-gap-below-ask 0.02`) shipped 2026-06-04, untested live | ~200+ live bets; paused during paper-only week | `data/analysis_output/execution_policy_prototype/learned_execution_policy_report.md` |
 | 7 | No-score drift promotion path | Paper-only (no-score walk-forward refreshes daily) | 60+ post-TR20 days of durable empirical-support ROI | `data/analysis_output/no_score_drift_walk_forward/` |
-| 8 | Stage-1 Alt-A promotion (full enforce; TR25 scoped enforce already shipped) | Runtime-shadow promoted 2026-06-03; shadow report now 87% coverage / 10.2pp bias reduction. **Two open conflicts**: (a) inning≥8 `hold_poisson` rule contradicted by new evidence (+22.9pp improvement, n=19, 100% coverage); (b) fleet 2×2 warns scope-enforce + calibrator may double-shrink (see RF2) | RF2 verdict (B_cal_only conclusive ~2026-06-17) before expanding Alt-A | `data/analysis_output/stage1_shadow_override/` |
+| 8 | Stage-1 Alt-A promotion (full enforce; TR25 scoped enforce already shipped) | Runtime-shadow promoted 2026-06-03; shadow report now 87% coverage / 10.2pp bias reduction. **Two open conflicts**: (a) inning≥8 `hold_poisson` rule contradicted by new evidence (+22.9pp improvement, n=19, 100% coverage); (b) fleet 2×2 warns scope-enforce + calibrator may double-shrink (see RF2) | RF2 verdict (B_cal_only conclusive **~late-July at current pace, slipped from ~06-17** — O/P arms only 2 days in, B_cal_only ~45d to significance per the 06-14 audit) before expanding Alt-A | `data/analysis_output/stage1_shadow_override/` |
 | 9–17 | (shipped 2026-05-17 → 2026-05-21) | ✅ Closed | — | [ROADMAP_ARCHIVE_2026_H1.md](ROADMAP_ARCHIVE_2026_H1.md) |
 
 ### Hygiene
@@ -64,12 +64,14 @@ operator should read next. Use this to triage; full text is below.
 |---|---|---|---|---|
 | 1 | Line-5.5 high-FV slice guard | One-line gate | **Largely superseded 2026-06-07** by the per-line calibrator (Hygiene #2 ship): the line-5.5 isotonic curve now corrects the slice directly (held-out gap −1.2pp, was +20-30pp). `K_line5p5_block` preset keeps running as live-fire corroboration (fleet paired-delta: TRENDING_POSITIVE). Decide retire-vs-promote when K reaches CONCLUSIVE. | Fleet paired-delta verdict on K |
 | 2 | Mid-band [0.80, 0.90) calibrator under-confidence refit | **✅ Shipped 2026-06-07** as per-line calibrator stratification | `--per-line-min-rows 100` fits per-(family, line) Platt/isotonic curves; runtime prefers per-line, falls back pooled. Matched held-out eval: logloss −0.488 / brier −0.302 vs pooled; line 5.5 gap −1.2pp. Wired into daily refresh. OVER side only (UNDER per-line deferred — see #8). Closed. |
-| 3 | Replace Poisson tail with negative-binomial fit | **🚧 Staging + fleet arm + out-of-sample replay shipped 2026-06-11** | Builder mode `negative_binomial`: 402/480 phases overdispersed (mean var/mean = 2.20); in-corpus high-FV gap closed 93.4%. **Out-of-sample replay on 1,327 settled 2026 candidates** (`stage1_nb_replay`): raw-chain bias +25.1pp → **+16.7pp**, brier 0.287 → 0.257 — real but partial (~33% of realized bias closed; the in-corpus 93% does NOT transfer). **NB ≈ Alt-A out-of-sample** (Alt-A +15.6pp, brier 0.257): they correct the same phenomenon. Residual ~16pp is selection-driven (bet-conditional), needing a market/selection-aware lever, not better smoothing. `O_nb_stage1` arm provides the live-fire + calibrator-interaction read. | O/P paired-delta evidence + RF2 verdict; one Stage-1 decision ~06-17 |
+| 3 | Replace Poisson tail with negative-binomial fit | **🚧 Staging + fleet arm + out-of-sample replay shipped 2026-06-11** | Builder mode `negative_binomial`: 402/480 phases overdispersed (mean var/mean = 2.20); in-corpus high-FV gap closed 93.4%. **Out-of-sample replay on 1,327 settled 2026 candidates** (`stage1_nb_replay`): raw-chain bias +25.1pp → **+16.7pp**, brier 0.287 → 0.257 — real but partial (~33% of realized bias closed; the in-corpus 93% does NOT transfer). **NB ≈ Alt-A out-of-sample** (Alt-A +15.6pp, brier 0.257): they correct the same phenomenon. Residual ~16pp is selection-driven (bet-conditional), needing a market/selection-aware lever, not better smoothing. `O_nb_stage1` arm provides the live-fire + calibrator-interaction read. | O/P paired-delta evidence + RF2 verdict; one Stage-1 decision **slipped ~06-17 → ~late-July** (O/P arms launched 06-11, 2 days of data as of 06-13) |
 | 4 | Chain-rebuild stale-input artifacts | Investigate-and-reorder OR auto-chain-rebuild | **Partially closed 2026-06-03**: `rebuilt_each_refresh` classification suppresses transient stale alerts (daily review runs at step 14, before steps 17-38 rebuild). Remaining: promotion-gated artifact mismatches (stage3_v2 `phase4_models.json` hash; calibrator_over vs calibrator_under divergence on the shared training table) — these are real and surface correctly. | Operator promotes / rebuilds the gated artifacts |
 | 5 | Gate-counterfactual cross-window validation | **✅ Shipped 2026-05-26** | `window_reversal` flag + `lifetime_post_calibrator_enforce` 4th window; confidence auto-downgrades to `review_required` on reversal. First run flagged 4 of 9 HIGH-confidence recs as reversed. Closed. |
 | 6 | Fleet-root integration gap | Loader change in `unified_signal_table` (+ calibration-training builder) | **Discovered 2026-06-11**: the canonical learning loop (unified table → training table → walk-forward / loss-attribution / calibration) reads only `data/live_trading/*` + `data/paper_trading/*` hardcoded roots. Fleet engines write `data/paper_<label>/*` — their bets and candidate logs feed NOTHING canonical (only the aggregator + B4 + paired-delta blocks). Fleet evidence stays a parallel track until this closes. Decide: fold fleet rows in with a `config_label` column, or keep fleet deliberately quarantined and document that. | Design decision (quarantine vs fold-in) |
 | 7 | Daily review hard-fails without a live-root session file | **✅ Shipped 2026-06-11** | Missing session now degrades instead of raising: session-dependent blocks publish empties, `session_missing: true` stamped on the report, `Session-missing:` warning leads the Notes feed, and the fleet/B4/artifact blocks publish regardless. 2 new tests. Closed. |
 | 8 | UNDER per-line calibration | Re-run `--per-line-min-rows` for `--side under` once data supports it | **Deferred 2026-06-11 with evidence**: per-line UNDER is overfit on current counterfactual-label data (held-out logloss 0.813 vs 0.711 pooled; line-5.5 isotonic maps raw 0.05→0.82). Revisit when real UNDER paper outcomes accumulate (B4 runway). | B4 sample growth |
+| 9 | Calibrator-enforce floor `enforce_min_raw` 0.90→0.95 | One-line config (`signal_config.py` or override file) | **Recommended by the 06-14 audit, held for evidence.** Triple-corroborated: edge_shaving deep-dive verdict JUSTIFIED@0.95 ([0.95,1.0) = −17% ROI correctly blocked, [0.90,0.95) ~breakeven so shouldn't be shrunk); `L_enforce_min_raw_095` +$3.83 (COLLECTING); the daily "muting winners" alert (≈−$94/wk would-block, 7/7 days). Caveat: the day-level would-block cohort is noisier than the 30d aggregate (06-13 showed both bands net-negative — see the new band-split diagnostic). | More `L` evidence (firms on live re-entry) + sign-off |
+| 10 | Gate `gate_max_base_fv` 0.99→0.95 | `promote.py gate-threshold` | **Recommended by the 06-14 audit, held for sign-off.** Cert's own sweep + gate_counterfactual + post-calibrator window all agree (+$73/30d, +$152 lifetime, no window-reversal; newly-blocked 0.95–0.99 band = 75 filled bets @ −15.8%). The cert's nominal `KEEP` verdict is a heuristic artifact — it only inspects the current threshold (3 blocked) and ignores its own sweep. | Live re-entry (filled-bet evidence) + sign-off |
 
 ### Research findings
 
@@ -77,15 +79,17 @@ operator should read next. Use this to triage; full text is below.
 |---|---|---|---|---|
 | RF1 | Edge Atlas — market structurally overprices Over by **+2-5pp across every cohort** (lines 9.5/10.5/11.5 + inn_8-9 worst), validating bidirectional pivot premise | ✅ Shipped 2026-05-27 | RF1.a (recent-N comparison) tests whether 10y baseline is stale before any live use of the finding | `data/analysis_output/edge_atlas/edge_atlas.md` |
 | RF1.a | Recent-N comparison: bias **survives directionally** across 3y/4y/5y/6y/10y windows (0 sign flips / 16 buckets), magnitude varies. Verdict: `BIAS_PARTIALLY_SURVIVES`. Bidirectional pivot premise confirmed regime-stable. | ✅ Shipped 2026-05-27 | RF1.b realized-outcomes deep dive (awaits more N), RF1.c per-park stratification | `data/analysis_output/edge_atlas/recent_n_comparison.md` |
-| RF2 | Fleet 2×2 redundant-correction interaction — Alt-A scope-enforce **helps** with the calibrator OFF (D vs C: +$55 delta) but **hurts** with it ON (B vs A: +$79 against scope, 9/15 days): both levers shrink overconfident FV, and doing both double-shrinks past winners. Tracked automatically by the fleet paired-delta block; B_cal_only at t=1.71, ~6 days from CONCLUSIVE as of 2026-06-11 | 🔶 Pending verdict | Hold ALL Alt-A scope expansion (Active #8) until the verdict lands; if CONCLUSIVE_POSITIVE for B, the decision is scope-enforce OFF or calibrator-band rebalance, not more Alt-A | Daily review → `fleet_paired_delta_health` |
+| RF2 | Fleet 2×2 redundant-correction interaction — Alt-A scope-enforce **helps** with the calibrator OFF (D vs C: +$55 delta) but **hurts** with it ON (B vs A: +$79 against scope, 9/15 days): both levers shrink overconfident FV, and doing both double-shrinks past winners. Tracked automatically by the fleet paired-delta block; B_cal_only at t=1.09, ~45 days from CONCLUSIVE as of 2026-06-13 (paper-week volume drop slowed it from the ~06-17 estimate) | 🔶 Pending verdict | Hold ALL Alt-A scope expansion (Active #8) until the verdict lands; if CONCLUSIVE_POSITIVE for B, the decision is scope-enforce OFF or calibrator-band rebalance, not more Alt-A | Daily review → `fleet_paired_delta_health` |
 
 Last dashboard refresh: **2026-06-11**. Refresh after each ship.
 
 ---
 
-Last reviewed: **2026-06-11** (full-document audit during the paper-only
-tuning week kickoff). The full review log — this entry's detail and every
-prior review — is in
+Last reviewed: **2026-06-14** (week-log audit 06-07→06-13: recommends
+`enforce_min_raw` 0.90→0.95 and `gate_max_base_fv` 0.99→0.95 — both held for
+sign-off; Stage-1 decision slipped to ~late-July; live-root gap runbook
+added; diagnostic ships for the fleet/calibrator blocks). Full detail and
+every prior review are in
 **[ROADMAP_CHANGELOG.md](ROADMAP_CHANGELOG.md#review-log)**.
 
 ## Recently completed
@@ -118,8 +122,9 @@ prior review — is in
      on identical rows. Direct evidence they correct the SAME
      phenomenon (consistent with RF2's redundancy finding). NB does
      it with ~960 parameters, full coverage, and no per-cell
-     empirical noise import; Alt-A needs scope rules. The ~06-17
-     Stage-1 decision is now a like-for-like table; the O/P fleet
+     empirical noise import; Alt-A needs scope rules. The Stage-1
+     decision (slipped ~06-17 → ~late-July per the 06-14 audit; O/P
+     arms only 2 days in) is now a like-for-like table; the O/P fleet
      arms add the live-fire + calibrator-interaction dimension.
   3. Worst cohort either way: line ≤6.5 (+38.6pp → +32pp) — the
      low-line slice stays broken under any smoothing; per-line
@@ -399,7 +404,10 @@ shipped work from 2026-05-27 and earlier is in
      FV, double-shrinking past winners). With the per-line calibrator
      (06-07) making the calibrator stronger, expanding Alt-A may
      over-correct further. Wait for the B_cal_only paired-delta
-     verdict (~2026-06-17) — if CONCLUSIVE_POSITIVE, the right move
+     verdict (**~late-July at current pace — slipped from the ~06-17
+     estimate; the paper-week volume drop pushed B_cal_only from t=1.71/
+     ~6d on 06-11 to t=1.09/~45d on 06-13, and the O/P Stage-1 arms have
+     only 2 days of data**) — if CONCLUSIVE_POSITIVE, the right move
      may be scope-enforce OFF + full Alt-A cache + lighter calibrator
      band, not incremental scope expansion.
    - A clean test exists with zero new code: a fleet arm running
@@ -653,6 +661,41 @@ _Accumulating debt; not blocking, but worth closing on a regular cadence so the 
     `scripts/analysis/calibrate_signal_probabilities.py`,
     `scripts/trading/signal_pipeline.py`.
 
+9. **Calibrator-enforce floor `enforce_min_raw` 0.90 → 0.95
+    (recommended 2026-06-14, held for evidence).** The week-log audit
+    found calibrator-enforce blocked net-winning would-bets all 7 days
+    (06-07→06-13), ≈−$94 cumulative would-block counterfactual. The
+    `calibration_edge_shaving` deep dive stratifies the enforce zone:
+    [0.95,1.0) realizes −17.3% taker ROI (n=1020 — correctly blocked),
+    [0.90,0.95) is ~breakeven (−1.0%, the band enforce shouldn't
+    shrink), and [0.80,0.90) is +16% (already exempt). Verdict
+    JUSTIFIED, recommended floor **0.95**. Corroborated live by
+    `L_enforce_min_raw_095` (+$3.83, COLLECTING, t=0.63). **Held**
+    because (a) the change is live-trading-affecting (takes effect on
+    re-entry) and (b) the day-level would-block cohort is noisier than
+    the 30d edge_shaving aggregate — on 06-13 both bands were
+    net-negative to block, so the new band-split diagnostic in the
+    daily review only recommends the floor raise when the
+    [0.90,0.95)-muted / [0.95,1.0)-toxic signature actually holds.
+    Promote when `L` firms up post-re-entry. Files: `signal_config.py`
+    (`DEFAULT_PROB_CALIBRATION_ENFORCE_MIN_RAW`),
+    `cache/live_engine_overrides.json`.
+
+10. **Gate `gate_max_base_fv` 0.99 → 0.95 (recommended 2026-06-14,
+    held for sign-off).** The gate_counterfactual recommends tightening
+    (+$72.99/30d high-confidence, +$152 lifetime, +$93 post-calibrator,
+    `window_reversal=false` — survives the Hygiene #5 cross-window
+    guard). The walk-forward cert's own **sweep** agrees: at 0.95 kept
+    ROI lifts +4.85% → +11.6% and the newly-blocked 0.95–0.99 band is
+    75 filled bets at −15.8% ROI. The cert's nominal `KEEP` verdict is
+    a **verdict-heuristic artifact** — it evaluates evidence only at the
+    *current* threshold (3 filled bets blocked) and never consults its
+    own sweep. **Held** because it changes live trading and overriding a
+    `KEEP` verdict warrants explicit sign-off. Ship via
+    `promote.py gate-threshold gate_max_base_fv 0.95` on live re-entry.
+    Side issue worth a follow-up: the cert per-gate verdict should
+    consider sweep candidates, not just current-threshold blocked-N.
+
 ## Research findings
 
 Long-form analysis outputs and the deeper-dive follow-ups they suggest.
@@ -837,6 +880,13 @@ re-entry before any production flip.
 These are standing rules, not roadmap items -- they apply every day
 regardless of which Active priority is currently being worked.
 
+- **Whenever live trading is paused, start the dry-run continuity engine
+  the SAME day** (`live_engine.py --dry-run --no-startup-refresh`). The
+  canonical learning loop (concept-drift PSI, calibration training table,
+  session-dependent daily-review blocks) reads only the live root and goes
+  blind without a session for the day. The 06-07→06-10 gap (continuity
+  engine started 4 days late) left concept-drift PSI on 8 rows. Runbook +
+  verification steps: [docs/operational/live-pause-continuity.md](docs/operational/live-pause-continuity.md).
 - **CURRENT POSTURE (2026-06-11 → ~2026-06-18): paper-only tuning
   week.** No real-money orders; focus is model tuning. Two processes
   run daily:

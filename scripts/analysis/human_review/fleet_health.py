@@ -49,6 +49,7 @@ from .constants import (
     FLEET_DEAD_MAX_DELTA_FLOW_PER_DAY,
     FLEET_DEAD_MIN_SHARED_DAYS,
     FLEET_EXCLUDED_ROOT_NAMES,
+    FLEET_RETIRED_ROOT_NAMES,
     FLEET_PAIRED_DELTA_TRAILING_DAYS,
     FLEET_TRENDING_MIN_DELTA_N,
     FLEET_TRENDING_T,
@@ -215,7 +216,9 @@ def _fleet_paired_delta_health(
     session_date: str,
     data_root: Path = FLEET_DATA_ROOT,
     baseline_label: str = FLEET_BASELINE_LABEL,
-    excluded_root_names: Tuple[str, ...] = FLEET_EXCLUDED_ROOT_NAMES,
+    excluded_root_names: Tuple[str, ...] = (
+        FLEET_EXCLUDED_ROOT_NAMES + FLEET_RETIRED_ROOT_NAMES
+    ),
     trailing_days: int = FLEET_PAIRED_DELTA_TRAILING_DAYS,
     dead_min_shared_days: int = FLEET_DEAD_MIN_SHARED_DAYS,
     dead_max_flow: float = FLEET_DEAD_MAX_DELTA_FLOW_PER_DAY,

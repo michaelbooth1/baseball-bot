@@ -295,6 +295,20 @@ FLEET_DATA_ROOT = PROJECT_DIR / "data"
 FLEET_BASELINE_LABEL = "A_current"
 # Legacy / non-fleet paper roots that must not be compared as presets.
 FLEET_EXCLUDED_ROOT_NAMES: tuple = ("paper_trading",)
+# Retired fleet presets (concluded experiments). Their
+# data/paper_<label> roots persist until the last session ages out of
+# the trailing window (~30 days), during which the paired-delta block
+# would keep emitting stale verdicts — most visibly N_extreme_edge_022's
+# daily DEAD alert (retired 2026-06-10 but still firing on 2026-06-13
+# because its sessions sit inside the 30d window). Excluding them
+# explicitly stops a concluded experiment generating noise the day it's
+# retired instead of ~30 days later. Keep in sync with the `RETIRED`
+# comments in launch_parallel_engines.py PRESETS.
+FLEET_RETIRED_ROOT_NAMES: tuple = (
+    "paper_E_tight_edge",         # retired 2026-06-10 (edge floor +5pp concluded)
+    "paper_G_loose_edge",         # retired 2026-06-10 (edge floor -5pp concluded)
+    "paper_N_extreme_edge_022",   # retired 2026-06-10 (null experiment, 0 delta)
+)
 FLEET_PAIRED_DELTA_TRAILING_DAYS = 30
 # DEAD: enough shared days to judge, and near-zero delta-bet flow --
 # the preset produces no distinct decisions vs baseline (N_extreme_
