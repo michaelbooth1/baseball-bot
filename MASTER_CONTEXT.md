@@ -9,9 +9,14 @@ lives where and how the pieces fit.
 - **[README.md](README.md)** — operator-facing overview, gate stack, evidence
   snapshot, CLI usage. Read this when you need the *what* and *why* before
   touching code.
-- **[ROADMAP.md](ROADMAP.md)** — Active Priorities + Hygiene + bidirectional
-  pivot phases. Start with the "Verdict status dashboard" at the top to see
+- **[ROADMAP.md](ROADMAP.md)** — Active Priorities + Hygiene + Research
+  findings. Start with the "Verdict status dashboard" at the top to see
   what's currently in flight.
+- **[ROADMAP_CHANGELOG.md](ROADMAP_CHANGELOG.md)** — rolling roadmap-review
+  log + recently-completed entries aged out of ROADMAP.md.
+- **[ROADMAP_MARKET_MAKER.md](ROADMAP_MARKET_MAKER.md)** — the long-horizon
+  bidirectional → market-maker pivot (Phases A–E). Carved out of ROADMAP on
+  2026-06-13.
 - **[ROADMAP_ARCHIVE_2026_H1.md](ROADMAP_ARCHIVE_2026_H1.md)** — shipped work
   from 2026-05-17 and earlier (~80 entries). Carved out of ROADMAP on
   2026-05-25 to keep the active document scannable.

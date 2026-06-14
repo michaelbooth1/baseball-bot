@@ -1657,7 +1657,11 @@ Current interpretation:
 
 The roadmap is maintained in **[ROADMAP.md](ROADMAP.md)** — start with the
 **Verdict status dashboard** at the top for a one-line status of every Active
-and Hygiene item. Shipped work from 2026-05-17 and earlier lives in
+and Hygiene item. The long-horizon bidirectional → market-maker pivot lives
+in **[ROADMAP_MARKET_MAKER.md](ROADMAP_MARKET_MAKER.md)**, and the rolling
+roadmap-review log + aged-out shipped entries are in
+**[ROADMAP_CHANGELOG.md](ROADMAP_CHANGELOG.md)**. Shipped work from
+2026-05-17 and earlier lives in
 **[ROADMAP_ARCHIVE_2026_H1.md](ROADMAP_ARCHIVE_2026_H1.md)** (carved out
 2026-05-25 to keep the active document scannable).
 
