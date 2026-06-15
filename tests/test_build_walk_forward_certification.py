@@ -209,34 +209,64 @@ class GateSweepAndVerdictTests(unittest.TestCase):
             sweep_thresholds=[0.15, 0.20, 0.25, 0.30, 0.35],
         )
 
+    @staticmethod
+    def _win(edge, date):
+        return _bet(edge_at_ask=edge, session_date=date,
+                    target_filled=1, target_win=1, target_profit=2.0)
+
+    @staticmethod
+    def _loss(edge, date):
+        return _bet(edge_at_ask=edge, session_date=date,
+                    target_filled=1, target_win=0, target_profit=-8.0)
+
     def test_retune_tighten_when_sweep_blocks_ev_cohort_despite_zero_current_blocked(self):
         """Blind-spot fix: a gate sitting at a loose threshold that blocks ~0
         filled bets must still RETUNE-tighten when a TIGHTER sweep threshold
-        would block a materially -EV cohort its own sweep already measured."""
+        would block a materially -EV cohort its own sweep already measured.
+        Here the toxic cohort is -EV in BOTH date halves -> DURABLE -> medium."""
+        E, L = "2026-06-01", "2026-06-10"
         bets = (
-            # Kept-always winners (low field): stay below every sweep threshold.
-            [_bet(edge_at_ask=0.10, target_filled=1, target_win=1, target_profit=2.0)] * 30
-            # Toxic high-field cohort (edge 0.28): blocked by tightening to <=0.25.
-            + [_bet(edge_at_ask=0.28, target_filled=1, target_win=1, target_profit=2.0)] * 9
-            + [_bet(edge_at_ask=0.28, target_filled=1, target_win=0, target_profit=-8.0)] * 21
+            [self._win(0.10, E)] * 15 + [self._win(0.10, L)] * 15
+            # Toxic high-field cohort (edge 0.28), -EV in both halves.
+            + [self._win(0.28, E)] * 5 + [self._loss(0.28, E)] * 10
+            + [self._win(0.28, L)] * 4 + [self._loss(0.28, L)] * 11
         )
         result = cert.evaluate_gate(bets, self._loose_gate())
         v = result["verdict"]
-        # Current threshold blocks ~0 (max edge 0.28 < 0.30) -> old logic KEPT.
         self.assertEqual(result["current_blocked"]["n_filled"], 0)
         self.assertEqual(v["verdict"], "RETUNE")
         self.assertIn(v["recommended_threshold"], (0.15, 0.20, 0.25))
-        self.assertEqual(v["confidence"], "medium")  # blocked_n=30 >= 20
-        self.assertIn("Tighten to", v["reason"])
+        self.assertFalse(v["window_reversal"])           # durable
+        self.assertEqual(v["confidence"], "medium")       # full blocked_n=30 >= 20
+        self.assertIn("DURABLE", v["reason"])
+
+    def test_tighten_window_reversal_downgrades_to_review_required(self):
+        """Hygiene #5 guard: if the toxic cohort is -EV over the full window
+        but +EV in the recent half, the tighten is in-sample/decaying -> flag
+        window_reversal and downgrade confidence to review_required."""
+        E, L = "2026-06-01", "2026-06-10"
+        bets = (
+            [self._win(0.10, E)] * 15 + [self._win(0.10, L)] * 15
+            # Early half strongly -EV; recent half all winners (+EV).
+            + [self._win(0.28, E)] * 2 + [self._loss(0.28, E)] * 20
+            + [self._win(0.28, L)] * 15
+        )
+        result = cert.evaluate_gate(bets, self._loose_gate())
+        v = result["verdict"]
+        self.assertEqual(v["verdict"], "RETUNE")          # full-window signal still fires
+        self.assertTrue(v["window_reversal"])
+        self.assertEqual(v["confidence"], "review_required")
+        self.assertIn("WINDOW-REVERSAL", v["reason"])
 
     def test_no_false_tighten_when_blockable_cohort_is_positive_ev(self):
         """The tighten check must NOT fire when the cohort a tighter threshold
         would block is itself +EV -- otherwise the cert would recommend
         blocking winners."""
+        E, L = "2026-06-01", "2026-06-10"
         bets = (
-            [_bet(edge_at_ask=0.10, target_filled=1, target_win=1, target_profit=2.0)] * 30
+            [self._win(0.10, E)] * 15 + [self._win(0.10, L)] * 15
             # High-field cohort is ALSO winning -> tightening would block winners.
-            + [_bet(edge_at_ask=0.28, target_filled=1, target_win=1, target_profit=2.0)] * 30
+            + [self._win(0.28, E)] * 15 + [self._win(0.28, L)] * 15
         )
         result = cert.evaluate_gate(bets, self._loose_gate())
         v = result["verdict"]

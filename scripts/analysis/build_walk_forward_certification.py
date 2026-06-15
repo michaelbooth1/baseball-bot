@@ -693,9 +693,49 @@ def _best_tighten_candidate(
     return best
 
 
+def _tighten_window_reversal(
+    rows: Sequence[BetRow], gate: GateDef, threshold: float,
+) -> Tuple[Optional[bool], Optional[float], int]:
+    """Window-reversal guard for a tighten candidate (mirrors Hygiene #5).
+
+    Recompute the cohort the tighter threshold would block on the TRAILING
+    HALF of session-dates and ask whether the -EV that justifies tightening
+    still holds recently. Returns (reversal, recent_blocked_roi, recent_n):
+
+      - reversal=False  -> recent half is still materially -EV: DURABLE.
+      - reversal=True   -> recent half is NOT materially -EV: the full-window
+                           -EV may be driven by older / regime-shifted data;
+                           the tighten signal is in-sample / decaying.
+      - reversal=None   -> recent half has too few blocked bets to judge:
+                           UNVALIDATED (don't claim either way).
+
+    This catches the exact failure mode Hygiene #5 was built for (e.g.
+    gate_min_current_total 4->5 read +$44 over 30d but -$152 on lifetime)
+    inside the cert's own population, so the full-population tighten verdict
+    can't recommend an in-sample mirage at face value.
+    """
+    dates = sorted({b.session_date for b in rows if b.session_date})
+    if len(dates) < 2:
+        return None, None, 0
+    cut = dates[len(dates) // 2]  # recent = trailing half (dates >= cut)
+    recent = [b for b in rows if b.session_date and b.session_date >= cut]
+    _, blocked_recent = _sweep_one(recent, gate, threshold)
+    n = blocked_recent.n_filled
+    roi = blocked_recent.roi
+    if n < GATE_RETUNE_MIN_BLOCKED_N or roi is None:
+        return None, roi, n
+    # Recent confirms the tighten only if its blocked cohort is still
+    # materially -EV; otherwise the signal does not hold recently.
+    reversal = roi > -GATE_RETUNE_MIN_DELTA_ROI
+    return reversal, roi, n
+
+
 def _gate_verdict(
     current_kept: CohortStats, current_blocked: CohortStats,
     sweep_results: List[Dict[str, Any]],
+    *,
+    rows: Optional[Sequence[BetRow]] = None,
+    gate: Optional[GateDef] = None,
 ) -> Dict[str, Any]:
     """Summarize a gate as KEEP / RETUNE / RETIRE based on sweep evidence."""
     # Sweep-aware TIGHTEN check FIRST -- a loose gate can block ~nothing at
@@ -704,10 +744,46 @@ def _gate_verdict(
     # which would otherwise bail to "insufficient evidence" and miss it.
     tighten = _best_tighten_candidate(current_kept, sweep_results)
     if tighten is not None:
+        # Window-reversal guard (Hygiene #5): does the -EV hold recently?
+        reversal: Optional[bool] = None
+        recent_roi: Optional[float] = None
+        recent_n = 0
+        if rows is not None and gate is not None:
+            reversal, recent_roi, recent_n = _tighten_window_reversal(
+                rows, gate, tighten["threshold"],
+            )
+        if reversal is True:
+            confidence = "review_required"
+        elif reversal is None:
+            confidence = "low"  # cross-window unvalidated (thin recent half)
+        else:  # durable
+            confidence = "medium" if tighten["blocked_n"] >= 20 else "low"
+        recent_roi_str = (
+            f"{recent_roi * 100:+.1f}%" if recent_roi is not None else "n/a"
+        )
+        if reversal is True:
+            window_clause = (
+                f" WINDOW-REVERSAL: the blocked cohort is NOT materially -EV in "
+                f"the recent half ({recent_roi_str} on {recent_n} filled) -- the "
+                "tighten signal looks in-sample / decaying. Do NOT promote without "
+                "more recent data (confidence downgraded to review_required)."
+            )
+        elif reversal is None:
+            window_clause = (
+                f" Cross-window UNVALIDATED (recent-half blocked N={recent_n} < "
+                f"{GATE_RETUNE_MIN_BLOCKED_N}); confirm durability before promoting."
+            )
+        else:
+            window_clause = (
+                f" Cross-window DURABLE (recent-half blocked ROI {recent_roi_str})."
+            )
         return {
             "verdict": "RETUNE",
-            "confidence": "medium" if tighten["blocked_n"] >= 20 else "low",
+            "confidence": confidence,
             "recommended_threshold": tighten["threshold"],
+            "window_reversal": reversal,
+            "blocked_roi_recent": recent_roi,
+            "blocked_n_recent": recent_n,
             "reason": (
                 f"Tighten to {tighten['threshold']}: the cohort it would newly "
                 f"block is materially -EV (ROI {tighten['blocked_roi'] * 100:+.1f}% "
@@ -717,9 +793,8 @@ def _gate_verdict(
                 f"blocks only {current_blocked.n_filled} filled bet(s), so the "
                 "current-blocked cohort alone is uninformative -- the sweep is the "
                 "signal. Per-gate: tighten recs across gates can target OVERLAPPING "
-                "cohorts (e.g. early-inning / low-total), so don't sum the savings. "
-                "Full-population sweep -- cross-check the gate_counterfactual "
-                "(window-reversal + Wilson guarded) before promoting."
+                "cohorts (e.g. early-inning / low-total), so don't sum the savings."
+                + window_clause
             ),
         }
 
@@ -861,7 +936,9 @@ def evaluate_gate(rows: Sequence[BetRow], gate: GateDef) -> Dict[str, Any]:
         }
 
     current_kept, current_blocked = _sweep_one(rows, gate, gate.current_threshold)
-    verdict = _gate_verdict(current_kept, current_blocked, sweep)
+    verdict = _gate_verdict(
+        current_kept, current_blocked, sweep, rows=rows, gate=gate,
+    )
     return {
         "name": gate.name,
         "description": gate.description,
