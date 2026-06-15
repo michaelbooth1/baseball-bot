@@ -13,8 +13,10 @@ wallet-aware paper fallback + stake-scaling promotion analyzer +
 weekly drift rollup HTML + Stage-3 weight externalization +
 run_daily_refresh smoke test).
 
-There are **94 test modules** (as of 2026-05-29; many added since the
-2026-05-14 line-by-line walk). They split roughly between trading runtime
+There are **102 test modules** (as of 2026-06-15; recent adds:
+test_build_shadow_clv [T1 shadow-CLV collector],
+test_fleet_signal_table_foldin [T2 fleet fold-in],
+test_concept_drift_psi_watchpoint [T7], plus the 2026-06-14 audit ships). They split roughly between trading runtime
 behavior, analysis-builder schemas, observability/rollup characterization,
 UNDER-family side-aware tests, lineage/promotion-audit tests, drift
 detection, and parallel-engine smoke. Many are golden / characterization

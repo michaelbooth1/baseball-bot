@@ -1594,7 +1594,13 @@ class ConceptDriftHealthTests(unittest.TestCase):
                 report_path=path, session_date="2026-05-15",
             )
             self.assertTrue(out["artifact_present"])
-            self.assertEqual(out["alerts"], ["weather_temp_f PSI=0.32 (major shift): ..."])
+            # Artifact alerts mirror exactly. (The T7 PSI watchpoint also
+            # fires here -- features are computable at 90 rows -- so filter it
+            # out before the exact-mirror assertion.)
+            self.assertEqual(
+                [a for a in out["alerts"] if "computable again" not in a],
+                ["weather_temp_f PSI=0.32 (major shift): ..."],
+            )
             self.assertEqual(out["feature_verdicts"]["weather_temp_f"]["verdict"], "major")
             self.assertEqual(out["feature_verdicts"]["stage2_run_env_delta"]["verdict"], "stable")
 
