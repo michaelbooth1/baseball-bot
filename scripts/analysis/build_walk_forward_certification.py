@@ -640,11 +640,89 @@ def _sweep_one(
     return kept, blocked
 
 
+def _best_tighten_candidate(
+    current_kept: CohortStats, sweep_results: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Scan the sweep for a TIGHTER threshold that dominates the current one.
+
+    This closes the verdict's blind spot: the old logic only looked at the
+    cohort blocked AT the current threshold, so a gate sitting at a loose
+    threshold that blocks ~nothing (e.g. gate_max_base_fv at 0.99 blocks 3
+    filled bets) returned KEEP "insufficient evidence" -- even when a tighter
+    sweep threshold (0.95) would block a large, materially -EV cohort (75
+    filled @ -15.8%) that its own sweep already measured.
+
+    A threshold dominates when, vs the current KEPT cohort, it (a) keeps
+    strictly fewer filled bets (is tighter -- direction-agnostic), (b) blocks
+    a cohort that is materially -EV BY ROI with adequate N, and (c) lifts kept
+    ROI by the action threshold. ROI is the EV signal (not win-rate): the
+    blocked band often wins at ~the kept rate but at higher asks, so it loses
+    money despite a similar hit rate. Ranked by realized-$ saved, matching the
+    gate_counterfactual report.
+    """
+    ckr = current_kept.roi
+    if ckr is None:
+        return None
+    best: Optional[Dict[str, Any]] = None
+    for s in sweep_results:
+        kept = s["kept"]
+        blocked = s["blocked"]
+        kept_roi = kept.get("roi")
+        blocked_roi = blocked.get("roi")
+        if kept_roi is None or blocked_roi is None:
+            continue
+        if kept.get("n_filled", 0) >= current_kept.n_filled:
+            continue  # not tighter than current (keeps >= as many bets)
+        if blocked.get("n_filled", 0) < GATE_RETUNE_MIN_BLOCKED_N:
+            continue  # too few blocked to trust
+        if blocked_roi > -GATE_RETUNE_MIN_DELTA_ROI:
+            continue  # blocked cohort not materially -EV -> don't over-tighten
+        if (kept_roi - ckr) < GATE_RETUNE_MIN_DELTA_ROI:
+            continue  # tightening doesn't materially lift kept ROI
+        dollars_saved = -float(blocked.get("total_profit", 0.0) or 0.0)
+        cand = {
+            "threshold": s["threshold"],
+            "kept_roi": kept_roi,
+            "kept_roi_delta": kept_roi - ckr,
+            "blocked_roi": blocked_roi,
+            "blocked_n": blocked.get("n_filled", 0),
+            "dollars_saved": dollars_saved,
+        }
+        if best is None or dollars_saved > best["dollars_saved"]:
+            best = cand
+    return best
+
+
 def _gate_verdict(
     current_kept: CohortStats, current_blocked: CohortStats,
     sweep_results: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """Summarize a gate as KEEP / RETUNE / RETIRE based on sweep evidence."""
+    # Sweep-aware TIGHTEN check FIRST -- a loose gate can block ~nothing at
+    # its current threshold yet have a tighter sweep threshold that blocks a
+    # large -EV cohort. This must run before the current-blocked-N gate below,
+    # which would otherwise bail to "insufficient evidence" and miss it.
+    tighten = _best_tighten_candidate(current_kept, sweep_results)
+    if tighten is not None:
+        return {
+            "verdict": "RETUNE",
+            "confidence": "medium" if tighten["blocked_n"] >= 20 else "low",
+            "recommended_threshold": tighten["threshold"],
+            "reason": (
+                f"Tighten to {tighten['threshold']}: the cohort it would newly "
+                f"block is materially -EV (ROI {tighten['blocked_roi'] * 100:+.1f}% "
+                f"on {tighten['blocked_n']} filled, ~${tighten['dollars_saved']:+.2f} "
+                f"saved) while kept ROI rises to {tighten['kept_roi'] * 100:+.1f}% "
+                f"({tighten['kept_roi_delta'] * 100:+.1f}pp). The current threshold "
+                f"blocks only {current_blocked.n_filled} filled bet(s), so the "
+                "current-blocked cohort alone is uninformative -- the sweep is the "
+                "signal. Per-gate: tighten recs across gates can target OVERLAPPING "
+                "cohorts (e.g. early-inning / low-total), so don't sum the savings. "
+                "Full-population sweep -- cross-check the gate_counterfactual "
+                "(window-reversal + Wilson guarded) before promoting."
+            ),
+        }
+
     # If too few blocked bets, we can't evaluate -- default KEEP with
     # low-confidence note.
     if current_blocked.n_filled < GATE_RETUNE_MIN_BLOCKED_N:
@@ -654,7 +732,8 @@ def _gate_verdict(
             "recommended_threshold": None,
             "reason": (
                 f"Only {current_blocked.n_filled} filled bet(s) blocked at the current "
-                f"threshold; insufficient evidence to evaluate a change."
+                f"threshold; insufficient evidence to evaluate a change "
+                "(and no tighter sweep threshold dominates)."
             ),
         }
     current_kept_roi = current_kept.roi

@@ -48,7 +48,7 @@ operator should read next. Use this to triage; full text is below.
 
 | # | Item | Status | Blocked by | Read |
 |---|---|---|---|---|
-| 1 | Post-TR20+TR21 walk-forward + re-certify gates | ✅ **READY 2026-06-10** (215 filled / 47 dates, ROI +5.1%). First verdict acted on: `gate_extreme_edge` 0.22→0.30 promoted 2026-06-03. Open verdicts: `gate_high_line_min_inning` 5→6 (RETUNE, low conf), `shadow_gate_current_state_edge_min` EXPLORE 0.08 | — | `data/analysis_output/walk_forward_certification/walk_forward_certification.md` |
+| 1 | Post-TR20+TR21 walk-forward + re-certify gates | ✅ **READY 2026-06-10** (215 filled / 47 dates, ROI +5.1%). First verdict acted on: `gate_extreme_edge` 0.22→0.30 promoted 2026-06-03. **2026-06-15: cert verdict blind spot fixed** (sweep-aware tighten check) — now surfaces 8 tighten `RETUNE`s the old logic missed, incl. `gate_max_base_fv`→0.95 + several **overlapping** early-inning/low-total gates (`min_inning`→6, `min_current_total`→6, `runs_needed_max`→2.5, `high_line_min_inning`→6: don't sum — same cohort). Highest-value single move ≈ `min_inning`/`min_current_total`→6. Cross-check gate_counterfactual (window-reversal guarded) before promoting. | Operator review of tighten RETUNEs + live re-entry | `data/analysis_output/walk_forward_certification/walk_forward_certification.md` |
 | 2 | Orphan-fill reconciler — primary vs safety-net | Pass-2 (losing-side trade-history recovery) shipped 2026-06-07 after the CWS@PHI 11.5 race-condition incident; watching | Paused during paper-only week (no live fills); resume evidence clock on live re-entry | Daily review "Orphan-Fill Reconciler" section |
 | 3 | Shadow → enforce gate promotions (`gate_ask_max=0.85`, `current_state_edge_min`) | **Unblocked** (Active #1 READY). Cert's cse sweep recommends 0.08 but direction is counterintuitive (lower cse is BETTER) — re-evaluate before enforcing | Operator review of cert verdicts | Walk-forward cert verdicts |
 | 4 | Realized-EV trade rule + state-value guardrails | Structured in `live_ev_policy_runtime.py` (shadow) | Live fill-rate curves; paused during paper-only week | `data/analysis_output/ev_policy/` |
@@ -71,7 +71,8 @@ operator should read next. Use this to triage; full text is below.
 | 7 | Daily review hard-fails without a live-root session file | **✅ Shipped 2026-06-11** | Missing session now degrades instead of raising: session-dependent blocks publish empties, `session_missing: true` stamped on the report, `Session-missing:` warning leads the Notes feed, and the fleet/B4/artifact blocks publish regardless. 2 new tests. Closed. |
 | 8 | UNDER per-line calibration | Re-run `--per-line-min-rows` for `--side under` once data supports it | **Deferred 2026-06-11 with evidence**: per-line UNDER is overfit on current counterfactual-label data (held-out logloss 0.813 vs 0.711 pooled; line-5.5 isotonic maps raw 0.05→0.82). Revisit when real UNDER paper outcomes accumulate (B4 runway). | B4 sample growth |
 | 9 | Calibrator-enforce floor `enforce_min_raw` 0.90→0.95 | One-line config (`signal_config.py` or override file) | **Recommended by the 06-14 audit, held for evidence.** Triple-corroborated: edge_shaving deep-dive verdict JUSTIFIED@0.95 ([0.95,1.0) = −17% ROI correctly blocked, [0.90,0.95) ~breakeven so shouldn't be shrunk); `L_enforce_min_raw_095` +$3.83 (COLLECTING); the daily "muting winners" alert (≈−$94/wk would-block, 7/7 days). Caveat: the day-level would-block cohort is noisier than the 30d aggregate (06-13 showed both bands net-negative — see the new band-split diagnostic). | More `L` evidence (firms on live re-entry) + sign-off |
-| 10 | Gate `gate_max_base_fv` 0.99→0.95 | `promote.py gate-threshold` | **Recommended by the 06-14 audit, held for sign-off.** Cert's own sweep + gate_counterfactual + post-calibrator window all agree (+$73/30d, +$152 lifetime, no window-reversal; newly-blocked 0.95–0.99 band = 75 filled bets @ −15.8%). The cert's nominal `KEEP` verdict is a heuristic artifact — it only inspects the current threshold (3 blocked) and ignores its own sweep. | Live re-entry (filled-bet evidence) + sign-off |
+| 10 | Gate `gate_max_base_fv` 0.99→0.95 | `promote.py gate-threshold` | **Recommended by the 06-14 audit, held for sign-off.** Cert's own sweep + gate_counterfactual + post-calibrator window all agree (+$73/30d, +$152 lifetime, no window-reversal; newly-blocked 0.95–0.99 band = 75 filled bets @ −15.8%). The cert's nominal `KEEP` verdict is a heuristic artifact — it only inspects the current threshold (3 blocked) and ignores its own sweep. The `Q_max_base_fv_095` fleet arm (2026-06-15) now accrues FV-level paired-delta evidence on it. | Live re-entry (filled-bet evidence) + sign-off |
+| 11 | Market-anchored-alpha runtime shadow (unblocks T8 fleet arm) | 7-file live-pipeline ship (shadow only) | **🟦 QUEUED 2026-06-15** — full ship spec at [docs/operational/market-anchored-alpha-runtime-shadow.md](docs/operational/market-anchored-alpha-runtime-shadow.md). Motivated by T1 shadow-CLV's ADVERSE_SELECTION finding (the residual is market-side → a market-anchored model can close it). Wire **`no_score_drift` + `mid_no_vig` only** (the one OOS-positive arm, CI [0.47, 20.37]; `score_event` is OOS-negative — excluded by construction) into the runtime in **shadow** (logs `fair_value_market_anchored`, no decision change), mirroring the Stage-1 Alt-A shadow pattern. Then add fleet arm `R_market_anchored_nsd` to get live-fire paired-delta evidence. | Operator sign-off (touches live signal pipeline); sequence on live re-entry |
 
 ### Research findings
 
@@ -85,11 +86,12 @@ Last dashboard refresh: **2026-06-11**. Refresh after each ship.
 
 ---
 
-Last reviewed: **2026-06-14** (week-log audit 06-07→06-13: recommends
-`enforce_min_raw` 0.90→0.95 and `gate_max_base_fv` 0.99→0.95 — both held for
-sign-off; Stage-1 decision slipped to ~late-July; live-root gap runbook
-added; diagnostic ships for the fleet/calibrator blocks). Full detail and
-every prior review are in
+Last reviewed: **2026-06-15** (paper-window optimization sprint + cert fix:
+shipped the T1 shadow-CLV collector — residual is **ADVERSE_SELECTION** —
+guarded fleet fold-in (Hygiene #6 closed), B4 marked dormant, queued the
+market-anchored-alpha shadow ship (Hygiene #11, unblocks T8), and fixed the
+cert verdict blind spot — now surfaces 8 tighten RETUNEs incl.
+`gate_max_base_fv`→0.95). Full detail and every prior review are in
 **[ROADMAP_CHANGELOG.md](ROADMAP_CHANGELOG.md#review-log)**.
 
 ## Recently completed
@@ -714,8 +716,36 @@ _Accumulating debt; not blocking, but worth closing on a regular cadence so the 
     own sweep. **Held** because it changes live trading and overriding a
     `KEEP` verdict warrants explicit sign-off. Ship via
     `promote.py gate-threshold gate_max_base_fv 0.95` on live re-entry.
-    Side issue worth a follow-up: the cert per-gate verdict should
-    consider sweep candidates, not just current-threshold blocked-N.
+    **✅ De-risked 2026-06-15:** the cert per-gate verdict blind spot is
+    fixed (it now runs a sweep-aware tighten check before the
+    current-blocked-N early-return), so **the cert itself now returns
+    `RETUNE → 0.95` (medium confidence)** for this gate — there is no
+    longer a `KEEP` to override, removing the original reason this was
+    held beyond live-fill evidence + sign-off.
+
+11. **Market-anchored-alpha runtime shadow — QUEUED 2026-06-15 (unblocks
+    the T8 fleet arm).** Full ready-to-execute ship spec:
+    [docs/operational/market-anchored-alpha-runtime-shadow.md](docs/operational/market-anchored-alpha-runtime-shadow.md).
+    *Motivation:* the T1 shadow-CLV collector found the selection-driven
+    residual is **ADVERSE_SELECTION** (≈62% of losses drift away from us
+    within 2 min — the market re-prices faster than we do). A market-side
+    residual is closable by a market-anchored model, and the
+    `calibration_market_anchored_alpha` walk-forward already has one
+    OOS-positive arm: **`no_score_drift` anchored to `mid_no_vig`**
+    (val-selected ROI +0.38, CI [0.47, 20.37] excludes 0). *Scope:* wire
+    THAT arm only into the runtime in **shadow** (compute + log
+    `fair_value_market_anchored`, no decision change), mirroring the
+    Stage-1 Alt-A shadow pattern across ~7 live-pipeline files + one new
+    model-apply helper + a `_market_anchored_alpha_shadow_health`
+    daily-review surface. **Exclude `score_event_transition`** — it is
+    OOS-negative (family gating is a correctness requirement). *Unblock:*
+    once `--market-anchored-alpha-mode` exists, add fleet arm
+    `R_market_anchored_nsd` (A_current + the flag) so paired-delta accrues
+    live-fire evidence — the deferred T8. *Why queued not shipped:* it
+    touches the live signal pipeline and the evidence is one
+    marginally-significant walk-forward window, so it needs operator
+    sign-off and is best sequenced on live re-entry (shadow evidence on
+    real fills, not paper). Effort M–L. Files: see the spec doc.
 
 ## Research findings
 

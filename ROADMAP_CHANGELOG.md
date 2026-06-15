@@ -17,6 +17,31 @@ form.
 
 ## Review log
 
+Last roadmap review: **2026-06-15** (paper-window optimization sprint +
+cert fix). **Shipped** (all safe / offline / diagnostic — no trading
+behaviour changed): **T1** shadow-CLV collector
+(`build_shadow_clv.py` + daily-review block) — its first run answered the
+session's headline question: the selection residual is **ADVERSE_SELECTION**
+(≈62% of losses drift away from us within 2 min = market-knew, vs 13% flat
+= model-wrong). **T2** fleet-root gap closed as a *guarded fold-in* (Hygiene
+#6): `--include-fleet` emits a SEPARATE labeled `unified_signals_fleet/`
+artifact; canonical `signals_master` byte-identical / never pooled. **T3**
+new `Q_max_base_fv_095` fleet arm; **T4** retired `H_late_innings` +
+`I_extreme_018` (trending -EV, not concluded — accurate comments);
+**T5** B4 marked **DORMANT** (limiter is UNDER signal quality, not session
+count); **T6** execution-sensitivity tags on paired-delta; **T7**
+concept-drift PSI watchpoint (one-shot, auto-re-arming). **T9** (market-
+anchored-alpha runtime shadow) **QUEUED** as Hygiene #11 + a ship spec
+(`docs/operational/market-anchored-alpha-runtime-shadow.md`) — it unblocks
+the T8 fleet arm; held for sign-off (live signal pipeline). **Cert verdict
+blind spot fixed**: `_gate_verdict` now runs a sweep-aware *tighten* check
+before the current-blocked-N early-return, so a loose gate that blocks ~0
+today still RETUNEs when a tighter sweep threshold blocks a materially -EV
+cohort. Re-run surfaced **8 tighten RETUNEs** the old logic missed —
+`gate_max_base_fv`→0.95 (de-risks Hygiene #10: the cert no longer says KEEP)
+plus several OVERLAPPING early-inning/low-total gates (don't sum). Full
+suite 1767 passed. Prior review **2026-06-14** below.
+
 Last roadmap review: **2026-06-14** (week-log audit of 06-07→06-13, plus
 acting on the resulting task list). **Findings:** (1) Calibrator-enforce
 blocked net-winning would-bets all 7 days (≈−$94 cumulative would-block
