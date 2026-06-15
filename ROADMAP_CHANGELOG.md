@@ -39,8 +39,17 @@ before the current-blocked-N early-return, so a loose gate that blocks ~0
 today still RETUNEs when a tighter sweep threshold blocks a materially -EV
 cohort. Re-run surfaced **8 tighten RETUNEs** the old logic missed —
 `gate_max_base_fv`→0.95 (de-risks Hygiene #10: the cert no longer says KEEP)
-plus several OVERLAPPING early-inning/low-total gates (don't sum). Full
-suite 1767 passed. Prior review **2026-06-14** below.
+plus several OVERLAPPING early-inning/low-total gates (don't sum). **Then
+brought the Hygiene #5 window-reversal guard INTO the cert tighten verdict**
+(recompute the blocked cohort on the trailing half of session-dates;
+three-state durable / window_reversal / unvalidated). It immediately caught
+`gate_min_current_total`→6 as a **reversal** (full window −12.5% but recent
+half **+4.5%** on n=57 — the exact 4→5 lifetime-reversal the audit flagged),
+plus `runs_needed_max` and `fv_ask_gap_max`, all downgraded to
+`review_required`; only `gate_max_base_fv`→0.95 and `gate_min_inning`→6 stay
+DURABLE @ medium (both match the gate_counterfactual). So the cert's tighten
+verdicts now self-validate instead of surfacing in-sample mirages at face
+value. Full suite 1768 passed. Prior review **2026-06-14** below.
 
 Last roadmap review: **2026-06-14** (week-log audit of 06-07→06-13, plus
 acting on the resulting task list). **Findings:** (1) Calibrator-enforce
