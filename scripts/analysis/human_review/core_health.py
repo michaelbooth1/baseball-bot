@@ -660,7 +660,7 @@ def _shadow_clv_health(
         "verdict", "n_unique_paths", "n_settled_with_path",
         "mean_mid_drift_120s", "mean_shadow_clv_120s", "corr_drift_vs_win",
         "market_knew_share", "model_wrong_share", "n_losses_settled",
-        "by_raw_fv_band",
+        "by_raw_fv_band", "tape_subverdict", "tape_decomposition",
     ):
         payload[k] = report.get(k)
 
@@ -679,14 +679,36 @@ def _shadow_clv_health(
         wrong = report.get("model_wrong_share")
         clv = report.get("mean_shadow_clv_120s")
         if verdict == "ADVERSE_SELECTION":
+            # The tape layer disambiguates the fix: INFORMED -> market-anchored
+            # model / be the maker; CHASING -> cheap entry-timing / liquidity.
+            sub = report.get("tape_subverdict")
+            td = report.get("tape_decomposition") or {}
+            if sub == "CHASING":
+                tape_clause = (
+                    f" TAPE = CHASING: {_pct(td.get('flat_share'))} of adverse "
+                    f"losses had a FLAT tape (no real trades), pop. flat-tape "
+                    f"{_pct(td.get('population_flat_tape_share'))} -- this is "
+                    "quote-drift in thin books, NOT informed flow. Fix is cheap "
+                    "entry-timing / liquidity-aware execution, NOT a "
+                    "market-anchored model."
+                )
+            elif sub == "INFORMED":
+                tape_clause = (
+                    f" TAPE = INFORMED: {_pct(td.get('informed_share'))} of "
+                    "adverse losses had real net selling against us -- the "
+                    "market knew; a market-anchored model / being the maker is "
+                    "the lever."
+                )
+            else:
+                tape_clause = (
+                    f" TAPE = {sub} (cross-check tape_decomposition before "
+                    "choosing a market-anchored vs entry-timing fix)."
+                )
             payload["alerts"].append(
                 f"shadow-CLV: ADVERSE_SELECTION on {n_settled} settled placed "
-                f"candidates -- {_pct(knew)} of losses drift away from us "
-                f"within 2 min (market-knew) vs {_pct(wrong)} flat "
-                f"(model-wrong); mean shadow-CLV {_cents(clv)}. The selection "
-                "residual is at least partly market-side -- a market/"
-                "selection-aware lever (market-anchored alpha, per-line stake, "
-                "faster exit) can close it; better smoothing alone cannot."
+                f"candidates -- {_pct(knew)} of losses drift away within 2 min "
+                f"vs {_pct(wrong)} flat; mean shadow-CLV {_cents(clv)}."
+                + tape_clause
             )
         else:
             payload["alerts"].append(

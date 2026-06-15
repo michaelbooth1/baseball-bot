@@ -72,7 +72,8 @@ operator should read next. Use this to triage; full text is below.
 | 8 | UNDER per-line calibration | Re-run `--per-line-min-rows` for `--side under` once data supports it | **Deferred 2026-06-11 with evidence**: per-line UNDER is overfit on current counterfactual-label data (held-out logloss 0.813 vs 0.711 pooled; line-5.5 isotonic maps raw 0.05→0.82). Revisit when real UNDER paper outcomes accumulate (B4 runway). | B4 sample growth |
 | 9 | Calibrator-enforce floor `enforce_min_raw` 0.90→0.95 | One-line config (`signal_config.py` or override file) | **Recommended by the 06-14 audit, held for evidence.** Triple-corroborated: edge_shaving deep-dive verdict JUSTIFIED@0.95 ([0.95,1.0) = −17% ROI correctly blocked, [0.90,0.95) ~breakeven so shouldn't be shrunk); `L_enforce_min_raw_095` +$3.83 (COLLECTING); the daily "muting winners" alert (≈−$94/wk would-block, 7/7 days). Caveat: the day-level would-block cohort is noisier than the 30d aggregate (06-13 showed both bands net-negative — see the new band-split diagnostic). | More `L` evidence (firms on live re-entry) + sign-off |
 | 10 | Gate `gate_max_base_fv` 0.99→0.95 | `promote.py gate-threshold` | **Recommended by the 06-14 audit, held for sign-off.** Cert's own sweep + gate_counterfactual + post-calibrator window all agree (+$73/30d, +$152 lifetime, no window-reversal; newly-blocked 0.95–0.99 band = 75 filled bets @ −15.8%). The cert's nominal `KEEP` verdict is a heuristic artifact — it only inspects the current threshold (3 blocked) and ignores its own sweep. The `Q_max_base_fv_095` fleet arm (2026-06-15) now accrues FV-level paired-delta evidence on it. | Live re-entry (filled-bet evidence) + sign-off |
-| 11 | Market-anchored-alpha runtime shadow (unblocks T8 fleet arm) | 7-file live-pipeline ship (shadow only) | **🟦 QUEUED 2026-06-15** — full ship spec at [docs/operational/market-anchored-alpha-runtime-shadow.md](docs/operational/market-anchored-alpha-runtime-shadow.md). Motivated by T1 shadow-CLV's ADVERSE_SELECTION finding (the residual is market-side → a market-anchored model can close it). Wire **`no_score_drift` + `mid_no_vig` only** (the one OOS-positive arm, CI [0.47, 20.37]; `score_event` is OOS-negative — excluded by construction) into the runtime in **shadow** (logs `fair_value_market_anchored`, no decision change), mirroring the Stage-1 Alt-A shadow pattern. Then add fleet arm `R_market_anchored_nsd` to get live-fire paired-delta evidence. | Operator sign-off (touches live signal pipeline); sequence on live re-entry |
+| 12 | Entry-timing / liquidity-aware execution (the response to the CHASING finding) | Liquidity/quiet-book entry filter | **🔼 NEW 2026-06-15, now the top execution lever.** The shadow-CLV tape layer found the residual is **CHASING**: 97.7% of placed bets enter on a FLAT tape (no trades in 30s) into thin/wide books, and the 2-min adverse drift is quote-only. So the fix is cheap **execution-side**, not a model: don't bet into thin/quiet/wide books (liquidity floor, recent-trade-activity filter), wait for quote confirmation, and lean on the 06-04 `--max-limit-gap-below-ask` fill-gap cap. Scope the filter from the tape features (`trades_last_30s_count`, spread, `seconds_since_last_trade`). | Design the filter + live re-entry to measure |
+| 11 | Market-anchored-alpha runtime shadow (unblocks T8 fleet arm) | 7-file live-pipeline ship (shadow only) | **🟦 QUEUED but ⬇️ DE-PRIORITIZED 2026-06-15.** Spec: [docs/operational/market-anchored-alpha-runtime-shadow.md](docs/operational/market-anchored-alpha-runtime-shadow.md). **Premise weakened:** the tape layer showed the adverse selection is **CHASING, not informed flow** (0/108 adverse losses had real selling against us), so a market-anchored "respond to informed flow" model is the WRONG lever — see Hygiene #12. What survives is only the narrow OOS-positive `no_score_drift`+`mid_no_vig` *calibration* improvement; keep this as that modest lever, below #12. | Operator sign-off; de-prioritized below Hygiene #12 |
 
 ### Research findings
 
@@ -86,13 +87,16 @@ Last dashboard refresh: **2026-06-11**. Refresh after each ship.
 
 ---
 
-Last reviewed: **2026-06-15** (paper-window optimization sprint + cert fix:
-shipped the T1 shadow-CLV collector — residual is **ADVERSE_SELECTION** —
-guarded fleet fold-in (Hygiene #6 closed), B4 marked dormant, queued the
-market-anchored-alpha shadow ship (Hygiene #11, unblocks T8), and fixed the
-cert verdict blind spot — now surfaces 8 tighten RETUNEs incl.
-`gate_max_base_fv`→0.95). Full detail and every prior review are in
-**[ROADMAP_CHANGELOG.md](ROADMAP_CHANGELOG.md#review-log)**.
+Last reviewed: **2026-06-15** (paper-window optimization sprint + cert fix +
+tape layer). Shipped the T1 shadow-CLV collector, then a **tape / real-trade
+layer** that flipped the strategic read: the residual is **CHASING, not
+informed flow** (97.7% of bets enter on a flat tape; 0/108 adverse losses had
+selling against us) → market-anchored model (Hygiene #11) **de-prioritized**,
+new **Hygiene #12 entry-timing/liquidity execution** is the top lever. Also:
+guarded fleet fold-in (Hygiene #6 closed), B4 dormant, and fixed the cert
+verdict blind spot + window-reversal guard (2 durable tighten RETUNEs:
+`gate_max_base_fv`→0.95, `gate_min_inning`→6; reversals demoted). Full detail
+in **[ROADMAP_CHANGELOG.md](ROADMAP_CHANGELOG.md#review-log)**.
 
 ## Recently completed
 
@@ -746,6 +750,31 @@ _Accumulating debt; not blocking, but worth closing on a regular cadence so the 
     marginally-significant walk-forward window, so it needs operator
     sign-off and is best sequenced on live re-entry (shadow evidence on
     real fills, not paper). Effort M–L. Files: see the spec doc.
+    **⬇️ De-prioritized 2026-06-15** below Hygiene #12 — the tape layer
+    (below) refuted its "informed flow" premise.
+
+12. **Entry-timing / liquidity-aware execution — NEW 2026-06-15, the
+    response to the CHASING finding.** The shadow-CLV **tape layer**
+    (`build_shadow_clv.py`, joins each placed candidate to its real-trade
+    `tape_captures` by `(config_label, bet_id)`) disambiguated the
+    `ADVERSE_SELECTION` verdict: it is **CHASING, not informed flow**.
+    Evidence — **97.7% of placed bets entered on a FLAT tape** (zero trades
+    in the prior 30s), and of 108 adverse-drift losses **0 had real net
+    selling against us** (`tape_subverdict = CHASING`,
+    `_shadow_clv_health` surfaces it). So when we bet and the market drifts
+    against us in 2 min, it is **quote movement in a thin/illiquid book**,
+    not the market knowing something — we are entering quiet, wide books and
+    the quote drifts off us (consistent with the −2.1c mean shadow-CLV).
+    **The fix is execution-side and cheap**, not a model: a liquidity /
+    quiet-book entry filter (skip when `trades_last_30s_count == 0` /
+    `seconds_since_last_trade` is large / spread is wide), wait for quote
+    confirmation, and the 2026-06-04 `--max-limit-gap-below-ask` fill-gap cap
+    is the first related slice. Design the filter thresholds from the tape
+    feature distributions; measure on live re-entry. This **outranks the
+    market-anchored model (Hygiene #11)** — that lever answers a problem
+    (informed flow) we don't have. Files: `build_shadow_clv.py` (diagnostic,
+    shipped), `scripts/trading/live_pricing.py` / `signal_pipeline*.py`
+    (the eventual filter, sign-off + re-entry gated).
 
 ## Research findings
 

@@ -51,6 +51,13 @@ def _write_outcomes(root, date, outcomes):
     _write_jsonl(p, outcomes)
 
 
+def _write_tape(root, date, bet_id, features):
+    p = root / "tape_captures" / date / f"{bet_id}.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"bet_id": bet_id, "features": features}),
+                 encoding="utf-8")
+
+
 # A favorable path: mid rises 0.70 -> 0.76 over 120s.
 FAVORABLE = [(0, 0.68, 0.72), (30, 0.70, 0.74), (60, 0.72, 0.76), (120, 0.74, 0.78)]
 # An adverse path: mid falls 0.70 -> 0.64.
@@ -181,6 +188,59 @@ class ParseCaptureTests(unittest.TestCase):
         self.assertEqual(d["won_favorable"], 10)
         self.assertAlmostEqual(s["market_knew_share"], 21 / 24, places=4)
         self.assertEqual(s["verdict"], "ADVERSE_SELECTION")
+
+
+class TapeLayerTests(unittest.TestCase):
+
+    def test_tape_direction_classifier(self):
+        self.assertEqual(m._tape_direction(None), "no_tape")
+        self.assertEqual(m._tape_direction({"trades_last_30s_count": None}), "no_tape")
+        self.assertEqual(m._tape_direction({"trades_last_30s_count": 0}), "flat_tape")
+        self.assertEqual(
+            m._tape_direction({"trades_last_30s_count": 3, "signed_volume_last_30s": -5.0}),
+            "informed_against",
+        )
+        self.assertEqual(
+            m._tape_direction({"trades_last_30s_count": 3, "signed_volume_last_30s": 5.0}),
+            "informed_with",
+        )
+
+    def test_tape_subverdict(self):
+        self.assertEqual(m._tape_subverdict(5, 0, 5), "INSUFFICIENT_TAPE")   # < 10
+        self.assertEqual(m._tape_subverdict(20, 1, 19), "CHASING")
+        self.assertEqual(m._tape_subverdict(20, 15, 2), "INFORMED")
+        self.assertEqual(m._tape_subverdict(20, 8, 8), "MIXED")
+
+    def test_build_classifies_flat_tape_as_chasing(self):
+        with tempfile.TemporaryDirectory() as td:
+            live = Path(td) / "live_trading"
+            outs = []
+            # 12 adverse-drift LOSERS, each with a FLAT tape at signal.
+            for gp in range(1, 13):
+                _write_inline_capture(
+                    live, "2026-06-13", bet_id=f"a{gp}", game_pk=gp, line="9.5",
+                    token=f"T{gp}", ts=f"2026-06-13T22:00:{gp:02d}.0Z",
+                    entry_ask=0.70, fv=0.96, points=ADVERSE,
+                )
+                outs.append({"game_pk": gp, "line": "9.5", "over_hit": False})
+                _write_tape(live, "2026-06-13", f"a{gp}",
+                            {"trades_last_30s_count": 0, "signed_volume_last_30s": None})
+            # winners to clear the verdict floor -> ADVERSE_SELECTION.
+            for gp in range(13, 23):
+                _write_inline_capture(
+                    live, "2026-06-13", bet_id=f"w{gp}", game_pk=gp, line="9.5",
+                    token=f"T{gp}", ts=f"2026-06-13T22:00:{gp:02d}.0Z",
+                    entry_ask=0.70, fv=0.96, points=FAVORABLE,
+                )
+                outs.append({"game_pk": gp, "line": "9.5", "over_hit": True})
+            _write_outcomes(live, "2026-06-13", outs)
+            _, s = m.build(data_dir=Path(td), since=None, until=None)
+            self.assertEqual(s["verdict"], "ADVERSE_SELECTION")
+            self.assertEqual(s["tape_subverdict"], "CHASING")
+            td_ = s["tape_decomposition"]
+            self.assertEqual(td_["flat_tape"], 12)
+            self.assertEqual(td_["informed_against"], 0)
+            self.assertAlmostEqual(td_["flat_share"], 1.0)
 
 
 if __name__ == "__main__":

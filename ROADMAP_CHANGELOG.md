@@ -49,7 +49,19 @@ plus `runs_needed_max` and `fv_ask_gap_max`, all downgraded to
 `review_required`; only `gate_max_base_fv`→0.95 and `gate_min_inning`→6 stay
 DURABLE @ medium (both match the gate_counterfactual). So the cert's tighten
 verdicts now self-validate instead of surfacing in-sample mirages at face
-value. Full suite 1768 passed. Prior review **2026-06-14** below.
+value. **Shadow-CLV tape layer** (real-trade join): added a tape /
+real-trade layer to `build_shadow_clv.py` (joins each placed candidate to
+its `tape_captures` by `(config_label, bet_id)`) to disambiguate the
+`ADVERSE_SELECTION` verdict — and it **flipped the strategic read**:
+`tape_subverdict = CHASING`, because **97.7% of placed bets enter on a FLAT
+tape** and **0 of 108 adverse-drift losses had real selling against us**. The
+adverse drift is quote movement in thin/illiquid books, NOT informed flow.
+Consequences: the market-anchored model (Hygiene #11) is **de-prioritized**
+(its "informed flow" premise doesn't hold), and a new **Hygiene #12 —
+entry-timing / liquidity-aware execution** becomes the top execution lever
+(cheap, not a model). The `_shadow_clv_health` alert was corrected (it had
+pointed at a market-anchored lever). Full suite 1771 passed. Prior review
+**2026-06-14** below.
 
 Last roadmap review: **2026-06-14** (week-log audit of 06-07→06-13, plus
 acting on the resulting task list). **Findings:** (1) Calibrator-enforce

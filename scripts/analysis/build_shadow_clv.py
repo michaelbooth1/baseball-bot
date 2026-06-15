@@ -74,6 +74,17 @@ MIN_SETTLED_FOR_VERDICT = 20
 ADVERSE_CORR_THRESHOLD = 0.15   # corr(mid_drift, won) this high => drift predicts outcome
 MODEL_SIDE_CORR_CEILING = 0.10  # near-zero corr => market is as blind as we are
 
+# Tape (real-trade) layer: disambiguate the adverse-selection finding. A 2-min
+# adverse MID drift can be (a) INFORMED flow -- real signed trades hitting our
+# side at signal -- or (b) CHASING -- a FLAT tape (no recent trades) where the
+# quote just drifts in a thin/illiquid book and we entered into it. The fork
+# decides the fix: INFORMED -> market-anchored model / be the maker; CHASING ->
+# cheap entry-timing / liquidity-aware execution (no model). Side note for
+# OVER bets: net SELLING of the Over token (signed_volume < 0) is flow AGAINST
+# us; net buying is flow WITH us.
+TAPE_MIN_FOR_SUBVERDICT = 10
+TAPE_SUBVERDICT_SHARE = 0.60
+
 # Roots whose book_captures we never treat as a config arm.
 EXCLUDED_ROOT_NAMES = ("paper_trading",)
 
@@ -143,6 +154,82 @@ def _load_outcome_lookup(roots: List[Path]) -> Dict[Tuple[Any, str], bool]:
             except (OSError, json.JSONDecodeError):
                 continue
     return lookup
+
+
+def _load_tape_index(
+    roots: List[Path], *, since: Optional[str], until: Optional[str]
+) -> Dict[Tuple[str, str], Dict[str, Any]]:
+    """Index PLACED tape captures by (config_label, bet_id) -> features.
+
+    Placed (non-`skip_`) tape files carry the SAME bet_id as the book capture
+    (e.g. 2026-04-28_823390_8.5_0001), so the join is exact. Skip captures use
+    a different suffix and don't correspond to a placed candidate, so they're
+    excluded. There are ~1.3k placed tape files total -- cheap to read."""
+    idx: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for root in roots:
+        label = _config_label(root)
+        base = root / "tape_captures"
+        if not base.is_dir():
+            continue
+        for date_dir in sorted(base.glob("20*-*-*")):
+            if not date_dir.is_dir():
+                continue
+            date = date_dir.name
+            if since and date < since:
+                continue
+            if until and date > until:
+                continue
+            for f in date_dir.glob("*.json"):
+                if f.name.startswith("skip_"):
+                    continue
+                try:
+                    d = json.loads(f.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                bid = d.get("bet_id")
+                if bid:
+                    idx[(label, str(bid))] = d.get("features") or {}
+    return idx
+
+
+def _tape_direction(feat: Optional[Dict[str, Any]]) -> str:
+    """Classify the tape at signal for an OVER bet:
+      flat_tape       -- no trades in the last 30s (we entered a quiet book)
+      informed_against-- recent NET SELLING of the Over token (flow against us)
+      informed_with   -- recent NET BUYING (flow with us)
+      flow_neutral    -- recent trades, net zero
+      flow_undirected -- recent trades but no signed volume recorded
+      no_tape         -- no tape capture joined
+    """
+    if not feat:
+        return "no_tape"
+    cnt = feat.get("trades_last_30s_count")
+    if cnt is None:
+        return "no_tape"
+    if cnt == 0:
+        return "flat_tape"
+    sv = feat.get("signed_volume_last_30s")
+    if sv is None:
+        return "flow_undirected"
+    if sv < 0:
+        return "informed_against"
+    if sv > 0:
+        return "informed_with"
+    return "flow_neutral"
+
+
+def _tape_subverdict(n_classified: int, informed: int, flat: int) -> str:
+    """Refine ADVERSE_SELECTION into INFORMED vs CHASING from the tape split of
+    the adverse-drift losses."""
+    if n_classified < TAPE_MIN_FOR_SUBVERDICT:
+        return "INSUFFICIENT_TAPE"
+    ishare = informed / n_classified
+    fshare = flat / n_classified
+    if ishare >= TAPE_SUBVERDICT_SHARE:
+        return "INFORMED"   # real flow against us -> market-anchored / pivot
+    if fshare >= TAPE_SUBVERDICT_SHARE:
+        return "CHASING"    # flat tape -> cheap entry-timing / liquidity lever
+    return "MIXED"
 
 
 # --------------------------------------------------------------------------
@@ -465,6 +552,47 @@ def aggregate(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
     summary["verdict"] = _verdict(summary)
+
+    # Tape decomposition: is the adverse drift INFORMED (real flow against us)
+    # or CHASING (flat tape -- thin book, quote-only drift)? Computed on the
+    # adverse-drift settled LOSSES (the market-knew cohort), plus a
+    # population-level flat-tape share for context.
+    def _dir_counts(items: List[Dict[str, Any]]) -> Dict[str, int]:
+        out: Dict[str, int] = {}
+        for r in items:
+            out[r.get("tape_direction", "no_tape")] = (
+                out.get(r.get("tape_direction", "no_tape"), 0) + 1
+            )
+        return out
+
+    adv_losses = [
+        r for r in settled
+        if (r.get("won") is False) and r.get("adverse_sign") == "adverse"
+    ]
+    classified = [
+        r for r in adv_losses
+        if r.get("tape_direction") not in (None, "no_tape")
+    ]
+    n_cls = len(classified)
+    informed = sum(1 for r in classified if r["tape_direction"] == "informed_against")
+    flat = sum(1 for r in classified if r["tape_direction"] == "flat_tape")
+    with_tape_all = [r for r in with_path if r.get("tape_direction") not in (None, "no_tape")]
+    flat_all = sum(1 for r in with_tape_all if r["tape_direction"] == "flat_tape")
+    summary["tape_decomposition"] = {
+        "n_paths_with_tape": len(with_tape_all),
+        "population_flat_tape_share": (
+            flat_all / len(with_tape_all) if with_tape_all else None
+        ),
+        "n_adverse_losses": len(adv_losses),
+        "n_adverse_losses_with_tape": n_cls,
+        "adverse_loss_by_tape_direction": _dir_counts(adv_losses),
+        "informed_against": informed,
+        "flat_tape": flat,
+        "informed_share": (informed / n_cls) if n_cls else None,
+        "flat_share": (flat / n_cls) if n_cls else None,
+    }
+    summary["tape_subverdict"] = _tape_subverdict(n_cls, informed, flat)
+
     summary["thresholds"] = {
         "flat_threshold": FLAT_THRESHOLD,
         "horizons_s": list(HORIZONS_S),
@@ -547,6 +675,25 @@ def render_markdown(summary: Dict[str, Any], generated_at: str) -> str:
             f"| {w} | {d[f'{w}_favorable']} | {d[f'{w}_adverse']} | {d[f'{w}_flat']} |"
         )
     L.append("")
+    L.append("## Tape decomposition (informed flow vs chasing)")
+    td = summary.get("tape_decomposition") or {}
+    L.append(
+        f"**Tape subverdict: {summary.get('tape_subverdict', 'n/a')}** — of the "
+        f"{td.get('n_adverse_losses_with_tape', 0)} adverse-drift losses with a "
+        f"tape capture, **{_pct(td.get('informed_share'))} INFORMED** (real net "
+        f"selling against us = market-knew) vs **{_pct(td.get('flat_share'))} "
+        f"CHASING** (flat tape — thin book, quote-only drift). "
+        f"Population flat-tape share at signal: "
+        f"**{_pct(td.get('population_flat_tape_share'))}** "
+        f"(n={td.get('n_paths_with_tape', 0)})."
+    )
+    L.append(
+        "_INFORMED → market-anchored model / be the maker; "
+        "CHASING → cheap entry-timing / liquidity-aware execution (no model)._"
+    )
+    L.append("")
+    L.append(f"- adverse-loss tape directions: {td.get('adverse_loss_by_tape_direction')}")
+    L.append("")
     L.append("## By raw-FV band")
     L.append("| band | n | win rate | mean drift | mean loss drift |")
     L.append("|---|---:|---:|---:|---:|")
@@ -588,6 +735,17 @@ def build(
             )
             if r is not None:
                 rows.append(r)
+
+    # Tape layer: join each placed candidate to its real-trade capture by
+    # (config_label, bet_id) and classify the tape direction at signal.
+    tape_index = _load_tape_index(roots, since=since, until=until)
+    for r in rows:
+        feat = tape_index.get((r.get("config_label"), str(r.get("bet_id"))))
+        r["tape_trades_30s"] = feat.get("trades_last_30s_count") if feat else None
+        r["tape_signed_vol_30s"] = feat.get("signed_volume_last_30s") if feat else None
+        r["tape_ltp_minus_ask"] = feat.get("ltp_minus_ask_last_3_trades") if feat else None
+        r["tape_direction"] = _tape_direction(feat)
+
     summary = aggregate(rows)
     return rows, summary
 

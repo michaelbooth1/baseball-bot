@@ -5,6 +5,19 @@ execute spec. It touches the **live signal pipeline** (shadow only, no
 decision change), so it needs operator sign-off before merging, ideally on
 live re-entry rather than mid paper-only week.
 
+> **⚠️ PREMISE WEAKENED 2026-06-15 (tape layer).** This ship was motivated
+> by the shadow-CLV `ADVERSE_SELECTION` verdict read as a *market-side*
+> residual. The tape / real-trade layer then showed the adverse drift is
+> **CHASING, not informed flow**: 97.7% of placed bets had a FLAT tape at
+> signal and **0 of 108** adverse-drift losses had real net selling against
+> us (`tape_subverdict = CHASING`). So the strategic justification for this
+> model — "respond to informed flow" — does **not** hold; the right response
+> is cheap entry-timing / liquidity-aware execution (ROADMAP Hygiene #12),
+> not a market-anchored model. What survives independently is the narrow,
+> OOS-positive `no_score_drift` + `mid_no_vig` *calibration* improvement —
+> keep this spec only as that modest calibration lever, **de-prioritized**
+> below Hygiene #12. Do not build it as the answer to the residual.
+
 **Why:** the T1 shadow-CLV collector found the selection-driven residual is
 **ADVERSE_SELECTION** (≈62% of losses drift away from us within 2 min — the
 market re-prices faster than we do). The lever that can close a market-side
