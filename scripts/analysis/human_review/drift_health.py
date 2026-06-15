@@ -242,6 +242,53 @@ def _concept_drift_health(
     for alert_text in report.get("alerts") or []:
         payload["alerts"].append(str(alert_text))
 
+    # T7 (2026-06-15): PSI watchpoint. After the 2026-06-07->10 live-root gap,
+    # concept-drift ran on too few rows (insufficient_data) exactly when the
+    # calibrator-staleness question needed it. With the continuity engine
+    # running the trailing window refills; fire a ONE-TIME nudge the first day
+    # PSI becomes computable so the operator reads the verdict (it gates the
+    # enforce_min_raw + Stage-1 decisions). A marker file makes it one-shot
+    # and auto-re-arms if PSI goes insufficient again (a future gap).
+    thresholds = report.get("thresholds") or {}
+    cur_window = report.get("current_window") or {}
+    computable = [
+        f for f, v in feature_verdicts.items()
+        if str(v.get("verdict") or "") not in ("insufficient_data", "", "None")
+    ]
+    psi_computable = bool(computable)
+    payload["psi_watchpoint"] = {
+        "current_window_n_rows": cur_window.get("n_rows"),
+        "min_rows_per_feature": thresholds.get("min_rows_per_feature"),
+        "n_computable_features": len(computable),
+        "n_features": len(feature_verdicts),
+        "psi_computable": psi_computable,
+    }
+    marker = report_path.parent / ".psi_watchpoint_fired"
+    if psi_computable and feature_verdicts:
+        if not marker.exists():
+            payload["alerts"].append(
+                f"concept-drift PSI is computable again "
+                f"({len(computable)}/{len(feature_verdicts)} features; current "
+                f"window {cur_window.get('n_rows')} rows >= "
+                f"{thresholds.get('min_rows_per_feature')}). After the "
+                "live-root gap this is the first day the calibrator-staleness "
+                "question is answerable -- read "
+                "concept_drift_health.feature_verdicts (esp. "
+                "stage2_run_env_delta / team_offense_delta) before acting on "
+                "enforce_min_raw or the Stage-1 decision."
+            )
+            try:
+                marker.write_text(session_date, encoding="utf-8")
+            except OSError:
+                pass
+    else:
+        # Re-arm the one-shot for the next recovery after a gap.
+        try:
+            if marker.exists():
+                marker.unlink()
+        except OSError:
+            pass
+
     return payload
 
 

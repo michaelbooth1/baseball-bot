@@ -139,10 +139,35 @@ B3. **Side-aware session JSON + reports.** *Shipped (foundation)*.
     naturally without further plumbing. Each compact bet row
     surfaces `side` for the markdown table.
 
-B4. **UNDER paper-mode validation period.** *Clock running:
-    4/60 sessions as of 2026-06-10.* Evidence accumulates via the
-    `M_under_paper` fleet preset (running `--under-mode paper`
-    daily since 2026-05-30). Status notes:
+B4. **UNDER paper-mode validation period.** *🟡 DORMANT as of
+    2026-06-15 (operator decision, T5).* Was 8 UNDER bets in ~2 weeks
+    against a 150-settled / 60-session bar — ~a year away at that pace.
+    **The limiter is UNDER signal QUALITY, not session count:**
+    score_event UNDER FV is near-flat (~0.30), per-line UNDER overfits
+    (deferred 2026-06-11), and under-pair liquidity is ~49%, so the
+    honest enforce-mode (2026-06-11 fix) correctly emits few defensible
+    bets. Forcing volume can't clear B4's ROI/calibration conditions —
+    it would only churn the verdict ladder — and loosening emission
+    would either re-break FV honesty or add low-quality bets that fail
+    the quality gates anyway. So B4 is marked **DORMANT**:
+    `_under_paper_b4_milestone_health` now reports `status=DORMANT`
+    (preserving the underlying ladder + per-condition progress in the
+    JSON) and suppresses the verdict-ladder Notes alerts
+    (`B4_MILESTONE_DORMANT=True`). `M_under_paper` keeps running so
+    honest UNDER data accrues passively. **Re-activate** (flip the flag
+    to `False`) when UNDER signal quality improves — a discriminating
+    UNDER calibrator (e.g. the no_score_drift market-anchored alpha the
+    2026-06-14 audit found OOS-positive) or higher under-pair liquidity.
+    Evidence had accumulated via the `M_under_paper` fleet preset
+    (running `--under-mode paper` daily since 2026-05-30). Status notes:
+    - **DONE**: Phase C-paper ships `--under-mode paper` + the 5
+      symmetric UNDER gate stack (extreme_edge, fv_ask_gap,
+      max_base_fv, min_inning, min_entry_ask).
+    - **DONE**: B4 milestone dashboard shipped
+      (`_under_paper_b4_milestone_health`, verdict ladder
+      `NOT_EMITTING → INSUFFICIENT_SESSIONS → ... → READY`).
+    - **DONE 2026-06-10**: B4 scanner blind spot fixed — the block
+      now also walks fleet roots (`B4_EXTRA_PAPER_SESSION_ROOTS`);
     - **DONE**: Phase C-paper ships `--under-mode paper` + the 5
       symmetric UNDER gate stack (extreme_edge, fv_ask_gap,
       max_base_fv, min_inning, min_entry_ask).

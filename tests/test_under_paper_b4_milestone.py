@@ -187,6 +187,10 @@ class B4VerdictLadderTests(unittest.TestCase):
         # production B4_EXTRA_PAPER_SESSION_ROOTS default) so tests
         # stay isolated from the real data/paper_M_under_paper root.
         kwargs.setdefault("extra_paper_sessions_dirs", ())
+        # The verdict-ladder tests exercise the underlying ladder logic, which
+        # is preserved under the T5 DORMANT short-circuit; default dormant off
+        # here so they assert the ladder (a dedicated test covers DORMANT).
+        kwargs.setdefault("dormant", False)
         return _under_paper_b4_milestone_health(
             session_date=ANCHOR,
             paper_sessions_dir=self.paper_dir,
@@ -615,6 +619,7 @@ class AlertEmissionGateTests(unittest.TestCase):
             extra_paper_sessions_dirs=(),
             output_root=self.output_root,
             min_n_for_failure_alert=1000,
+            dormant=False,
         )
         self.assertEqual(payload["status"], "SUB_ZERO_ROI")
         # Status set; alert suppressed by min_n.
@@ -635,9 +640,33 @@ class AlertEmissionGateTests(unittest.TestCase):
             extra_paper_sessions_dirs=(),
             output_root=self.output_root,
             min_n_for_failure_alert=99999,
+            dormant=False,
         )
         self.assertEqual(payload["status"], "READY")
         self.assertEqual(len(payload["alerts"]), 1)
+
+    def test_dormant_short_circuits_ladder_and_suppresses_alerts(self):
+        """T5 (2026-06-15): when dormant, even a READY-grade sample reports
+        status=DORMANT, preserves the underlying ladder verdict, and emits
+        NO verdict-ladder alerts (the limiter is UNDER signal quality, not
+        session count, so the clock should stop nagging)."""
+        _seed_sessions(
+            paper_sessions_dir=self.paper_dir,
+            n_sessions=60, bets_per_session=3, won_count=3,
+            entry_ask=0.50, fair_value=1.0,
+        )
+        payload = _under_paper_b4_milestone_health(
+            session_date=ANCHOR,
+            paper_sessions_dir=self.paper_dir,
+            live_sessions_dir=self.live_dir,
+            extra_paper_sessions_dirs=(),
+            output_root=self.output_root,
+            dormant=True,
+        )
+        self.assertEqual(payload["status"], "DORMANT")
+        self.assertTrue(payload["dormant"])
+        self.assertEqual(payload["underlying_status"], "READY")
+        self.assertEqual(payload["alerts"], [])
 
 
 # ----------------------------------------------------------------------

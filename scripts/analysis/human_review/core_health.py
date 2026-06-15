@@ -16,6 +16,8 @@ from .constants import (
     LOSS_ATTRIBUTION_STALE_AGE_DAYS,
     LOSS_ATTRIBUTION_NOTES_MIN_ABS_BIAS,
     LOSS_ATTRIBUTION_NOTES_MIN_SHARE,
+    SHADOW_CLV_STALE_AGE_DAYS,
+    SHADOW_CLV_MIN_SETTLED_FOR_ALERT,
 )
 from .helpers import (
     _load_json,
@@ -613,6 +615,85 @@ def _gate_counterfactual_health(
             "for this gate before changing the live threshold."
         )
         payload["alerts"].append("".join(msg_parts))
+    return payload
+
+
+def _shadow_clv_health(
+    *,
+    report_path: Path,
+    session_date: str,
+) -> Dict[str, Any]:
+    """T1: surface the shadow-CLV / post-signal market-path read.
+
+    The collector (build_shadow_clv.py) measures where the market goes in the
+    2 minutes after every PLACED candidate -- a fill-free CLV -- and splits our
+    settled LOSSES into market-knew (the market drifted away from us = adverse
+    selection) vs model-wrong (it stayed flat = overconfidence). This block
+    pulls the verdict + the headline decomposition into the daily review."""
+    payload: Dict[str, Any] = {
+        "artifact_path": str(report_path),
+        "artifact_present": report_path.exists(),
+        "alerts": [],
+    }
+    if not report_path.exists():
+        payload["artifact_error"] = (
+            "shadow_clv_summary missing; check the shadow_clv refresh step ran"
+        )
+        return payload
+    try:
+        report = _load_json(report_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        payload["artifact_error"] = f"failed to load: {exc}"
+        return payload
+
+    payload["artifact_generated_at_utc"] = report.get("generated_at_utc")
+    age = _artifact_age_days(report.get("generated_at_utc", ""), session_date)
+    payload["artifact_age_days"] = age
+    if age is not None and age > SHADOW_CLV_STALE_AGE_DAYS:
+        payload["alerts"].append(
+            f"shadow_clv_summary is {age:.1f}d old "
+            f"(> {SHADOW_CLV_STALE_AGE_DAYS}d threshold); rerun "
+            "build_shadow_clv or the daily refresh."
+        )
+
+    for k in (
+        "verdict", "n_unique_paths", "n_settled_with_path",
+        "mean_mid_drift_120s", "mean_shadow_clv_120s", "corr_drift_vs_win",
+        "market_knew_share", "model_wrong_share", "n_losses_settled",
+        "by_raw_fv_band",
+    ):
+        payload[k] = report.get(k)
+
+    n_settled = report.get("n_settled_with_path") or 0
+    verdict = report.get("verdict")
+    if n_settled >= SHADOW_CLV_MIN_SETTLED_FOR_ALERT and verdict in (
+        "ADVERSE_SELECTION", "MODEL_SIDE"
+    ):
+        def _pct(x: Any) -> str:
+            return f"{x * 100:.0f}%" if isinstance(x, (int, float)) else "n/a"
+
+        def _cents(x: Any) -> str:
+            return f"{x * 100:+.2f}c" if isinstance(x, (int, float)) else "n/a"
+
+        knew = report.get("market_knew_share")
+        wrong = report.get("model_wrong_share")
+        clv = report.get("mean_shadow_clv_120s")
+        if verdict == "ADVERSE_SELECTION":
+            payload["alerts"].append(
+                f"shadow-CLV: ADVERSE_SELECTION on {n_settled} settled placed "
+                f"candidates -- {_pct(knew)} of losses drift away from us "
+                f"within 2 min (market-knew) vs {_pct(wrong)} flat "
+                f"(model-wrong); mean shadow-CLV {_cents(clv)}. The selection "
+                "residual is at least partly market-side -- a market/"
+                "selection-aware lever (market-anchored alpha, per-line stake, "
+                "faster exit) can close it; better smoothing alone cannot."
+            )
+        else:
+            payload["alerts"].append(
+                f"shadow-CLV: MODEL_SIDE on {n_settled} settled -- losses show "
+                f"no adverse 2-min drift ({_pct(wrong)} flat); the residual "
+                "is model-side (overconfidence), not selection."
+            )
     return payload
 
 

@@ -30,6 +30,7 @@ from .constants import (
     B4_MILESTONE_DRIFT_ALERT_LOOKBACK_DAYS,
     B4_MILESTONE_DRIFT_PERSISTENCE_THRESHOLD,
     B4_MILESTONE_MIN_N_FOR_FAILURE_ALERT,
+    B4_MILESTONE_DORMANT,
 )
 
 from .helpers import (
@@ -946,6 +947,7 @@ def _under_paper_b4_milestone_health(
     drift_lookback_days: int = B4_MILESTONE_DRIFT_ALERT_LOOKBACK_DAYS,
     drift_persistence_threshold: int = B4_MILESTONE_DRIFT_PERSISTENCE_THRESHOLD,
     min_n_for_failure_alert: int = B4_MILESTONE_MIN_N_FOR_FAILURE_ALERT,
+    dormant: bool = B4_MILESTONE_DORMANT,
 ) -> Dict[str, Any]:
     """Phase C-paper follow-up (2026-05-27): B4 milestone tracker.
 
@@ -1178,6 +1180,29 @@ def _under_paper_b4_milestone_health(
         )
     payload["status"] = status
     payload["verdict_summary"] = summary
+
+    # T5 (2026-06-15): DORMANT short-circuit. The B4 limiter is UNDER signal
+    # QUALITY, not session count, so forcing volume can't clear it -- treating
+    # it as an active clock just emitted ~a year of INSUFFICIENT_SESSIONS
+    # noise. Preserve the underlying ladder + progress for anyone who looks,
+    # report status=DORMANT, and suppress the verdict-ladder Notes alerts.
+    if dormant:
+        payload["dormant"] = True
+        payload["underlying_status"] = status
+        payload["underlying_verdict_summary"] = summary
+        payload["status"] = "DORMANT"
+        payload["verdict_summary"] = (
+            "B4 is DORMANT (operator decision 2026-06-15): the limiter is "
+            "UNDER signal QUALITY, not session count -- score_event UNDER FV "
+            "is near-flat (~0.30), per-line UNDER overfits, under-pair "
+            "liquidity ~49%, so honest enforce-mode emits few defensible bets "
+            "(~8 in 2 weeks) and forcing volume would only churn the ladder. "
+            f"Underlying ladder still computed: {status}. M_under_paper keeps "
+            "running so honest UNDER data accrues passively; re-activate when "
+            "the UNDER calibrator discriminates (e.g. no_score_drift "
+            "market-anchored alpha) or liquidity rises."
+        )
+        return payload
 
     # ------------------------------------------------------------------
     # Alerts (Notes-feed emission). Only the actionable transitions

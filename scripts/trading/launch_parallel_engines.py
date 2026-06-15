@@ -131,34 +131,27 @@ PRESETS: Dict[str, List[str]] = {
     # audit's -28% ROI on n=14 was signal, not variance). Paired with
     # E_tight_edge's mirror result, the 0.15 floor is locally optimal.
     # Question closed; definition removed -- see git history.
-    "H_late_innings": [
-        # A_current but ban early-inning bets entirely. The 2026-05-25
-        # walk-forward cohort breakdown showed inn_4-5 = -22.1% ROI vs
-        # inn_6-7 = +53.2% and inn_8-9 = +133.7%. If H_late confirms,
-        # this is roadmap'd as a candidate gate-tightening for Active
-        # #1's READY-day shipping decisions.
-        "--prob-calibration-mode", "enforce",
-        "--stage1-shadow-empirical-mode", "shadow",
-        "--stage1-alt-a-scope-mode", "enforce",
-        "--under-emission-mode", "shadow",
-        "--quote-engine-mode", "shadow",
-        "--min-inning", "6",
-        "--min-inning-high-line", "6",
-    ],
-    "I_extreme_018": [
-        # A_current but with extreme_edge_max tightened from 0.22 to
-        # 0.18. Phase 6 prep for the 2026-06-07 TR19 re-calibration
-        # deadline; TR19's 0.22 cap was tuned around v1 Stage-3's edge
-        # distribution and the post-TR20 (v2) distribution likely needs
-        # a fresh threshold. Pairs with J_no_phantom_filter (cap at 1.0)
-        # to give a clean {off, current, tightened} sweep on one knob.
-        "--prob-calibration-mode", "enforce",
-        "--stage1-shadow-empirical-mode", "shadow",
-        "--stage1-alt-a-scope-mode", "enforce",
-        "--under-emission-mode", "shadow",
-        "--quote-engine-mode", "shadow",
-        "--extreme-edge-max", "0.18",
-    ],
+    # H_late_innings RETIRED 2026-06-15 (ran 2026-05-26 -> 2026-06-15,
+    # 18 shared days / 29 delta bets). Status at retirement: TRENDING
+    # NEGATIVE but NOT statistically conclusive (paired-delta vs A_current
+    # dNet -$52.24, Welch t=-0.65) -- so this is an operator-decision
+    # retirement to reclaim fleet attention, NOT a concluded result like
+    # E/G/N. Banning early innings (min-inning=6) removed good early bets
+    # too, so the paper proxy net-lost vs A_current. The underlying
+    # late-inning-tightening hypothesis stays OPEN and is tracked
+    # canonically by the walk-forward cert's gate_high_line_min_inning
+    # 5->6 RETUNE verdict on live filled bets -- the proper venue. Root
+    # added to FLEET_RETIRED_ROOT_NAMES so the paired-delta block stops
+    # emitting its verdict. Definition removed -- see git history.
+    # I_extreme_018 RETIRED 2026-06-15 (18 shared days / 29 delta bets).
+    # Status: TRENDING NEGATIVE, not conclusive (dNet -$21.84, t=-0.27).
+    # The extreme_edge_max lever is owned canonically -- 0.22 -> 0.30 was
+    # promoted live 2026-06-03 (walk-forward RETUNE), and J_no_phantom_filter
+    # still supplies the edge>0.30 (cap-off) counterfactual cohort. A 0.18
+    # (tighter-than-live) cap produced no distinct signal worth a dedicated
+    # arm. Retired by operator decision to reclaim a slot for the
+    # gate_max_base_fv decision arm (Q). Root added to
+    # FLEET_RETIRED_ROOT_NAMES. Definition removed -- see git history.
     "J_no_phantom_filter": [
         # A_current but extreme_edge_max effectively disabled (1.0). The
         # other side of the I_extreme_018 / TR19-tightening sweep. The
@@ -284,6 +277,25 @@ PRESETS: Dict[str, List[str]] = {
         "--quote-engine-mode", "shadow",
         "--extreme-edge-max", "0.3",
         "--cache-path", "cache/mlb_ou_cache_alt_a.staging.json",
+    ],
+    "Q_max_base_fv_095": [
+        # T3 (2026-06-15) decision arm. A_current EXACTLY + gate_max_base_fv
+        # tightened 0.99 -> 0.95, isolating that one lever so the
+        # paired-delta block accrues FV-level evidence on the 2026-06-14
+        # audit's recommendation (gate_counterfactual: +$73/30d, +$152
+        # lifetime, no window-reversal; the cert's own sweep agrees -- kept
+        # ROI +4.85% -> +11.6%, the 0.95-0.99 band is 75 filled bets @
+        # -15.8%; the cert's nominal KEEP is a verdict-heuristic artifact
+        # that only inspects the current threshold). Goal: turn the held
+        # sign-off into a data-backed flip on live re-entry instead of a
+        # cold one. Mirrors A_current's flags so the ONLY delta is the cap.
+        "--prob-calibration-mode", "enforce",
+        "--stage1-shadow-empirical-mode", "shadow",
+        "--stage1-alt-a-scope-mode", "enforce",
+        "--under-emission-mode", "shadow",
+        "--quote-engine-mode", "shadow",
+        "--extreme-edge-max", "0.3",
+        "--max-base-fv", "0.95",
     ],
 }
 

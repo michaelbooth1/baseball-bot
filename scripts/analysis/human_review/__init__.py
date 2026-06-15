@@ -13,6 +13,7 @@ from .core_health import (
     _reconciler_summary,
     _fast_demote_health,
     _gate_counterfactual_health,
+    _shadow_clv_health,
     _loss_attribution_health,
 )
 from .calibration_health import (
@@ -88,6 +89,7 @@ __all__ = [
     "_reconciler_summary",
     "_fast_demote_health",
     "_gate_counterfactual_health",
+    "_shadow_clv_health",
     "_loss_attribution_health",
     "_cohort_calibration_health",
     "_cohort_roi_health",

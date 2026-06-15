@@ -67,7 +67,7 @@ operator should read next. Use this to triage; full text is below.
 | 3 | Replace Poisson tail with negative-binomial fit | **🚧 Staging + fleet arm + out-of-sample replay shipped 2026-06-11** | Builder mode `negative_binomial`: 402/480 phases overdispersed (mean var/mean = 2.20); in-corpus high-FV gap closed 93.4%. **Out-of-sample replay on 1,327 settled 2026 candidates** (`stage1_nb_replay`): raw-chain bias +25.1pp → **+16.7pp**, brier 0.287 → 0.257 — real but partial (~33% of realized bias closed; the in-corpus 93% does NOT transfer). **NB ≈ Alt-A out-of-sample** (Alt-A +15.6pp, brier 0.257): they correct the same phenomenon. Residual ~16pp is selection-driven (bet-conditional), needing a market/selection-aware lever, not better smoothing. `O_nb_stage1` arm provides the live-fire + calibrator-interaction read. | O/P paired-delta evidence + RF2 verdict; one Stage-1 decision **slipped ~06-17 → ~late-July** (O/P arms launched 06-11, 2 days of data as of 06-13) |
 | 4 | Chain-rebuild stale-input artifacts | Investigate-and-reorder OR auto-chain-rebuild | **Partially closed 2026-06-03**: `rebuilt_each_refresh` classification suppresses transient stale alerts (daily review runs at step 14, before steps 17-38 rebuild). Remaining: promotion-gated artifact mismatches (stage3_v2 `phase4_models.json` hash; calibrator_over vs calibrator_under divergence on the shared training table) — these are real and surface correctly. | Operator promotes / rebuilds the gated artifacts |
 | 5 | Gate-counterfactual cross-window validation | **✅ Shipped 2026-05-26** | `window_reversal` flag + `lifetime_post_calibrator_enforce` 4th window; confidence auto-downgrades to `review_required` on reversal. First run flagged 4 of 9 HIGH-confidence recs as reversed. Closed. |
-| 6 | Fleet-root integration gap | Loader change in `unified_signal_table` (+ calibration-training builder) | **Discovered 2026-06-11**: the canonical learning loop (unified table → training table → walk-forward / loss-attribution / calibration) reads only `data/live_trading/*` + `data/paper_trading/*` hardcoded roots. Fleet engines write `data/paper_<label>/*` — their bets and candidate logs feed NOTHING canonical (only the aggregator + B4 + paired-delta blocks). Fleet evidence stays a parallel track until this closes. Decide: fold fleet rows in with a `config_label` column, or keep fleet deliberately quarantined and document that. | Design decision (quarantine vs fold-in) |
+| 6 | Fleet-root integration gap | Loader change in `unified_signal_table` | **✅ DECIDED + shipped 2026-06-14: guarded fold-in.** `build_unified_signal_table.py --include-fleet` now materializes each `data/paper_<label>/*` root in the canonical schema (`config_label` per arm) into a **separate** `unified_signals_fleet/` artifact — wired into the daily refresh. The canonical `signals_master` (which feeds calibration / walk-forward / loss-attribution) is **byte-identical / never pooled**, avoiding the ~13-correlated-copies pseudo-replication. Honest caveat: with the guard, the fleet's unique signal (delta decisions) is already harvested by paired-delta + shadow-CLV `by_config_label`; the fold-in is an *affordance* for deliberate per-arm canonical analysis, not an automatic learning multiplier. | — (closed) |
 | 7 | Daily review hard-fails without a live-root session file | **✅ Shipped 2026-06-11** | Missing session now degrades instead of raising: session-dependent blocks publish empties, `session_missing: true` stamped on the report, `Session-missing:` warning leads the Notes feed, and the fleet/B4/artifact blocks publish regardless. 2 new tests. Closed. |
 | 8 | UNDER per-line calibration | Re-run `--per-line-min-rows` for `--side under` once data supports it | **Deferred 2026-06-11 with evidence**: per-line UNDER is overfit on current counterfactual-label data (held-out logloss 0.813 vs 0.711 pooled; line-5.5 isotonic maps raw 0.05→0.82). Revisit when real UNDER paper outcomes accumulate (B4 runway). | B4 sample growth |
 | 9 | Calibrator-enforce floor `enforce_min_raw` 0.90→0.95 | One-line config (`signal_config.py` or override file) | **Recommended by the 06-14 audit, held for evidence.** Triple-corroborated: edge_shaving deep-dive verdict JUSTIFIED@0.95 ([0.95,1.0) = −17% ROI correctly blocked, [0.90,0.95) ~breakeven so shouldn't be shrunk); `L_enforce_min_raw_095` +$3.83 (COLLECTING); the daily "muting winners" alert (≈−$94/wk would-block, 7/7 days). Caveat: the day-level would-block cohort is noisier than the 30d aggregate (06-13 showed both bands net-negative — see the new band-split diagnostic). | More `L` evidence (firms on live re-entry) + sign-off |
@@ -632,6 +632,27 @@ _Accumulating debt; not blocking, but worth closing on a regular cadence so the 
     problem worse than the missing data. Decide explicitly rather
     than by accident. Files: `scripts/analysis/unified_signal_table/`,
     `build_calibration_opportunity_training_table.py`.
+
+    **✅ DECIDED 2026-06-14 — guarded fold-in (the safe synthesis of
+    (a)+(b)).** `build_unified_signal_table.py --include-fleet` reuses
+    the tested loaders to materialize each `data/paper_<label>/*` root
+    in the canonical schema (`config_label` per arm) into a **separate**
+    `data/analysis_output/unified_signals_fleet/` artifact, wired into
+    the daily refresh. The canonical `signals_master` — the input to
+    calibration / walk-forward / loss-attribution — is **byte-identical
+    and never sees fleet rows**, so the pseudo-replication risk that
+    made (b) the lean is avoided by construction, while the fleet data
+    is now foldable + filterable by `config_label` for deliberate
+    per-arm analysis. (`config_label` was already a schema column,
+    default `"default"`; the change only relabels fleet rows in the
+    separate file.) Honest scope note: the fleet's unique signal — its
+    *delta* decisions — is already captured by the paired-delta block
+    and the new shadow-CLV `by_config_label`; this fold-in is an
+    affordance, not the "learning multiplier" the gap was framed as
+    (with the necessary guard, that multiplier is mostly illusory).
+    The calibration-training loader was intentionally left unchanged
+    (same quarantine principle). Test:
+    `tests/test_fleet_signal_table_foldin.py`.
 
 7. **Daily review hard-fails when the live-root session file is
     missing.** `build_daily_human_review_report.py` loads

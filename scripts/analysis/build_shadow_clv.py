@@ -1,0 +1,659 @@
+#!/usr/bin/env python3
+"""build_shadow_clv.py -- T1: shadow-CLV / post-signal market-path collector.
+
+The fill-gated CLV report (`build_clv_report.py`) needs a real fill, so it
+only ever sees the handful of bets that actually executed (n=149 lifetime).
+But during a paper-only / dry-run window there are NO fills -- yet the engine
+still emits placed-candidate *book captures*: for every bet the engine would
+have placed, `data/<root>/book_captures/<date>/<bet_id>.jsonl` records the
+entry context plus a 2-minute, 1-second-resolution forward order-book path
+(best_bid / best_ask / mid after the signal). That is a fill-free measurement
+of where the market goes right after we'd have bet.
+
+This builder turns those captures into a "shadow CLV" dataset and -- joined to
+realized outcomes -- decomposes the **selection-driven residual** the Stage-1
+NB replay flagged (the bot bets where the model is most overconfident, and
+those win less in market-selected situations). The question it answers:
+
+    When our model says "bet Over at ask X" and we LOSE, did the market
+    drift AWAY from us in the next 2 minutes (it re-priced toward the
+    loss faster than we did -> "market knew" / adverse selection), or
+    did it stay FLAT (the market didn't see it either -> "model wrong" /
+    overconfidence)?
+
+That fork tells us whether the residual is closable by a market/selection-
+aware lever (adverse selection is real) or only by a better model
+(overconfidence). It also seeds Phase E1 (toxic-flow detection).
+
+Population note: book captures fire on PLACED (trade-decision) candidates, not
+every evaluated tick -- which is exactly the bet-conditional set the residual
+is about. Across the fleet roots this is hundreds of captures/day, accruing
+into thousands over a multi-week window.
+
+Outputs (under data/analysis_output/shadow_clv/):
+  - shadow_clv_rows.jsonl / .csv   : one row per placed candidate
+  - shadow_clv_summary.json / .md  : aggregates + the won/lost x drift 2x2
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import math
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+PROJECT_DIR = Path(__file__).resolve().parents[2]
+DATA_DIR = PROJECT_DIR / "data"
+DEFAULT_OUTPUT_DIR = DATA_DIR / "analysis_output" / "shadow_clv"
+# When several presets evaluate the same token at the same moment, only one
+# book capture is written; the others store a `shared_capture_pointer` row
+# referencing the canonical capture here (dedup -- avoids capturing the same
+# order book 13x). The collector follows the pointer to recover the path.
+SHARED_CAPTURE_DIR = DATA_DIR / "polymarket" / "mlb_ou" / "shared_book_captures"
+
+# Forward horizons (seconds after signal) at which we sample the book.
+HORIZONS_S: Tuple[int, ...] = (30, 60, 120)
+# A mid move smaller than this (probability units) is "flat" -- neither
+# favorable nor adverse. 0.01 = 1 cent, one tick on Polymarket.
+FLAT_THRESHOLD = 0.01
+# Raw-FV bands, aligned with the calibrator-enforce floor question so the
+# shadow-CLV read can be cross-referenced against the muting-winners debate.
+def _raw_fv_band(raw_fv: Optional[float]) -> str:
+    if raw_fv is None:
+        return "unknown"
+    if raw_fv >= 0.95:
+        return ">=0.95"
+    if raw_fv >= 0.90:
+        return "0.90-0.95"
+    return "<0.90"
+
+# Verdict thresholds.
+MIN_SETTLED_FOR_VERDICT = 20
+ADVERSE_CORR_THRESHOLD = 0.15   # corr(mid_drift, won) this high => drift predicts outcome
+MODEL_SIDE_CORR_CEILING = 0.10  # near-zero corr => market is as blind as we are
+
+# Roots whose book_captures we never treat as a config arm.
+EXCLUDED_ROOT_NAMES = ("paper_trading",)
+
+
+# --------------------------------------------------------------------------
+# IO helpers
+# --------------------------------------------------------------------------
+def _config_label(root: Path) -> str:
+    name = root.name
+    if name == "live_trading":
+        return "live"
+    if name.startswith("paper_"):
+        return name[len("paper_"):]
+    return name
+
+
+def _discover_roots(data_dir: Path) -> List[Path]:
+    roots: List[Path] = []
+    live = data_dir / "live_trading"
+    if (live / "book_captures").is_dir():
+        roots.append(live)
+    for child in sorted(data_dir.glob("paper_*")):
+        if child.name in EXCLUDED_ROOT_NAMES:
+            continue
+        if (child / "book_captures").is_dir():
+            roots.append(child)
+    return roots
+
+
+def _iter_capture_files(
+    root: Path, *, since: Optional[str], until: Optional[str]
+) -> Iterable[Tuple[str, Path]]:
+    """Yield (date, path) for each per-candidate book-capture file in `root`
+    whose date partition falls within [since, until]."""
+    base = root / "book_captures"
+    for date_dir in sorted(base.glob("20*-*-*")):
+        if not date_dir.is_dir():
+            continue
+        date = date_dir.name
+        if since and date < since:
+            continue
+        if until and date > until:
+            continue
+        for f in sorted(date_dir.glob("*.jsonl")):
+            yield date, f
+
+
+def _load_outcome_lookup(roots: List[Path]) -> Dict[Tuple[Any, str], bool]:
+    """Union every `<date>_outcomes.jsonl` across roots into
+    {(game_pk, line_str): over_hit}. Outcomes are game truth, identical
+    across roots, so the union is safe (last write wins on conflict)."""
+    lookup: Dict[Tuple[Any, str], bool] = {}
+    for root in roots:
+        cu = root / "candidate_universe"
+        if not cu.is_dir():
+            continue
+        for f in sorted(cu.glob("*_outcomes.jsonl")):
+            try:
+                for line in f.read_text(encoding="utf-8").splitlines():
+                    if not line.strip():
+                        continue
+                    o = json.loads(line)
+                    ov = o.get("over_hit")
+                    if ov is None:
+                        continue
+                    lookup[(o.get("game_pk"), str(o.get("line")))] = bool(ov)
+            except (OSError, json.JSONDecodeError):
+                continue
+    return lookup
+
+
+# --------------------------------------------------------------------------
+# Per-capture parsing + metrics
+# --------------------------------------------------------------------------
+def _mid_from_book(book: Dict[str, Any]) -> Optional[float]:
+    bid = book.get("best_bid")
+    ask = book.get("best_ask")
+    if isinstance(bid, (int, float)) and isinstance(ask, (int, float)):
+        return (float(bid) + float(ask)) / 2.0
+    m = book.get("mid")
+    if isinstance(m, (int, float)):
+        return float(m)
+    return None
+
+
+def _snapshot_at(
+    snaps: List[Tuple[float, Dict[str, Any]]], target_s: float
+) -> Optional[Dict[str, Any]]:
+    """Latest snapshot with elapsed_s <= target_s that has a valid mid."""
+    chosen: Optional[Dict[str, Any]] = None
+    for elapsed, book in snaps:
+        if elapsed > target_s:
+            break
+        if _mid_from_book(book) is not None:
+            chosen = book
+    return chosen
+
+
+def _read_capture_rows(
+    path: Path,
+) -> Tuple[
+    Optional[Dict[str, Any]],
+    List[Tuple[float, Dict[str, Any]]],
+    Optional[Dict[str, Any]],
+]:
+    """Read a capture file into (signal_row, snapshots, shared_pointer)."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None, [], None
+    signal: Optional[Dict[str, Any]] = None
+    snaps: List[Tuple[float, Dict[str, Any]]] = []
+    pointer: Optional[Dict[str, Any]] = None
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        t = r.get("type")
+        if t == "signal":
+            signal = r
+        elif t == "snapshot":
+            book = r.get("book") or {}
+            try:
+                elapsed = float(r.get("elapsed_s"))
+            except (TypeError, ValueError):
+                continue
+            snaps.append((elapsed, book))
+        elif t == "shared_capture_pointer":
+            pointer = r
+    return signal, snaps, pointer
+
+
+def _resolve_shared_path(pointer: Dict[str, Any]) -> Optional[Path]:
+    """Resolve a shared_capture_pointer to a path under SHARED_CAPTURE_DIR.
+
+    The stored `shared_capture_path` is an absolute machine-specific path, so
+    we reconstruct from its trailing `<date>/<id>.jsonl` under the canonical
+    dir (portable + test-friendly); fall back to the literal stored path."""
+    raw = str(pointer.get("shared_capture_path") or "")
+    parts = [p for p in raw.replace("\\", "/").split("/") if p]
+    if len(parts) >= 2:
+        cand = SHARED_CAPTURE_DIR / parts[-2] / parts[-1]
+        if cand.exists():
+            return cand
+    lit = Path(raw)
+    return lit if raw and lit.exists() else None
+
+
+def parse_capture(
+    path: Path,
+    *,
+    date: str,
+    config_label: str,
+    outcome_lookup: Dict[Tuple[Any, str], bool],
+) -> Optional[Dict[str, Any]]:
+    """Parse one per-candidate book-capture file into a metrics row, or None
+    if it is unusable (no signal row / no valid forward path).
+
+    Per-candidate files carry the preset-specific signal context (entry_ask,
+    FV). The forward book path is either inline (`snapshot` rows) or, when the
+    capture was deduplicated across presets, referenced via a
+    `shared_capture_pointer` -- in which case we load the snapshots from the
+    shared file while keeping THIS file's signal context."""
+    signal, snaps, pointer = _read_capture_rows(path)
+    if not snaps and pointer is not None:
+        shared = _resolve_shared_path(pointer)
+        if shared is not None:
+            shared_signal, snaps, _ = _read_capture_rows(shared)
+            if signal is None:
+                signal = shared_signal
+    if signal is None or not snaps:
+        return None
+    snaps.sort(key=lambda kv: kv[0])
+
+    entry_ask = signal.get("entry_ask")
+    raw_fv = signal.get("fair_value")
+    base_fv = signal.get("base_fair_value")
+    if not isinstance(entry_ask, (int, float)):
+        return None
+    entry_ask = float(entry_ask)
+
+    entry_mid = _mid_from_book(snaps[0][1])
+    if entry_mid is None:
+        # Fall back to entry_ask as the entry mark (one-sided book at t0).
+        entry_mid = entry_ask
+
+    row: Dict[str, Any] = {
+        "bet_id": signal.get("bet_id"),
+        "config_label": config_label,
+        "session_date": date,
+        "entry_ts": signal.get("ts"),
+        "game_pk": signal.get("game_pk"),
+        "line": str(signal.get("line")),
+        "side": str(signal.get("side") or "over").lower(),
+        "token_id": signal.get("token_id"),
+        "inning": signal.get("inning"),
+        "entry_ask": round(entry_ask, 4),
+        "fair_value": round(float(raw_fv), 4) if isinstance(raw_fv, (int, float)) else None,
+        "base_fair_value": round(float(base_fv), 4) if isinstance(base_fv, (int, float)) else None,
+        "raw_fv_band": _raw_fv_band(float(raw_fv) if isinstance(raw_fv, (int, float)) else None),
+        "entry_mid": round(entry_mid, 4),
+        "max_elapsed_s": round(snaps[-1][0], 1),
+    }
+
+    # Forward path at each horizon.
+    last_valid_mid: Optional[float] = None
+    for h in HORIZONS_S:
+        book = _snapshot_at(snaps, float(h))
+        if book is None:
+            row[f"mid_{h}s"] = None
+            row[f"ask_{h}s"] = None
+        else:
+            m = _mid_from_book(book)
+            row[f"mid_{h}s"] = round(m, 4) if m is not None else None
+            ask = book.get("best_ask")
+            row[f"ask_{h}s"] = round(float(ask), 4) if isinstance(ask, (int, float)) else None
+            if m is not None:
+                last_valid_mid = m
+
+    # Drift + shadow-CLV at the longest horizon we actually reached.
+    final_mid = row.get("mid_120s")
+    if final_mid is None:
+        final_mid = last_valid_mid
+    if final_mid is not None:
+        mid_drift = final_mid - entry_mid
+        row["mid_drift_120s"] = round(mid_drift, 4)
+        row["shadow_clv_120s"] = round(final_mid - entry_ask, 4)
+        if mid_drift >= FLAT_THRESHOLD:
+            row["adverse_sign"] = "favorable"
+        elif mid_drift <= -FLAT_THRESHOLD:
+            row["adverse_sign"] = "adverse"
+        else:
+            row["adverse_sign"] = "flat"
+        row["path_complete"] = True
+    else:
+        row["mid_drift_120s"] = None
+        row["shadow_clv_120s"] = None
+        row["adverse_sign"] = "no_path"
+        row["path_complete"] = False
+
+    # Outcome join (game truth). side is over by construction of the OVER
+    # placement pipeline; won = over_hit.
+    won = outcome_lookup.get((row["game_pk"], row["line"]))
+    if won is None:
+        row["settled"] = False
+        row["won"] = None
+        row["shadow_clv_vs_settle"] = None
+    else:
+        row["settled"] = True
+        row["won"] = bool(won)
+        row["shadow_clv_vs_settle"] = round((1.0 if won else 0.0) - entry_ask, 4)
+    return row
+
+
+# --------------------------------------------------------------------------
+# Aggregation
+# --------------------------------------------------------------------------
+def _corr(xs: List[float], ys: List[float]) -> Optional[float]:
+    n = len(xs)
+    if n < 3:
+        return None
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    cov = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    vx = sum((x - mx) ** 2 for x in xs)
+    vy = sum((y - my) ** 2 for y in ys)
+    if vx <= 0 or vy <= 0:
+        return None
+    return cov / math.sqrt(vx * vy)
+
+
+def _mean(xs: List[float]) -> Optional[float]:
+    return sum(xs) / len(xs) if xs else None
+
+
+def _dedup_key(r: Dict[str, Any]) -> Tuple[Any, Any, Any, str]:
+    return (
+        r.get("game_pk"), r.get("line"), r.get("token_id"),
+        str(r.get("entry_ts"))[:19],
+    )
+
+
+def aggregate(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    with_path_all = [r for r in rows if r.get("path_complete")]
+    # Pseudo-replication guard: presets share one underlying book capture
+    # (shared_capture_pointer), so the SAME post-signal market path + outcome
+    # appears once per preset. The adverse-selection stats must count each
+    # distinct path ONCE, else corr / shares are computed on ~13 correlated
+    # copies. Identity = (game_pk, line, token_id, entry_ts to the second);
+    # prefer the live-root row when several presets share a path.
+    _seen: Dict[Tuple[Any, Any, Any, str], Dict[str, Any]] = {}
+    for r in sorted(
+        with_path_all, key=lambda r: 0 if r.get("config_label") == "live" else 1
+    ):
+        _seen.setdefault(_dedup_key(r), r)
+    with_path = list(_seen.values())
+    settled = [r for r in with_path if r.get("settled")]
+
+    drifts = [r["mid_drift_120s"] for r in with_path]
+    summary: Dict[str, Any] = {
+        "n_candidate_rows": len(rows),
+        "n_candidate_rows_with_path": len(with_path_all),
+        "n_candidates": len(with_path),       # unique market paths (deduped)
+        "n_unique_paths": len(with_path),
+        "n_with_path": len(with_path),
+        "n_settled_with_path": len(settled),
+        "mean_mid_drift_120s": _mean(drifts),
+        "mean_shadow_clv_120s": _mean([r["shadow_clv_120s"] for r in with_path]),
+        "favorable_share": (
+            sum(1 for r in with_path if r["adverse_sign"] == "favorable") / len(with_path)
+            if with_path else None
+        ),
+        "adverse_share": (
+            sum(1 for r in with_path if r["adverse_sign"] == "adverse") / len(with_path)
+            if with_path else None
+        ),
+        "flat_share": (
+            sum(1 for r in with_path if r["adverse_sign"] == "flat") / len(with_path)
+            if with_path else None
+        ),
+    }
+
+    # The headline decomposition: won/lost x drift sign, on settled bets.
+    cells = {
+        (w, s): 0
+        for w in ("won", "lost")
+        for s in ("favorable", "adverse", "flat")
+    }
+    for r in settled:
+        w = "won" if r["won"] else "lost"
+        cells[(w, r["adverse_sign"])] += 1
+    losses = sum(cells[("lost", s)] for s in ("favorable", "adverse", "flat"))
+    summary["decomposition_2x2"] = {
+        f"{w}_{s}": cells[(w, s)]
+        for w in ("won", "lost")
+        for s in ("favorable", "adverse", "flat")
+    }
+    summary["n_losses_settled"] = losses
+    summary["market_knew_share"] = (
+        cells[("lost", "adverse")] / losses if losses else None
+    )  # losses where market drifted away from us = it re-priced toward the loss
+    summary["model_wrong_share"] = (
+        cells[("lost", "flat")] / losses if losses else None
+    )  # losses where market stayed flat = we were overconfident, not selected against
+
+    # Does the 2-min drift predict the outcome?
+    settle_drifts = [r["mid_drift_120s"] for r in settled]
+    settle_wins = [1.0 if r["won"] else 0.0 for r in settled]
+    summary["corr_drift_vs_win"] = _corr(settle_drifts, settle_wins)
+    summary["mean_loss_drift_120s"] = _mean(
+        [r["mid_drift_120s"] for r in settled if not r["won"]]
+    )
+
+    # By raw-FV band (does the overconfident high-FV tail drift adverse?).
+    band_stats: Dict[str, Dict[str, Any]] = {}
+    for band in (">=0.95", "0.90-0.95", "<0.90", "unknown"):
+        b = [r for r in settled if r["raw_fv_band"] == band]
+        if not b:
+            continue
+        b_loss = [r for r in b if not r["won"]]
+        band_stats[band] = {
+            "n_settled": len(b),
+            "mean_mid_drift_120s": _mean([r["mid_drift_120s"] for r in b]),
+            "win_rate": _mean([1.0 if r["won"] else 0.0 for r in b]),
+            "mean_loss_drift_120s": _mean([r["mid_drift_120s"] for r in b_loss]),
+        }
+    summary["by_raw_fv_band"] = band_stats
+
+    # By config arm (so presets can be compared later). Uses the FULL
+    # per-preset rows (not the deduped set) -- each arm's own decisions.
+    by_label: Dict[str, Dict[str, Any]] = {}
+    for r in with_path_all:
+        lab = r["config_label"]
+        d = by_label.setdefault(lab, {"n": 0, "drifts": [], "n_settled": 0})
+        d["n"] += 1
+        d["drifts"].append(r["mid_drift_120s"])
+        if r.get("settled"):
+            d["n_settled"] += 1
+    summary["by_config_label"] = {
+        lab: {
+            "n_with_path": d["n"],
+            "n_settled": d["n_settled"],
+            "mean_mid_drift_120s": _mean(d["drifts"]),
+        }
+        for lab, d in sorted(by_label.items())
+    }
+
+    summary["verdict"] = _verdict(summary)
+    summary["thresholds"] = {
+        "flat_threshold": FLAT_THRESHOLD,
+        "horizons_s": list(HORIZONS_S),
+        "min_settled_for_verdict": MIN_SETTLED_FOR_VERDICT,
+        "adverse_corr_threshold": ADVERSE_CORR_THRESHOLD,
+        "model_side_corr_ceiling": MODEL_SIDE_CORR_CEILING,
+    }
+    return summary
+
+
+def _verdict(summary: Dict[str, Any]) -> str:
+    n = summary["n_settled_with_path"]
+    if n < MIN_SETTLED_FOR_VERDICT:
+        return "COLLECTING"
+    corr = summary.get("corr_drift_vs_win")
+    loss_drift = summary.get("mean_loss_drift_120s")
+    if corr is None or loss_drift is None:
+        return "COLLECTING"
+    adverse = corr >= ADVERSE_CORR_THRESHOLD and loss_drift <= -FLAT_THRESHOLD
+    model_side = abs(corr) < MODEL_SIDE_CORR_CEILING and loss_drift > -FLAT_THRESHOLD
+    if adverse and not model_side:
+        return "ADVERSE_SELECTION"
+    if model_side and not adverse:
+        return "MODEL_SIDE"
+    return "MIXED"
+
+
+# --------------------------------------------------------------------------
+# Rendering
+# --------------------------------------------------------------------------
+def _pct(x: Optional[float]) -> str:
+    return f"{x * 100:.1f}%" if isinstance(x, (int, float)) else "n/a"
+
+
+def _cents(x: Optional[float]) -> str:
+    return f"{x * 100:+.2f}c" if isinstance(x, (int, float)) else "n/a"
+
+
+def render_markdown(summary: Dict[str, Any], generated_at: str) -> str:
+    L: List[str] = []
+    L.append("# Shadow-CLV / Post-Signal Market-Path Report")
+    L.append("")
+    L.append(f"Generated: {generated_at}")
+    L.append("")
+    L.append(
+        f"Verdict: **{summary['verdict']}** "
+        f"({summary['n_candidates']} placed candidates, "
+        f"{summary['n_with_path']} with a 2-min path, "
+        f"{summary['n_settled_with_path']} settled)"
+    )
+    L.append("")
+    L.append("## Forward market path (0 -> 120s after signal)")
+    L.append(
+        f"- Mean mid drift: **{_cents(summary['mean_mid_drift_120s'])}**; "
+        f"favorable {_pct(summary['favorable_share'])} / "
+        f"adverse {_pct(summary['adverse_share'])} / "
+        f"flat {_pct(summary['flat_share'])}"
+    )
+    L.append(f"- Mean shadow-CLV vs entry ask: {_cents(summary['mean_shadow_clv_120s'])}")
+    L.append(
+        f"- corr(mid drift, win): "
+        f"{summary['corr_drift_vs_win'] if summary['corr_drift_vs_win'] is not None else 'n/a'}; "
+        f"mean drift on LOSSES: {_cents(summary['mean_loss_drift_120s'])}"
+    )
+    L.append("")
+    L.append("## Selection decomposition (market-knew vs model-wrong)")
+    L.append(
+        f"Of {summary['n_losses_settled']} settled losses: "
+        f"**{_pct(summary['market_knew_share'])} drifted adverse** "
+        f"(market re-priced away from us = market-knew) vs "
+        f"**{_pct(summary['model_wrong_share'])} flat** "
+        f"(market stayed = model-wrong)."
+    )
+    L.append("")
+    L.append("| outcome | favorable | adverse | flat |")
+    L.append("|---|---:|---:|---:|")
+    d = summary["decomposition_2x2"]
+    for w in ("won", "lost"):
+        L.append(
+            f"| {w} | {d[f'{w}_favorable']} | {d[f'{w}_adverse']} | {d[f'{w}_flat']} |"
+        )
+    L.append("")
+    L.append("## By raw-FV band")
+    L.append("| band | n | win rate | mean drift | mean loss drift |")
+    L.append("|---|---:|---:|---:|---:|")
+    for band, s in summary["by_raw_fv_band"].items():
+        L.append(
+            f"| {band} | {s['n_settled']} | {_pct(s['win_rate'])} | "
+            f"{_cents(s['mean_mid_drift_120s'])} | {_cents(s['mean_loss_drift_120s'])} |"
+        )
+    L.append("")
+    L.append("## By config arm")
+    L.append("| arm | n path | n settled | mean drift |")
+    L.append("|---|---:|---:|---:|")
+    for lab, s in summary["by_config_label"].items():
+        L.append(
+            f"| {lab} | {s['n_with_path']} | {s['n_settled']} | "
+            f"{_cents(s['mean_mid_drift_120s'])} |"
+        )
+    L.append("")
+    return "\n".join(L)
+
+
+# --------------------------------------------------------------------------
+# Orchestration
+# --------------------------------------------------------------------------
+def build(
+    *,
+    data_dir: Path = DATA_DIR,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    roots = _discover_roots(data_dir)
+    outcome_lookup = _load_outcome_lookup(roots)
+    rows: List[Dict[str, Any]] = []
+    for root in roots:
+        label = _config_label(root)
+        for date, path in _iter_capture_files(root, since=since, until=until):
+            r = parse_capture(
+                path, date=date, config_label=label, outcome_lookup=outcome_lookup
+            )
+            if r is not None:
+                rows.append(r)
+    summary = aggregate(rows)
+    return rows, summary
+
+
+def _default_since(trailing_days: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=trailing_days)).strftime(
+        "%Y-%m-%d"
+    )
+
+
+def parse_args(argv=None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    p.add_argument("--data-dir", type=Path, default=DATA_DIR)
+    p.add_argument(
+        "--trailing-days", type=int, default=45,
+        help="Only read book-capture date partitions within this many days "
+        "(default 45). Use --all to disable.",
+    )
+    p.add_argument("--since", default=None, help="YYYY-MM-DD lower bound (overrides --trailing-days).")
+    p.add_argument("--until", default=None, help="YYYY-MM-DD upper bound.")
+    p.add_argument("--all", action="store_true", help="Read all available dates.")
+    return p.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
+    since = args.since
+    if since is None and not args.all:
+        since = _default_since(args.trailing_days)
+    rows, summary = build(data_dir=args.data_dir, since=since, until=args.until)
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+    out = args.output_dir
+    out.mkdir(parents=True, exist_ok=True)
+
+    (out / "shadow_clv_rows.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8"
+    )
+    if rows:
+        fieldnames = list(rows[0].keys())
+        # Union keys defensively (rows can differ on optional fields).
+        for r in rows:
+            for k in r:
+                if k not in fieldnames:
+                    fieldnames.append(k)
+        with (out / "shadow_clv_rows.csv").open("w", encoding="utf-8", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames)
+            w.writeheader()
+            w.writerows(rows)
+    payload = dict(summary)
+    payload["generated_at_utc"] = generated_at
+    payload["since"] = since
+    payload["until"] = args.until
+    (out / "shadow_clv_summary.json").write_text(
+        json.dumps(payload, indent=2), encoding="utf-8"
+    )
+    (out / "shadow_clv_summary.md").write_text(
+        render_markdown(summary, generated_at), encoding="utf-8"
+    )
+    print(
+        f"shadow_clv: {summary['n_candidates']} candidates, "
+        f"{summary['n_settled_with_path']} settled, verdict={summary['verdict']}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -50,6 +50,7 @@ from .constants import (
     FLEET_DEAD_MIN_SHARED_DAYS,
     FLEET_EXCLUDED_ROOT_NAMES,
     FLEET_RETIRED_ROOT_NAMES,
+    FLEET_EXECUTION_SENSITIVE_LABELS,
     FLEET_PAIRED_DELTA_TRAILING_DAYS,
     FLEET_TRENDING_MIN_DELTA_N,
     FLEET_TRENDING_T,
@@ -350,6 +351,7 @@ def _fleet_paired_delta_health(
                 trending_min_n=trending_min_n,
             )
 
+            execution_sensitive = label in FLEET_EXECUTION_SENSITIVE_LABELS
             entry: Dict[str, Any] = {
                 "shared_days": shared_days,
                 "n_shared_bets": len(shared_keys),
@@ -360,6 +362,7 @@ def _fleet_paired_delta_health(
                 "delta_net_pnl": delta_net,
                 "welch_t": round(t, 3) if t is not None else None,
                 "verdict": verdict,
+                "execution_sensitive": execution_sensitive,
                 "days_to_significance": _days_to_significance(
                     welch_t=t,
                     n_delta=n_delta,
@@ -369,6 +372,15 @@ def _fleet_paired_delta_health(
             }
             payload["engines"][label] = entry
 
+            # T6 (2026-06-15): execution-sensitive presets' deltas depend on
+            # fill behaviour paper (fills at ask) overstates -- caveat their
+            # verdicts so a paper-week CONCLUSIVE isn't shipped at face value.
+            exec_caveat = (
+                " EXECUTION-SENSITIVE: paper fills at ask overstate this "
+                "preset's unique bets (live fill selection differs); confirm "
+                "on live re-entry before acting."
+                if execution_sensitive else ""
+            )
             if verdict in ("CONCLUSIVE_POSITIVE", "CONCLUSIVE_NEGATIVE"):
                 direction = (
                     "beats" if verdict == "CONCLUSIVE_POSITIVE" else "loses to"
@@ -380,6 +392,7 @@ def _fleet_paired_delta_health(
                     f"{shared_days} shared days, Welch t={t:.2f}). "
                     "Review for promotion/retirement; see "
                     "fleet_paired_delta_health.engines for the cohort detail."
+                    + exec_caveat
                 )
             elif verdict == "DEAD":
                 payload["alerts"].append(

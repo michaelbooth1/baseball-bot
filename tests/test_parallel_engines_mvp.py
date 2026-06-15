@@ -99,21 +99,32 @@ class ParallelEnginesMvpTests(unittest.TestCase):
         self.assertEqual(d_flags[cal_idx + 1], "shadow")
         self.assertEqual(d_flags[scope_idx + 1], "enforce")
 
-    def test_thirteen_preset_fleet_after_2026_06_11_model_arms(self):
-        """2026-06-10 prune (E/G concluded, N null: 14 -> 11), then
-        2026-06-11 model-version arms added (O_nb_stage1 +
-        P_alt_a_cache: Stage-1 cache swaps under the production
-        calibrator, feeding the RF2 / Active #8 decision): 13 total."""
+    def test_twelve_preset_fleet_after_2026_06_15_prune_and_decision_arm(self):
+        """2026-06-10 prune (E/G concluded, N null: 14 -> 11), 2026-06-11
+        model-version arms (O_nb_stage1 + P_alt_a_cache: 13), then
+        2026-06-15 (T3/T4): retired H_late_innings + I_extreme_018
+        (trending -EV, questions owned canonically) and added the
+        Q_max_base_fv_095 decision arm -> 12 total."""
         self.assertEqual(
             set(lpe.PRESETS.keys()),
             {
                 "A_current", "B_cal_only", "C_raw", "D_scope_only",
-                "F_no_dedup", "H_late_innings",
-                "I_extreme_018", "J_no_phantom_filter", "K_line5p5_block",
+                "F_no_dedup", "J_no_phantom_filter", "K_line5p5_block",
                 "L_enforce_min_raw_095", "M_under_paper",
-                "O_nb_stage1", "P_alt_a_cache",
+                "O_nb_stage1", "P_alt_a_cache", "Q_max_base_fv_095",
             },
         )
+
+    def test_q_arm_is_a_current_plus_max_base_fv_only(self):
+        """Q_max_base_fv_095 must be A_current EXACTLY + a single
+        --max-base-fv 0.95 delta, so the paired-delta vs A_current
+        attributes any divergence to gate_max_base_fv alone."""
+        q = list(lpe.PRESETS["Q_max_base_fv_095"])
+        self.assertEqual(q[q.index("--max-base-fv") + 1], "0.95")
+        stripped = list(q)
+        idx = stripped.index("--max-base-fv")
+        del stripped[idx:idx + 2]
+        self.assertEqual(stripped, list(lpe.PRESETS["A_current"]))
 
     def test_o_and_p_model_version_arms_swap_stage1_cache_only(self):
         """O (NB tail) and P (full Alt-A) must be A_current + a
@@ -243,36 +254,26 @@ class ParallelEnginesMvpTests(unittest.TestCase):
         # No edge override -> default floor stays in play.
         self.assertNotIn("--edge-threshold", flags)
 
-    def test_h_late_innings_sets_min_inning_6_on_both_tiers(self):
-        flags = lpe.PRESETS["H_late_innings"]
-        self.assertEqual(flags[flags.index("--min-inning") + 1], "6")
-        self.assertEqual(flags[flags.index("--min-inning-high-line") + 1], "6")
-
-    def test_i_and_j_form_extreme_edge_sweep(self):
-        """I (0.18 tightened) and J (1.0 = off) pair with A's 0.30
-        (re-synced to the live override 2026-06-10; was 0.22) to form a
-        3-point sweep of the TR19 extreme-edge knob."""
-        i_flags = lpe.PRESETS["I_extreme_018"]
+    def test_j_disables_extreme_edge_cap(self):
+        """J (cap=1.0 = off) supplies the edge>0.30 counterfactual cohort
+        vs A's live 0.30 cap. (I_extreme_018, the 0.18 tightened end of
+        the old 3-point sweep, retired 2026-06-15 -- the extreme-edge
+        lever is owned canonically by the live 0.22->0.30 promotion.)"""
         j_flags = lpe.PRESETS["J_no_phantom_filter"]
-        self.assertEqual(
-            i_flags[i_flags.index("--extreme-edge-max") + 1], "0.18"
-        )
         self.assertEqual(
             j_flags[j_flags.index("--extreme-edge-max") + 1], "1.0"
         )
-        # Both inherit A's enforce/enforce baseline so the only varying
+        # Inherits A's enforce/enforce baseline so the only varying
         # dimension is the extreme_edge_max knob.
-        for flags in (i_flags, j_flags):
-            self.assertEqual(flags[flags.index("--prob-calibration-mode") + 1], "enforce")
-            self.assertEqual(flags[flags.index("--stage1-alt-a-scope-mode") + 1], "enforce")
+        self.assertEqual(j_flags[j_flags.index("--prob-calibration-mode") + 1], "enforce")
+        self.assertEqual(j_flags[j_flags.index("--stage1-alt-a-scope-mode") + 1], "enforce")
 
-    def test_no_f_through_j_uses_live_only_flag(self):
-        """F-J must only use paper-safe flags (none in LIVE_ONLY_ENGINE_FLAGS).
-        Catches regressions where someone adds a Kelly / daily-budget /
-        stake-mode flag to a preset thinking paper supports it.
-        (G_loose_edge retired 2026-06-10 -- question concluded.)"""
-        for label in ("F_no_dedup", "H_late_innings",
-                      "I_extreme_018", "J_no_phantom_filter"):
+    def test_no_paper_preset_uses_live_only_flag(self):
+        """Paper presets must only use paper-safe flags (none in
+        LIVE_ONLY_ENGINE_FLAGS). Catches regressions where someone adds a
+        Kelly / daily-budget / stake-mode flag to a preset thinking paper
+        supports it. (E/G/N retired 2026-06-10; H/I retired 2026-06-15.)"""
+        for label in ("F_no_dedup", "J_no_phantom_filter", "Q_max_base_fv_095"):
             flags = lpe.PRESETS[label]
             for f in flags:
                 if not f.startswith("--"):

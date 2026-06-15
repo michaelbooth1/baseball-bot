@@ -14,9 +14,10 @@ helpers live under scripts/analysis/unified_signal_table/:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -94,6 +95,30 @@ PAPER_LEDGER_PATH = PROJECT_DIR / "data" / "paper_trading" / "master_ledger.json
 PAPER_CAPTURES_ROOT = PROJECT_DIR / "data" / "paper_trading" / "book_captures"
 PAPER_CANDIDATES_ROOT = PROJECT_DIR / "data" / "paper_trading" / "candidate_universe"
 
+# T2 (Hygiene #6): parallel-engine fleet roots. `paper_trading` is the legacy
+# canonical paper root (already built as mode=paper), NOT a fleet preset.
+FLEET_EXCLUDED_ROOT_NAMES = {"paper_trading"}
+
+
+def _discover_fleet_roots(
+    data_dir: Optional[Path] = None,
+) -> List[Tuple[str, Dict[str, Path]]]:
+    """Enumerate (config_label, roots) for each data/paper_<label>/ fleet
+    preset, excluding the legacy canonical paper root."""
+    base = data_dir if data_dir is not None else (PROJECT_DIR / "data")
+    out: List[Tuple[str, Dict[str, Path]]] = []
+    for child in sorted(base.glob("paper_*")):
+        if not child.is_dir() or child.name in FLEET_EXCLUDED_ROOT_NAMES:
+            continue
+        label = child.name[len("paper_"):]
+        out.append((label, {
+            "sessions": child / "sessions",
+            "ledger": child / "master_ledger.jsonl",
+            "captures": child / "book_captures",
+            "candidates": child / "candidate_universe",
+        }))
+    return out
+
 DEFAULT_HORIZONS = [1, 2, 5, 10, 30]
 DEFAULT_HORIZONS_STR = ",".join(str(h) for h in DEFAULT_HORIZONS)
 DEFAULT_FILL_WINDOW_SECS = 30
@@ -144,6 +169,25 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     p.add_argument("--strict", action="store_true", help="Fail build if hard checks fail.")
     p.add_argument("--verbose", action="store_true", help="Verbose logging.")
+    # T2 (Hygiene #6): opt-in guarded fold-in. When set, the parallel-engine
+    # fleet roots (data/paper_<label>/*) are materialized in the canonical
+    # schema with a `config_label` column into a SEPARATE output dir -- never
+    # mixed into the canonical signals_master that feeds calibration /
+    # walk-forward (which would pseudo-replicate ~13 correlated copies/game).
+    # Default OFF: canonical output is byte-identical to before.
+    p.add_argument(
+        "--include-fleet",
+        action="store_true",
+        help="Also build a SEPARATE labeled fleet signal table from "
+        "data/paper_<label>/* (default off; never pooled into the canonical "
+        "table).",
+    )
+    p.add_argument(
+        "--fleet-output-root",
+        type=Path,
+        default=PROJECT_DIR / "data" / "analysis_output" / "unified_signals_fleet",
+        help="Output dir for the separate fleet signal table.",
+    )
     return p.parse_args(argv)
 
 def _parse_horizons_csv(raw: str) -> List[int]:
@@ -173,8 +217,25 @@ def build_for_mode(
     master_columns: List[str],
     warnings: List[str],
     hard_errors: List[str],
+    *,
+    roots: Optional[Dict[str, Path]] = None,
+    config_label: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, int]]:
-    if mode == "live":
+    """Build unified rows for one source.
+
+    `roots` (when given) overrides the mode-based default roots so the SAME
+    tested loader path can materialize a fleet preset's data
+    (data/paper_<label>/*). `config_label` (when given) is stamped on each
+    master row -- used for the SEPARATE fleet artifact only. The canonical
+    live/paper calls pass neither, so their output is byte-identical to
+    before (no config_label column, default roots). T2 (Hygiene #6): fleet
+    rows are foldable + labeled but never pooled into the canonical table."""
+    if roots is not None:
+        sessions_root = roots["sessions"]
+        ledger_path = roots["ledger"]
+        captures_root = roots["captures"]
+        candidates_root = roots["candidates"]
+    elif mode == "live":
         sessions_root = LIVE_SESSIONS_ROOT
         ledger_path = LIVE_LEDGER_PATH
         captures_root = LIVE_CAPTURES_ROOT
@@ -227,6 +288,10 @@ def build_for_mode(
         warnings=warnings,
         hard_errors=hard_errors,
     )
+    if config_label is not None:
+        for r in master_rows:
+            r["config_label"] = config_label
+
     order_events_rows = _build_order_events_rows(mode=mode, ledger_events=ledger_events)
     snapshot_rows = _build_snapshot_rows(mode=mode, captures=captures)
 
@@ -347,6 +412,51 @@ def main(argv: Optional[List[str]] = None) -> None:
     LOGGER.info("Wrote %s", snapshots_path)
     LOGGER.info("Wrote %s", manifest_path)
     LOGGER.info("Warnings: %d  Hard errors: %d", len(warnings), len(hard_errors))
+
+    # T2 (Hygiene #6): opt-in guarded fold-in -> SEPARATE labeled fleet table.
+    # Never written into signals_master above, so the canonical calibration /
+    # walk-forward inputs are unaffected.
+    if args.include_fleet:
+        fleet_master: List[Dict[str, Any]] = []
+        fleet_stats: Dict[str, int] = {}
+        for label, roots in _discover_fleet_roots():
+            m_rows, _e, _s, _stats = build_for_mode(
+                mode="paper",
+                min_date=args.min_date or None,
+                max_date=args.max_date or None,
+                horizons=args.horizons_list,
+                fill_window_secs=args.fill_window_secs,
+                master_columns=master_columns,
+                warnings=warnings,
+                hard_errors=hard_errors,
+                roots=roots,
+                config_label=label,
+            )
+            fleet_master.extend(m_rows)
+            fleet_stats[label] = len(m_rows)
+        fleet_master = sort_master_rows(fleet_master)
+        args.fleet_output_root.mkdir(parents=True, exist_ok=True)
+        fleet_jsonl = args.fleet_output_root / "signals_master_fleet.jsonl"
+        fleet_csv = args.fleet_output_root / "signals_master_fleet.csv"
+        write_jsonl(fleet_jsonl, fleet_master)
+        write_csv(fleet_csv, fleet_master, master_columns + ["config_label"])
+        (args.fleet_output_root / "fleet_manifest.json").write_text(
+            json.dumps({
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "n_fleet_rows": len(fleet_master),
+                "by_label": fleet_stats,
+                "note": (
+                    "SEPARATE from canonical signals_master; labeled by "
+                    "config_label; NEVER pooled into calibration / "
+                    "walk-forward (T2 / Hygiene #6 guarded fold-in)."
+                ),
+            }, indent=2),
+            encoding="utf-8",
+        )
+        LOGGER.info(
+            "Wrote fleet table: %s (%d rows across %d arms)",
+            fleet_jsonl, len(fleet_master), len(fleet_stats),
+        )
 
     if args.strict and hard_errors:
         raise SystemExit("Strict mode failed: hard checks did not pass. See build_manifest.json.")

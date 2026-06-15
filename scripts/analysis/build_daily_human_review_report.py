@@ -43,6 +43,7 @@ from scripts.analysis.human_review import (
     _reconciler_summary,
     _fast_demote_health,
     _gate_counterfactual_health,
+    _shadow_clv_health,
     _loss_attribution_health,
     _cohort_calibration_health,
     _cohort_roi_health,
@@ -113,6 +114,7 @@ from human_review.constants import (  # noqa: F401  (explicit for static analysi
     DEFAULT_SETTLEMENT_TRUTH_REPORT,
     DEFAULT_MODEL_MATURITY_REPORT,
     DEFAULT_GATE_COUNTERFACTUAL_REPORT,
+    DEFAULT_SHADOW_CLV_REPORT,
     DEFAULT_STARTUP_REFRESH_DIR,
     DEFAULT_PAPER_SESSIONS_DIR,
     LOG_PATTERNS,
@@ -178,6 +180,7 @@ def _build_notes(
     settlement_truth_health: Optional[Dict[str, Any]] = None,
     fast_demote_health: Optional[Dict[str, Any]] = None,
     gate_counterfactual_health: Optional[Dict[str, Any]] = None,
+    shadow_clv_health: Optional[Dict[str, Any]] = None,
     cohort_calibration_health: Optional[Dict[str, Any]] = None,
     loss_attribution_health: Optional[Dict[str, Any]] = None,
     cache_lineage_freshness_health: Optional[Dict[str, Any]] = None,
@@ -267,6 +270,8 @@ def _build_notes(
         notes.append(f"Fast-demote: {alert}")
     for alert in (gate_counterfactual_health or {}).get("alerts") or []:
         notes.append(f"Gate-counterfactual: {alert}")
+    for alert in (shadow_clv_health or {}).get("alerts") or []:
+        notes.append(f"Shadow-CLV: {alert}")
     for alert in (loss_attribution_health or {}).get("alerts") or []:
         notes.append(f"Loss-attribution: {alert}")
     for alert in (cache_lineage_freshness_health or {}).get("alerts") or []:
@@ -470,6 +475,10 @@ def build_report(
         report_path=DEFAULT_GATE_COUNTERFACTUAL_REPORT,
         session_date=session_date,
     )
+    shadow_clv_health = _shadow_clv_health(
+        report_path=DEFAULT_SHADOW_CLV_REPORT,
+        session_date=session_date,
+    )
     loss_attribution_health = _loss_attribution_health(
         report_path=DEFAULT_LOSS_ATTRIBUTION_REPORT,
         session_date=session_date,
@@ -559,6 +568,7 @@ def build_report(
         settlement_truth_health,
         fast_demote_health,
         gate_counterfactual_health,
+        shadow_clv_health,
         cohort_calibration_health,
         loss_attribution_health,
         cache_lineage_freshness_health,
@@ -649,6 +659,7 @@ def build_report(
         "settlement_truth_health": settlement_truth_health,
         "fast_demote_health": fast_demote_health,
         "gate_counterfactual_health": gate_counterfactual_health,
+        "shadow_clv_health": shadow_clv_health,
         "reconciler_summary": reconciler_summary,
         "log_health": log_health,
         "notes": notes,

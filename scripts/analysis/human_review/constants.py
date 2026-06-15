@@ -136,6 +136,14 @@ DEFAULT_LOSS_ATTRIBUTION_REPORT = (
 )
 LOSS_ATTRIBUTION_STALE_AGE_DAYS = 14
 
+# T1 (2026-06-14): shadow-CLV / post-signal market-path collector.
+DEFAULT_SHADOW_CLV_REPORT = (
+    PROJECT_DIR / "data" / "analysis_output" / "shadow_clv"
+    / "shadow_clv_summary.json"
+)
+SHADOW_CLV_STALE_AGE_DAYS = 14
+SHADOW_CLV_MIN_SETTLED_FOR_ALERT = 20
+
 DEFAULT_STAGE1_CELL_LOSS_REPORT = (
     PROJECT_DIR / "data" / "analysis_output"
     / "stage1_cell_loss_attribution"
@@ -308,8 +316,20 @@ FLEET_RETIRED_ROOT_NAMES: tuple = (
     "paper_E_tight_edge",         # retired 2026-06-10 (edge floor +5pp concluded)
     "paper_G_loose_edge",         # retired 2026-06-10 (edge floor -5pp concluded)
     "paper_N_extreme_edge_022",   # retired 2026-06-10 (null experiment, 0 delta)
+    "paper_H_late_innings",       # retired 2026-06-15 (trending -EV, t=-0.65; late-inning Q owned by cert)
+    "paper_I_extreme_018",        # retired 2026-06-15 (trending -EV, t=-0.27; extreme-edge owned canonically)
 )
 FLEET_PAIRED_DELTA_TRAILING_DAYS = 30
+# T6 (2026-06-15): presets whose paired-delta vs A_current is
+# EXECUTION-SENSITIVE -- their unique bets depend on fill behaviour that paper
+# (fills at ask) overstates vs live. F_no_dedup strips cooldown/dedup so it
+# fires re-bets live would partially miss; M_under_paper is UNDER-side with
+# ~49% pair liquidity so paper counts fills live wouldn't get. Their verdicts
+# carry a "confirm on live re-entry" caveat so a paper-week CONCLUSIVE isn't
+# shipped at face value. The other arms (B/C/D/K/L/O/P/Q) are FV-level
+# (different FV / threshold -> different decisions), which transfers to live
+# well. (H_late_innings was on this list pre-retirement, 2026-06-15.)
+FLEET_EXECUTION_SENSITIVE_LABELS: tuple = ("F_no_dedup", "M_under_paper")
 # DEAD: enough shared days to judge, and near-zero delta-bet flow --
 # the preset produces no distinct decisions vs baseline (N_extreme_
 # edge_022 signature: 10 days, 0 delta bets).
@@ -336,6 +356,21 @@ B4_MILESTONE_DRIFT_PERSISTENCE_THRESHOLD = 3
 # (avoids noisy alerts on tiny samples while still showing per-
 # condition status in the JSON for the operator).
 B4_MILESTONE_MIN_N_FOR_FAILURE_ALERT = 30
+
+# T5 (2026-06-15): B4 milestone marked DORMANT by operator decision. The
+# limiter is UNDER signal QUALITY, not session count -- score_event UNDER FV
+# is near-flat (~0.30), per-line UNDER overfits, and under-pair liquidity is
+# ~49%, so the honest enforce-mode (2026-06-11 fix) correctly emits FEW
+# defensible bets (~8 in 2 weeks). Forcing volume would only churn the verdict
+# ladder, never clear B4's ROI/calibration conditions -- so treating B4 as an
+# active ticking clock created ~a-year of false-urgency INSUFFICIENT_SESSIONS
+# noise. When dormant, the block reports status=DORMANT (keeping the underlying
+# ladder + per-condition progress visible in the JSON) and suppresses the
+# verdict-ladder Notes alerts. M_under_paper keeps running so honest UNDER data
+# accrues passively; flip back to False to re-activate when UNDER signal
+# quality improves (better UNDER calibrator / market-anchored alpha for
+# no_score_drift / higher under-pair liquidity). See ROADMAP_MARKET_MAKER.md B4.
+B4_MILESTONE_DORMANT = True
 
 # 2026-06-03: extended from 2-tuple (label, path) to 3-tuple
 # (label, path, rebuilt_each_refresh) to suppress transient STALE

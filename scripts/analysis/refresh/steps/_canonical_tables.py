@@ -143,13 +143,17 @@ def build_canonical_table_steps(
                 "table). Mode tag on each row preserves the "
                 "live/paper distinction for downstream consumers "
                 "that need to filter (any metric using "
-                "realized P&L or fill behavior)."
+                "realized P&L or fill behavior). --include-fleet also "
+                "emits a SEPARATE labeled fleet table (T2/Hygiene #6) "
+                "under unified_signals_fleet/ -- never pooled into this "
+                "canonical signals_master."
             ),
             command=[
                 _python(),
                 _script("scripts/analysis/build_unified_signal_table.py"),
                 "--mode",
                 "both",
+                "--include-fleet",
                 *max_date_args,
                 *strict_flag,
             ],

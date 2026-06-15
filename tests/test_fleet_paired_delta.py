@@ -99,6 +99,20 @@ class FleetPairedDeltaTests(unittest.TestCase):
         payload = self._run(excluded_root_names=("paper_trading",))
         self.assertEqual(payload["status"], "no_fleet_roots")
 
+    def test_execution_sensitive_flag_set_for_fill_dependent_presets(self):
+        """T6: F_no_dedup / M_under_paper deltas depend on fill behaviour
+        paper overstates -> flagged execution_sensitive; FV-level arms are
+        not."""
+        shared = _bet(100, 7.5, 6, True, 5.0)
+        _write_session(self.root, "A_current", ANCHOR, [shared])
+        _write_session(self.root, "F_no_dedup", ANCHOR,
+                       [shared, _bet(200, 8.5, 7, True, 6.0)])
+        _write_session(self.root, "B_cal_only", ANCHOR,
+                       [shared, _bet(300, 9.5, 8, False, -10.0)])
+        eng = self._run()["engines"]
+        self.assertTrue(eng["F_no_dedup"]["execution_sensitive"])
+        self.assertFalse(eng["B_cal_only"]["execution_sensitive"])
+
     def test_retired_presets_excluded_by_default(self):
         """Retired fleet presets (E/G/N, removed from the launcher
         PRESETS on 2026-06-10) keep their data/paper_<label> root until

@@ -419,6 +419,26 @@ def build_audit_research_steps(
     ))
 
     steps.append(RefreshStep(
+        name="shadow_clv",
+        description=(
+            "T1 shadow-CLV / post-signal market-path collector (2026-06-14). "
+            "For every PLACED candidate the engine emits a 2-min @1s forward "
+            "order-book capture (book_captures/, deduped via shared captures). "
+            "This reads them across all roots, joins outcomes, and measures "
+            "where the market goes right after we'd have bet -- a fill-free "
+            "CLV. Decomposes the selection-driven residual into market-knew "
+            "(losses where the market drifted away within 2 min = adverse "
+            "selection) vs model-wrong (flat). No fills needed, so it accrues "
+            "during the paper-only / dry-run window. Outputs "
+            "data/analysis_output/shadow_clv/."
+        ),
+        command=[
+            _python(),
+            _script("scripts/analysis/build_shadow_clv.py"),
+        ],
+    ))
+
+    steps.append(RefreshStep(
         name="refresh_health_rollup",
         kind="inline",
         description=(
