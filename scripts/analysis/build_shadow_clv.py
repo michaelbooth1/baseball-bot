@@ -85,6 +85,15 @@ MODEL_SIDE_CORR_CEILING = 0.10  # near-zero corr => market is as blind as we are
 TAPE_MIN_FOR_SUBVERDICT = 10
 TAPE_SUBVERDICT_SHARE = 0.60
 
+# Liquidity-filter validation: bucket realized taker ROI by entry book quality
+# (spread / top-of-book depth / trade-recency) into tertiles. A filter is only
+# ACTIONABLE if the thin/wide end is materially -EV while the rest stays
+# profitable -- otherwise the chasing drift is a benign CLV drag and a filter
+# would just bleed volume ("skip flat-tape" is a trap: ~98% of bets are flat).
+BOOK_QUALITY_MIN_SETTLED = 60
+BOOK_QUALITY_EV_THRESHOLD = 0.05   # worse-end ROI must be <= -5% to be actionable
+BOOK_QUALITY_MIN_BUCKET_N = 20
+
 # Roots whose book_captures we never treat as a config arm.
 EXCLUDED_ROOT_NAMES = ("paper_trading",)
 
@@ -345,10 +354,27 @@ def parse_capture(
         return None
     entry_ask = float(entry_ask)
 
-    entry_mid = _mid_from_book(snaps[0][1])
+    entry_book = snaps[0][1]
+    entry_mid = _mid_from_book(entry_book)
     if entry_mid is None:
         # Fall back to entry_ask as the entry mark (one-sided book at t0).
         entry_mid = entry_ask
+
+    # Entry book quality (for the liquidity-filter validation): how thin/wide
+    # was the book the moment we'd have bet?
+    eb_bid = entry_book.get("best_bid")
+    eb_ask = entry_book.get("best_ask")
+    entry_spread = (
+        round(float(eb_ask) - float(eb_bid), 4)
+        if isinstance(eb_bid, (int, float)) and isinstance(eb_ask, (int, float))
+        else None
+    )
+    bbs = entry_book.get("best_bid_size")
+    bas = entry_book.get("best_ask_size")
+    entry_top_depth = (
+        round(float(bbs or 0.0) + float(bas or 0.0), 2)
+        if (bbs is not None or bas is not None) else None
+    )
 
     row: Dict[str, Any] = {
         "bet_id": signal.get("bet_id"),
@@ -365,6 +391,8 @@ def parse_capture(
         "base_fair_value": round(float(base_fv), 4) if isinstance(base_fv, (int, float)) else None,
         "raw_fv_band": _raw_fv_band(float(raw_fv) if isinstance(raw_fv, (int, float)) else None),
         "entry_mid": round(entry_mid, 4),
+        "entry_spread": entry_spread,
+        "entry_top_depth": entry_top_depth,
         "max_elapsed_s": round(snaps[-1][0], 1),
     }
 
@@ -444,6 +472,112 @@ def _dedup_key(r: Dict[str, Any]) -> Tuple[Any, Any, Any, str]:
         r.get("game_pk"), r.get("line"), r.get("token_id"),
         str(r.get("entry_ts"))[:19],
     )
+
+
+def _taker_profit(row: Dict[str, Any]) -> Optional[float]:
+    """Realized taker ROI per $1 cost for an OVER bet entered at entry_ask:
+    (1-a)/a on a win, -1 on a loss. None if unsettled / no ask."""
+    if not row.get("settled"):
+        return None
+    a = row.get("entry_ask")
+    if not isinstance(a, (int, float)) or a <= 0:
+        return None
+    return (1.0 - a) / a if row.get("won") else -1.0
+
+
+def _book_quality_tertiles(
+    rows: List[Dict[str, Any]], key: str, *, higher_is_worse: bool, label: str,
+) -> Optional[Dict[str, Any]]:
+    """Bucket settled rows into low/mid/high tertiles of `key` and report
+    cohort taker-ROI / win-rate / n per bucket, marking the 'worse' (thin/wide)
+    end."""
+    pairs = [
+        (r[key], _taker_profit(r), bool(r.get("won")))
+        for r in rows
+        if isinstance(r.get(key), (int, float)) and _taker_profit(r) is not None
+    ]
+    if len(pairs) < 30:
+        return None
+    sv = sorted(p[0] for p in pairs)
+    q1 = sv[len(sv) // 3]
+    q2 = sv[2 * len(sv) // 3]
+    bk: Dict[str, List[Tuple[float, bool]]] = {"low": [], "mid": [], "high": []}
+    for v, prof, won in pairs:
+        b = "low" if v < q1 else ("mid" if v < q2 else "high")
+        bk[b].append((prof, won))
+
+    def _stats(items: List[Tuple[float, bool]]) -> Dict[str, Any]:
+        n = len(items)
+        return {
+            "n": n,
+            "roi": round(sum(p for p, _ in items) / n, 4) if n else None,
+            "win_rate": round(sum(1 for _, w in items if w) / n, 4) if n else None,
+        }
+
+    worse = "high" if higher_is_worse else "low"
+    better = "low" if higher_is_worse else "high"
+    out = {
+        "metric": label,
+        "tertile_cuts": [round(q1, 4), round(q2, 4)],
+        "higher_is_worse": higher_is_worse,
+        "worse_end": worse,
+        "buckets": {b: _stats(bk[b]) for b in ("low", "mid", "high")},
+    }
+    wr, br = out["buckets"][worse]["roi"], out["buckets"][better]["roi"]
+    out["worse_minus_better_roi"] = (
+        round(wr - br, 4) if (wr is not None and br is not None) else None
+    )
+    return out
+
+
+def _book_quality_verdict(
+    bq: Dict[str, Any], n_settled: int,
+) -> Dict[str, Any]:
+    """ACTIONABLE_FILTER if any dimension splits into a clearly +EV 'good' end
+    and a materially -EV remainder (filter to keep the good end). Compares the
+    good-end tertile against the OTHER TWO combined, so it catches the real
+    shape -- e.g. only deep books are +EV while the bottom 2/3 by depth lose --
+    not just worst-tertile-vs-best. Otherwise BENIGN_DRAG: the chasing drift
+    doesn't separate a losing cohort, so a filter would just bleed volume."""
+    if n_settled < BOOK_QUALITY_MIN_SETTLED:
+        return {"verdict": "INSUFFICIENT_DATA", "actionable_dimensions": []}
+    actionable: List[Dict[str, Any]] = []
+    for dim, res in bq.items():
+        if not res:
+            continue
+        worse = res["worse_end"]
+        good = "low" if worse == "high" else "high"
+        b = res["buckets"]
+        good_roi = b[good]["roi"]
+        good_n = b[good]["n"]
+        rest_keys = [k for k in ("low", "mid", "high") if k != good]
+        rest_n = sum(b[k]["n"] for k in rest_keys)
+        rest_roi = (
+            sum(b[k]["n"] * b[k]["roi"] for k in rest_keys if b[k]["roi"] is not None)
+            / rest_n
+        ) if rest_n else None
+        if good_roi is None or rest_roi is None:
+            continue
+        if (
+            good_roi >= BOOK_QUALITY_EV_THRESHOLD
+            and rest_roi <= -BOOK_QUALITY_EV_THRESHOLD
+            and good_n >= BOOK_QUALITY_MIN_BUCKET_N
+            and rest_n >= BOOK_QUALITY_MIN_BUCKET_N
+        ):
+            cut = res["tertile_cuts"][1] if good == "high" else res["tertile_cuts"][0]
+            actionable.append({
+                "dimension": dim,
+                "keep_end": good,
+                "threshold": cut,  # keep good>=cut (high) or good<cut (low)
+                "keep_roi": good_roi,
+                "filtered_roi": round(rest_roi, 4),
+                "keep_n": good_n,
+                "filtered_n": rest_n,
+            })
+    return {
+        "verdict": "ACTIONABLE_FILTER" if actionable else "BENIGN_DRAG",
+        "actionable_dimensions": actionable,
+    }
 
 
 def aggregate(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -593,6 +727,27 @@ def aggregate(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
     summary["tape_subverdict"] = _tape_subverdict(n_cls, informed, flat)
 
+    # Liquidity-filter validation: does entry book quality separate a -EV
+    # sub-cohort (-> filter threshold) or is the chasing drift a benign drag?
+    n_settled_roi = sum(1 for r in settled if _taker_profit(r) is not None)
+    summary["overall_taker_roi"] = (
+        round(
+            sum(_taker_profit(r) for r in settled if _taker_profit(r) is not None)
+            / n_settled_roi, 4,
+        ) if n_settled_roi else None
+    )
+    bq = {
+        "spread": _book_quality_tertiles(
+            settled, "entry_spread", higher_is_worse=True, label="entry_spread"),
+        "top_depth": _book_quality_tertiles(
+            settled, "entry_top_depth", higher_is_worse=False, label="entry_top_depth"),
+        "seconds_since_trade": _book_quality_tertiles(
+            settled, "tape_seconds_since_trade", higher_is_worse=True,
+            label="seconds_since_last_trade"),
+    }
+    summary["by_book_quality"] = bq
+    summary["book_quality_verdict"] = _book_quality_verdict(bq, n_settled_roi)
+
     summary["thresholds"] = {
         "flat_threshold": FLAT_THRESHOLD,
         "horizons_s": list(HORIZONS_S),
@@ -694,6 +849,36 @@ def render_markdown(summary: Dict[str, Any], generated_at: str) -> str:
     L.append("")
     L.append(f"- adverse-loss tape directions: {td.get('adverse_loss_by_tape_direction')}")
     L.append("")
+    L.append("## Liquidity filter validation (taker ROI by entry book quality)")
+    bv = summary.get("book_quality_verdict") or {}
+    L.append(
+        f"**Verdict: {bv.get('verdict', 'n/a')}** "
+        f"(overall taker ROI {_pct(summary.get('overall_taker_roi'))} on "
+        f"{summary.get('n_settled_with_path', 0)} settled). 'Skip flat-tape' is a "
+        "trap (~all bets are flat); the question is whether a continuous "
+        "book-quality metric separates a -EV cohort."
+    )
+    for d in bv.get("actionable_dimensions") or []:
+        L.append(
+            f"- ✅ **{d['dimension']}**: keep `{d['keep_end']}` end at cut "
+            f"{d['threshold']} -> kept ROI {_pct(d['keep_roi'])} (n={d['keep_n']}) "
+            f"vs filtered {_pct(d['filtered_roi'])} (n={d['filtered_n']})."
+        )
+    L.append("")
+    L.append("| dimension | tertile | n | win rate | taker ROI |")
+    L.append("|---|---|---:|---:|---:|")
+    for dim, res in (summary.get("by_book_quality") or {}).items():
+        if not res:
+            L.append(f"| {dim} | (insufficient) | | | |")
+            continue
+        for t in ("low", "mid", "high"):
+            bb = res["buckets"][t]
+            star = " *(worse)*" if t == res["worse_end"] else ""
+            L.append(
+                f"| {dim} | {t}{star} | {bb['n']} | {_pct(bb['win_rate'])} | "
+                f"{_pct(bb['roi'])} |"
+            )
+    L.append("")
     L.append("## By raw-FV band")
     L.append("| band | n | win rate | mean drift | mean loss drift |")
     L.append("|---|---:|---:|---:|---:|")
@@ -744,6 +929,7 @@ def build(
         r["tape_trades_30s"] = feat.get("trades_last_30s_count") if feat else None
         r["tape_signed_vol_30s"] = feat.get("signed_volume_last_30s") if feat else None
         r["tape_ltp_minus_ask"] = feat.get("ltp_minus_ask_last_3_trades") if feat else None
+        r["tape_seconds_since_trade"] = feat.get("seconds_since_last_trade") if feat else None
         r["tape_direction"] = _tape_direction(feat)
 
     summary = aggregate(rows)

@@ -1,5 +1,5 @@
 {
-  "built_at": "2026-06-14T21:27:49.866687+00:00",
+  "built_at": "2026-06-15T21:42:44.075496+00:00",
   "season": 2026,
   "min_ip_threshold": 5.0,
   "mlb_avg_era": 4.2,
@@ -149,12 +149,6 @@
       "ip": 84.7,
       "gs": 14
     },
-    "813349": {
-      "name": "Connelly Early",
-      "era": 3.3,
-      "ip": 71.0,
-      "gs": 13
-    },
     "668909": {
       "name": "Gavin Williams",
       "era": 3.32,
@@ -213,6 +207,12 @@
       "name": "Randy V\u00e1squez",
       "era": 3.63,
       "ip": 74.3,
+      "gs": 14
+    },
+    "813349": {
+      "name": "Connelly Early",
+      "era": 3.81,
+      "ip": 75.7,
       "gs": 14
     },
     "607625": {
@@ -293,6 +293,12 @@
       "ip": 72.7,
       "gs": 13
     },
+    "543135": {
+      "name": "Nathan Eovaldi",
+      "era": 4.23,
+      "ip": 87.3,
+      "gs": 14
+    },
     "694738": {
       "name": "Landen Roupp",
       "era": 4.24,
@@ -304,12 +310,6 @@
       "era": 4.25,
       "ip": 97.3,
       "gs": 15
-    },
-    "543135": {
-      "name": "Nathan Eovaldi",
-      "era": 4.26,
-      "ip": 80.3,
-      "gs": 13
     },
     "693433": {
       "name": "Bryan Woo",

@@ -243,5 +243,45 @@ class TapeLayerTests(unittest.TestCase):
             self.assertAlmostEqual(td_["flat_share"], 1.0)
 
 
+class BookQualityVerdictTests(unittest.TestCase):
+
+    def test_taker_profit(self):
+        self.assertAlmostEqual(
+            m._taker_profit({"settled": True, "won": True, "entry_ask": 0.5}), 1.0)
+        self.assertEqual(
+            m._taker_profit({"settled": True, "won": False, "entry_ask": 0.5}), -1.0)
+        self.assertIsNone(m._taker_profit({"settled": False}))
+        self.assertIsNone(m._taker_profit({"settled": True, "won": True, "entry_ask": 0}))
+
+    def _depth_bq(self, low, mid, high):
+        return {"top_depth": {
+            "metric": "entry_top_depth", "tertile_cuts": [400.0, 5800.0],
+            "higher_is_worse": False, "worse_end": "low",
+            "buckets": {
+                "low": {"n": 200, "roi": low, "win_rate": 0.69},
+                "mid": {"n": 200, "roi": mid, "win_rate": 0.66},
+                "high": {"n": 200, "roi": high, "win_rate": 0.78},
+            },
+        }}
+
+    def test_actionable_when_good_end_positive_and_rest_negative(self):
+        # Real shape: bottom 2/3 by depth -EV, deep books +EV.
+        v = m._book_quality_verdict(self._depth_bq(-0.04, -0.06, 0.13), 600)
+        self.assertEqual(v["verdict"], "ACTIONABLE_FILTER")
+        d = v["actionable_dimensions"][0]
+        self.assertEqual(d["dimension"], "top_depth")
+        self.assertEqual(d["keep_end"], "high")
+        self.assertEqual(d["threshold"], 5800.0)
+
+    def test_benign_when_good_end_not_clearly_positive(self):
+        # Deep books only marginally better -> no actionable split.
+        v = m._book_quality_verdict(self._depth_bq(-0.04, -0.06, 0.02), 600)
+        self.assertEqual(v["verdict"], "BENIGN_DRAG")
+
+    def test_insufficient_data(self):
+        v = m._book_quality_verdict(self._depth_bq(-0.04, -0.06, 0.13), 50)
+        self.assertEqual(v["verdict"], "INSUFFICIENT_DATA")
+
+
 if __name__ == "__main__":
     unittest.main()

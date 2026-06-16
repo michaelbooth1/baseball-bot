@@ -115,6 +115,16 @@ class ParallelEnginesMvpTests(unittest.TestCase):
             },
         )
 
+    def test_default_launch_configs_match_presets(self):
+        """The default launch list must stay in sync with PRESETS -- a retired
+        preset left in the default list raises 'Unknown config' at launch (the
+        2026-06-15 H_late_innings/I_extreme_018 retirement bug)."""
+        self.assertEqual(set(lpe.DEFAULT_LAUNCH_CONFIGS), set(lpe.PRESETS))
+        # No accidental duplicates in the launch list.
+        self.assertEqual(
+            len(lpe.DEFAULT_LAUNCH_CONFIGS), len(set(lpe.DEFAULT_LAUNCH_CONFIGS)),
+        )
+
     def test_q_arm_is_a_current_plus_max_base_fv_only(self):
         """Q_max_base_fv_095 must be A_current EXACTLY + a single
         --max-base-fv 0.95 delta, so the paired-delta vs A_current

@@ -145,8 +145,38 @@ class AtomicReplaceWithRetryTests(unittest.TestCase):
             self.assertTrue(path.exists())
             import json as _json
             self.assertEqual(_json.loads(path.read_text()), payload)
-            # tmp file should be cleaned up after rename
-            self.assertFalse(path.with_suffix(path.suffix + ".tmp").exists())
+            # No temp debris of ANY name should remain after the rename.
+            self.assertEqual(list(path.parent.glob("*.tmp")), [])
+
+    def test_concurrent_save_json_no_collision(self):
+        """Regression (2026-06-15): the launcher's daily refresh and the
+        dry-run engine's startup refresh both call scrape_active_schedule and
+        wrote the SAME `<file>.tmp`; the loser of the atomic replace raised
+        `FileNotFoundError: ...<file>.tmp`. Unique per-writer temp names
+        (pid + random token) eliminate the race -- concurrent writers all
+        succeed and leave no debris."""
+        import json as _json
+        import threading
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "2026" / "05" / "schedule.json"
+            errors: list = []
+
+            def worker():
+                for _ in range(40):
+                    try:
+                        smh.save_json(path, {"dates": [1, 2, 3]})
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(repr(exc))
+
+            threads = [threading.Thread(target=worker) for _ in range(6)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            self.assertEqual(errors, [])
+            self.assertEqual(_json.loads(path.read_text()), {"dates": [1, 2, 3]})
+            self.assertEqual(list(path.parent.glob("*.tmp")), [])
 
 
 if __name__ == "__main__":

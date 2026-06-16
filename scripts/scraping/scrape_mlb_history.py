@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures as cf
 import json
+import os
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -301,10 +302,29 @@ def _atomic_replace_with_retry(
 
 def save_json(path: Path, payload: dict) -> None:
     ensure_dir(path.parent)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
-    _atomic_replace_with_retry(tmp, path)
+    # Unique per-process temp name (2026-06-15 fix). The launcher's daily
+    # refresh and the dry-run engine's startup refresh (run together per the
+    # operational guidance) both call scrape_active_schedule and would write
+    # the SAME `<file>.tmp`; one wins the atomic replace and the loser hit
+    # `FileNotFoundError: ...<file>.tmp` because its temp was already consumed.
+    # A pid + random-token suffix keeps each writer's temp private (random,
+    # not nanotime -- Windows' coarse clock lets two threads collide on
+    # time_ns); the atomic replace then just races to last-writer-wins on the
+    # real file (same deterministic schedule content), which is safe.
+    tmp = path.with_suffix(path.suffix + f".{os.getpid()}_{os.urandom(8).hex()}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+        _atomic_replace_with_retry(tmp, path)
+    finally:
+        # On success the temp was renamed away; on failure clean up our own
+        # temp so a crashed/raced writer doesn't leave debris behind.
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
 
 
 def _cached_game_is_final(path: Path) -> bool:

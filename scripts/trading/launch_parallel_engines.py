@@ -299,6 +299,16 @@ PRESETS: Dict[str, List[str]] = {
     ],
 }
 
+# Presets launched by default (no --config). MUST stay in sync with PRESETS --
+# a retired preset left here raises "Unknown config" at launch (the 2026-06-15
+# H/I retirement bug). test_default_launch_configs_match_presets guards this.
+DEFAULT_LAUNCH_CONFIGS: List[str] = [
+    "A_current", "B_cal_only", "C_raw", "D_scope_only",
+    "F_no_dedup", "J_no_phantom_filter", "K_line5p5_block",
+    "L_enforce_min_raw_095", "M_under_paper",
+    "O_nb_stage1", "P_alt_a_cache", "Q_max_base_fv_095",
+]
+
 PRESET_ALIASES = {
     "enforce_enforce": "A_current",
     "enforce_shadow": "B_cal_only",
@@ -445,11 +455,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help=(
             "Config preset or label:preset. Presets: A_current, "
             "B_cal_only, C_raw, D_scope_only, F_no_dedup, "
-            "H_late_innings, I_extreme_018, J_no_phantom_filter, "
-            "K_line5p5_block, L_enforce_min_raw_095, M_under_paper, "
-            "O_nb_stage1, P_alt_a_cache. "
+            "J_no_phantom_filter, K_line5p5_block, L_enforce_min_raw_095, "
+            "M_under_paper, O_nb_stage1, P_alt_a_cache, Q_max_base_fv_095. "
             "Aliases: enforce_enforce, enforce_shadow, shadow_shadow. "
-            "May be repeated. Default (no --config): all 13 presets."
+            "May be repeated. Default (no --config): all 12 presets."
         ),
     )
     p.add_argument(
@@ -1259,13 +1268,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # first model-version arms: Stage-1 cache swaps (NB tail / full
     # Alt-A) under the production calibrator, feeding the RF2 +
     # Active #8 decision with live-fire paper evidence.
-    raw_configs = args.config or [
-        "A_current", "B_cal_only", "C_raw", "D_scope_only",
-        "F_no_dedup", "H_late_innings",
-        "I_extreme_018", "J_no_phantom_filter", "K_line5p5_block",
-        "L_enforce_min_raw_095", "M_under_paper",
-        "O_nb_stage1", "P_alt_a_cache",
-    ]
+    # 2026-06-15 (T3/T4): retired H_late_innings + I_extreme_018 (trending
+    # -EV, questions owned canonically) and added Q_max_base_fv_095 (the
+    # gate_max_base_fv=0.95 decision arm) -> 12 total. The default list lives
+    # in DEFAULT_LAUNCH_CONFIGS (kept in sync with PRESETS by a test).
+    raw_configs = args.config or list(DEFAULT_LAUNCH_CONFIGS)
     configs = [_resolve_config(raw, Path(args.paper_root_prefix)) for raw in raw_configs]
 
     labels = [cfg.label for cfg in configs]

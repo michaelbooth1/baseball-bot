@@ -1,6 +1,6 @@
 {
   "meta": {
-    "built": "2026-06-14T22:30:33.592583Z",
+    "built": "2026-06-15T23:01:25.457838Z",
     "sport": "mlb",
     "model_type": "stage2_run_environment_residual",
     "stage1_cache": "C:\\Users\\micha\\Desktop\\github\\NHL-BOT\\baseball\\cache\\mlb_ou_cache.json",
@@ -8,13 +8,13 @@
     "game_types": [
       "R"
     ],
-    "games_loaded": 24291,
-    "samples_total": 1839620,
-    "samples_with_stage1": 1328649,
-    "samples_without_stage1": 510971,
+    "games_loaded": 24305,
+    "samples_total": 1840687,
+    "samples_with_stage1": 1329443,
+    "samples_without_stage1": 511244,
     "train_end_year": 2024,
     "validation_start_year": 2025,
-    "validation_rows": 193971,
+    "validation_rows": 194765,
     "lines": {
       "6.5": {
         "threshold": 7,
@@ -155,10 +155,10 @@
       "hr_factor": 0.5
     },
     "9.5": {
-      "park": 0.5,
+      "park": 0.75,
       "temp": 0.5,
       "wind": 0.0,
-      "park_wind": 0.4,
+      "park_wind": 0.2,
       "density_alt": 0.5,
       "hr_factor": 0.5
     },
@@ -181,76 +181,76 @@
   },
   "validation_metrics": {
     "6.5": {
-      "validation_rows": 193971,
-      "baseline_brier": 0.168895,
-      "stage2_brier": 0.168408,
-      "baseline_logloss": 0.491847,
-      "stage2_logloss": 0.490643,
-      "brier_gain_abs": 0.000488,
-      "brier_gain_pct": 0.2887
+      "validation_rows": 194765,
+      "baseline_brier": 0.168813,
+      "stage2_brier": 0.168307,
+      "baseline_logloss": 0.491619,
+      "stage2_logloss": 0.490378,
+      "brier_gain_abs": 0.000506,
+      "brier_gain_pct": 0.2998
     },
     "7.5": {
-      "validation_rows": 193971,
-      "baseline_brier": 0.182871,
-      "stage2_brier": 0.181882,
-      "baseline_logloss": 0.530511,
-      "stage2_logloss": 0.528209,
-      "brier_gain_abs": 0.000989,
-      "brier_gain_pct": 0.541
+      "validation_rows": 194765,
+      "baseline_brier": 0.18282,
+      "stage2_brier": 0.181826,
+      "baseline_logloss": 0.530379,
+      "stage2_logloss": 0.528064,
+      "brier_gain_abs": 0.000995,
+      "brier_gain_pct": 0.5441
     },
     "8.5": {
-      "validation_rows": 193971,
-      "baseline_brier": 0.18079,
-      "stage2_brier": 0.179655,
-      "baseline_logloss": 0.52866,
-      "stage2_logloss": 0.5259,
-      "brier_gain_abs": 0.001135,
-      "brier_gain_pct": 0.6279
+      "validation_rows": 194765,
+      "baseline_brier": 0.180815,
+      "stage2_brier": 0.179719,
+      "baseline_logloss": 0.52871,
+      "stage2_logloss": 0.526029,
+      "brier_gain_abs": 0.001097,
+      "brier_gain_pct": 0.6065
     },
     "9.5": {
-      "validation_rows": 193971,
-      "baseline_brier": 0.170668,
-      "stage2_brier": 0.16939,
-      "baseline_logloss": 0.507954,
-      "stage2_logloss": 0.504983,
-      "brier_gain_abs": 0.001277,
-      "brier_gain_pct": 0.7485
+      "validation_rows": 194765,
+      "baseline_brier": 0.170767,
+      "stage2_brier": 0.169515,
+      "baseline_logloss": 0.508186,
+      "stage2_logloss": 0.505282,
+      "brier_gain_abs": 0.001252,
+      "brier_gain_pct": 0.733
     },
     "10.5": {
-      "validation_rows": 193971,
-      "baseline_brier": 0.157362,
-      "stage2_brier": 0.156294,
-      "baseline_logloss": 0.477002,
-      "stage2_logloss": 0.474255,
-      "brier_gain_abs": 0.001068,
-      "brier_gain_pct": 0.6788
+      "validation_rows": 194765,
+      "baseline_brier": 0.157405,
+      "stage2_brier": 0.156377,
+      "baseline_logloss": 0.477072,
+      "stage2_logloss": 0.474425,
+      "brier_gain_abs": 0.001028,
+      "brier_gain_pct": 0.653
     },
     "11.5": {
-      "validation_rows": 193971,
-      "baseline_brier": 0.131387,
-      "stage2_brier": 0.130733,
-      "baseline_logloss": 0.41374,
-      "stage2_logloss": 0.411767,
-      "brier_gain_abs": 0.000654,
-      "brier_gain_pct": 0.4978
+      "validation_rows": 194765,
+      "baseline_brier": 0.131049,
+      "stage2_brier": 0.130411,
+      "baseline_logloss": 0.412917,
+      "stage2_logloss": 0.410982,
+      "brier_gain_abs": 0.000638,
+      "brier_gain_pct": 0.4867
     }
   },
   "tables": {
     "park": {
       "6.5": {
         "Kauffman Stadium": {
-          "n": 43721,
-          "raw_mean": 0.644468,
-          "emp_rate": 0.663983,
-          "emp_shrunk": 0.663336,
-          "delta": 0.083383
+          "n": 43776,
+          "raw_mean": 0.64431,
+          "emp_rate": 0.663149,
+          "emp_shrunk": 0.662525,
+          "delta": 0.080444
         },
         "PNC Park": {
-          "n": 43937,
-          "raw_mean": 0.638239,
-          "emp_rate": 0.634249,
-          "emp_shrunk": 0.634381,
-          "delta": -0.016674
+          "n": 44002,
+          "raw_mean": 0.638077,
+          "emp_rate": 0.633312,
+          "emp_shrunk": 0.633469,
+          "delta": -0.019897
         },
         "Tropicana Field": {
           "n": 40211,
@@ -295,18 +295,18 @@
           "delta": -0.120464
         },
         "Oriole Park at Camden Yards": {
-          "n": 44672,
-          "raw_mean": 0.657142,
-          "emp_rate": 0.663458,
-          "emp_shrunk": 0.663253,
-          "delta": 0.027239
+          "n": 44739,
+          "raw_mean": 0.657084,
+          "emp_rate": 0.663962,
+          "emp_shrunk": 0.663739,
+          "delta": 0.029676
         },
         "Great American Ball Park": {
-          "n": 43296,
-          "raw_mean": 0.663802,
-          "emp_rate": 0.692327,
-          "emp_shrunk": 0.691372,
-          "delta": 0.126258
+          "n": 43368,
+          "raw_mean": 0.663954,
+          "emp_rate": 0.692838,
+          "emp_shrunk": 0.691872,
+          "delta": 0.127924
         },
         "Miller Park": {
           "n": 19632,
@@ -351,18 +351,18 @@
           "delta": -0.15861
         },
         "Nationals Park": {
-          "n": 44607,
-          "raw_mean": 0.653722,
-          "emp_rate": 0.659403,
-          "emp_shrunk": 0.659218,
-          "delta": 0.024372
+          "n": 44654,
+          "raw_mean": 0.653913,
+          "emp_rate": 0.659762,
+          "emp_shrunk": 0.659572,
+          "delta": 0.025103
         },
         "Rogers Centre": {
-          "n": 39613,
-          "raw_mean": 0.643397,
-          "emp_rate": 0.663444,
-          "emp_shrunk": 0.662712,
-          "delta": 0.085267
+          "n": 39678,
+          "raw_mean": 0.643656,
+          "emp_rate": 0.663995,
+          "emp_shrunk": 0.663254,
+          "delta": 0.086561
         },
         "U.S. Cellular Field": {
           "n": 4551,
@@ -386,11 +386,11 @@
           "delta": -0.175723
         },
         "Citi Field": {
-          "n": 46285,
-          "raw_mean": 0.622543,
-          "emp_rate": 0.593302,
-          "emp_shrunk": 0.59422,
-          "delta": -0.118919
+          "n": 46335,
+          "raw_mean": 0.622861,
+          "emp_rate": 0.593741,
+          "emp_shrunk": 0.594654,
+          "delta": -0.11847
         },
         "Coors Field": {
           "n": 39790,
@@ -400,18 +400,18 @@
           "delta": 0.516122
         },
         "Fenway Park": {
-          "n": 42974,
-          "raw_mean": 0.674716,
-          "emp_rate": 0.717317,
-          "emp_shrunk": 0.715881,
-          "delta": 0.194525
+          "n": 43024,
+          "raw_mean": 0.675024,
+          "emp_rate": 0.717646,
+          "emp_shrunk": 0.71621,
+          "delta": 0.194742
         },
         "Target Field": {
-          "n": 44510,
-          "raw_mean": 0.661474,
-          "emp_rate": 0.67987,
-          "emp_shrunk": 0.67927,
-          "delta": 0.080549
+          "n": 44573,
+          "raw_mean": 0.661448,
+          "emp_rate": 0.680322,
+          "emp_shrunk": 0.679708,
+          "delta": 0.082675
         },
         "Wrigley Field": {
           "n": 44706,
@@ -470,11 +470,11 @@
           "delta": -0.038441
         },
         "Angel Stadium": {
-          "n": 34864,
-          "raw_mean": 0.66645,
-          "emp_rate": 0.678494,
-          "emp_shrunk": 0.677997,
-          "delta": 0.052411
+          "n": 34926,
+          "raw_mean": 0.666719,
+          "emp_rate": 0.679064,
+          "emp_shrunk": 0.678556,
+          "delta": 0.05376
         },
         "Estadio de Beisbol Monterrey": {
           "n": 367,
@@ -498,11 +498,11 @@
           "delta": -0.086864
         },
         "Oracle Park": {
-          "n": 30815,
-          "raw_mean": 0.628273,
-          "emp_rate": 0.612461,
-          "emp_shrunk": 0.613195,
-          "delta": -0.064051
+          "n": 30878,
+          "raw_mean": 0.627767,
+          "emp_rate": 0.611212,
+          "emp_shrunk": 0.611979,
+          "delta": -0.067013
         },
         "London Stadium": {
           "n": 243,
@@ -533,11 +533,11 @@
           "delta": 0.102264
         },
         "American Family Field": {
-          "n": 24848,
-          "raw_mean": 0.63209,
-          "emp_rate": 0.623793,
-          "emp_shrunk": 0.624265,
-          "delta": -0.033503
+          "n": 24911,
+          "raw_mean": 0.631691,
+          "emp_rate": 0.622215,
+          "emp_shrunk": 0.622753,
+          "delta": -0.038226
         },
         "loanDepot park": {
           "n": 24802,
@@ -561,11 +561,11 @@
           "delta": 0.220978
         },
         "Rate Field": {
-          "n": 6707,
-          "raw_mean": 0.643131,
-          "emp_rate": 0.671239,
-          "emp_shrunk": 0.666102,
-          "delta": 0.101627
+          "n": 6771,
+          "raw_mean": 0.643357,
+          "emp_rate": 0.674346,
+          "emp_shrunk": 0.668726,
+          "delta": 0.112467
         },
         "Daikin Park": {
           "n": 6434,
@@ -596,27 +596,27 @@
           "delta": -0.11964
         },
         "Las Vegas Ballpark": {
-          "n": 245,
-          "raw_mean": 0.765311,
+          "n": 253,
+          "raw_mean": 0.765555,
           "emp_rate": 1.0,
-          "emp_shrunk": 0.798261,
-          "delta": 0.193444
+          "emp_shrunk": 0.799391,
+          "delta": 0.199113
         }
       },
       "7.5": {
         "Kauffman Stadium": {
-          "n": 43721,
-          "raw_mean": 0.522143,
-          "emp_rate": 0.552503,
-          "emp_shrunk": 0.551496,
-          "delta": 0.118089
+          "n": 43776,
+          "raw_mean": 0.52199,
+          "emp_rate": 0.551809,
+          "emp_shrunk": 0.550821,
+          "delta": 0.115973
         },
         "PNC Park": {
-          "n": 43937,
-          "raw_mean": 0.519825,
-          "emp_rate": 0.536245,
-          "emp_shrunk": 0.535703,
-          "delta": 0.063715
+          "n": 44002,
+          "raw_mean": 0.519657,
+          "emp_rate": 0.535453,
+          "emp_shrunk": 0.534932,
+          "delta": 0.061287
         },
         "Tropicana Field": {
           "n": 40211,
@@ -661,18 +661,18 @@
           "delta": -0.10188
         },
         "Oriole Park at Camden Yards": {
-          "n": 44672,
-          "raw_mean": 0.535474,
-          "emp_rate": 0.557978,
-          "emp_shrunk": 0.557247,
-          "delta": 0.08786
+          "n": 44739,
+          "raw_mean": 0.535327,
+          "emp_rate": 0.557143,
+          "emp_shrunk": 0.556435,
+          "delta": 0.085163
         },
         "Great American Ball Park": {
-          "n": 43296,
-          "raw_mean": 0.542596,
-          "emp_rate": 0.594351,
-          "emp_shrunk": 0.592618,
-          "delta": 0.203997
+          "n": 43368,
+          "raw_mean": 0.542643,
+          "emp_rate": 0.595024,
+          "emp_shrunk": 0.593273,
+          "delta": 0.206525
         },
         "Miller Park": {
           "n": 19632,
@@ -717,18 +717,18 @@
           "delta": -0.14505
         },
         "Nationals Park": {
-          "n": 44607,
-          "raw_mean": 0.533902,
-          "emp_rate": 0.552514,
-          "emp_shrunk": 0.551909,
-          "delta": 0.072569
+          "n": 44654,
+          "raw_mean": 0.534094,
+          "emp_rate": 0.552985,
+          "emp_shrunk": 0.552371,
+          "delta": 0.073669
         },
         "Rogers Centre": {
-          "n": 39613,
-          "raw_mean": 0.520045,
-          "emp_rate": 0.547447,
-          "emp_shrunk": 0.546447,
-          "delta": 0.106102
+          "n": 39678,
+          "raw_mean": 0.520194,
+          "emp_rate": 0.548188,
+          "emp_shrunk": 0.547168,
+          "delta": 0.108415
         },
         "U.S. Cellular Field": {
           "n": 4551,
@@ -752,11 +752,11 @@
           "delta": -0.051304
         },
         "Citi Field": {
-          "n": 46285,
-          "raw_mean": 0.497379,
-          "emp_rate": 0.454316,
-          "emp_shrunk": 0.455667,
-          "delta": -0.167314
+          "n": 46335,
+          "raw_mean": 0.497671,
+          "emp_rate": 0.454904,
+          "emp_shrunk": 0.456246,
+          "delta": -0.166152
         },
         "Coors Field": {
           "n": 39790,
@@ -766,18 +766,18 @@
           "delta": 0.476199
         },
         "Fenway Park": {
-          "n": 42974,
-          "raw_mean": 0.551018,
-          "emp_rate": 0.609555,
-          "emp_shrunk": 0.60758,
-          "delta": 0.232367
+          "n": 43024,
+          "raw_mean": 0.551418,
+          "emp_rate": 0.610008,
+          "emp_shrunk": 0.608034,
+          "delta": 0.232656
         },
         "Target Field": {
-          "n": 44510,
-          "raw_mean": 0.540909,
-          "emp_rate": 0.583914,
-          "emp_shrunk": 0.582512,
-          "delta": 0.169091
+          "n": 44573,
+          "raw_mean": 0.54088,
+          "emp_rate": 0.584502,
+          "emp_shrunk": 0.583082,
+          "delta": 0.171552
         },
         "Wrigley Field": {
           "n": 44706,
@@ -836,11 +836,11 @@
           "delta": 0.029427
         },
         "Angel Stadium": {
-          "n": 34864,
-          "raw_mean": 0.542719,
-          "emp_rate": 0.566573,
-          "emp_shrunk": 0.565589,
-          "delta": 0.092581
+          "n": 34926,
+          "raw_mean": 0.542945,
+          "emp_rate": 0.567342,
+          "emp_shrunk": 0.566338,
+          "delta": 0.094721
         },
         "Estadio de Beisbol Monterrey": {
           "n": 367,
@@ -864,11 +864,11 @@
           "delta": -0.110073
         },
         "Oracle Park": {
-          "n": 30815,
-          "raw_mean": 0.505234,
-          "emp_rate": 0.464417,
-          "emp_shrunk": 0.466311,
-          "delta": -0.155896
+          "n": 30878,
+          "raw_mean": 0.504735,
+          "emp_rate": 0.463469,
+          "emp_shrunk": 0.465381,
+          "delta": -0.157639
         },
         "London Stadium": {
           "n": 243,
@@ -899,11 +899,11 @@
           "delta": 0.235938
         },
         "American Family Field": {
-          "n": 24848,
-          "raw_mean": 0.508702,
-          "emp_rate": 0.496619,
-          "emp_shrunk": 0.497307,
-          "delta": -0.045583
+          "n": 24911,
+          "raw_mean": 0.508324,
+          "emp_rate": 0.495363,
+          "emp_shrunk": 0.4961,
+          "delta": -0.048901
         },
         "loanDepot park": {
           "n": 24802,
@@ -927,11 +927,11 @@
           "delta": 0.252946
         },
         "Rate Field": {
-          "n": 6707,
-          "raw_mean": 0.521805,
-          "emp_rate": 0.59013,
-          "emp_shrunk": 0.577642,
-          "delta": 0.225826
+          "n": 6771,
+          "raw_mean": 0.522284,
+          "emp_rate": 0.594004,
+          "emp_shrunk": 0.580997,
+          "delta": 0.237672
         },
         "Daikin Park": {
           "n": 6434,
@@ -962,27 +962,27 @@
           "delta": -0.054651
         },
         "Las Vegas Ballpark": {
-          "n": 245,
-          "raw_mean": 0.643794,
-          "emp_rate": 0.746939,
-          "emp_shrunk": 0.658275,
-          "delta": 0.06375
+          "n": 253,
+          "raw_mean": 0.644815,
+          "emp_rate": 0.754941,
+          "emp_shrunk": 0.660709,
+          "delta": 0.07013
         }
       },
       "8.5": {
         "Kauffman Stadium": {
-          "n": 43721,
-          "raw_mean": 0.436991,
-          "emp_rate": 0.458178,
-          "emp_shrunk": 0.457475,
-          "delta": 0.082872
+          "n": 43776,
+          "raw_mean": 0.436851,
+          "emp_rate": 0.457602,
+          "emp_shrunk": 0.456915,
+          "delta": 0.081184
         },
         "PNC Park": {
-          "n": 43937,
-          "raw_mean": 0.436052,
-          "emp_rate": 0.462253,
-          "emp_shrunk": 0.461388,
-          "delta": 0.102443
+          "n": 44002,
+          "raw_mean": 0.435903,
+          "emp_rate": 0.46157,
+          "emp_shrunk": 0.460724,
+          "delta": 0.100378
         },
         "Tropicana Field": {
           "n": 40211,
@@ -1027,18 +1027,18 @@
           "delta": -0.136004
         },
         "Oriole Park at Camden Yards": {
-          "n": 44672,
-          "raw_mean": 0.450153,
-          "emp_rate": 0.46622,
-          "emp_shrunk": 0.465698,
-          "delta": 0.062632
+          "n": 44739,
+          "raw_mean": 0.449998,
+          "emp_rate": 0.465522,
+          "emp_shrunk": 0.465019,
+          "delta": 0.060525
         },
         "Great American Ball Park": {
-          "n": 43296,
-          "raw_mean": 0.456344,
-          "emp_rate": 0.505913,
-          "emp_shrunk": 0.504253,
-          "delta": 0.192083
+          "n": 43368,
+          "raw_mean": 0.456304,
+          "emp_rate": 0.505073,
+          "emp_shrunk": 0.503442,
+          "delta": 0.189001
         },
         "Miller Park": {
           "n": 19632,
@@ -1083,18 +1083,18 @@
           "delta": -0.218644
         },
         "Nationals Park": {
-          "n": 44607,
-          "raw_mean": 0.447809,
-          "emp_rate": 0.454368,
-          "emp_shrunk": 0.454155,
-          "delta": 0.025631
+          "n": 44654,
+          "raw_mean": 0.447933,
+          "emp_rate": 0.454942,
+          "emp_shrunk": 0.454715,
+          "delta": 0.027388
         },
         "Rogers Centre": {
-          "n": 39613,
-          "raw_mean": 0.434331,
-          "emp_rate": 0.459647,
-          "emp_shrunk": 0.458723,
-          "delta": 0.09872
+          "n": 39678,
+          "raw_mean": 0.434421,
+          "emp_rate": 0.460532,
+          "emp_shrunk": 0.459581,
+          "delta": 0.101807
         },
         "U.S. Cellular Field": {
           "n": 4551,
@@ -1118,11 +1118,11 @@
           "delta": 0.035525
         },
         "Citi Field": {
-          "n": 46285,
-          "raw_mean": 0.414459,
-          "emp_rate": 0.380512,
-          "emp_shrunk": 0.381578,
-          "delta": -0.137293
+          "n": 46335,
+          "raw_mean": 0.414732,
+          "emp_rate": 0.381181,
+          "emp_shrunk": 0.382233,
+          "delta": -0.135646
         },
         "Coors Field": {
           "n": 39790,
@@ -1132,18 +1132,18 @@
           "delta": 0.424463
         },
         "Fenway Park": {
-          "n": 42974,
-          "raw_mean": 0.46323,
-          "emp_rate": 0.500884,
-          "emp_shrunk": 0.499614,
-          "delta": 0.145804
+          "n": 43024,
+          "raw_mean": 0.463677,
+          "emp_rate": 0.501464,
+          "emp_shrunk": 0.500191,
+          "delta": 0.146312
         },
         "Target Field": {
-          "n": 44510,
-          "raw_mean": 0.45495,
-          "emp_rate": 0.479038,
-          "emp_shrunk": 0.478253,
-          "delta": 0.093648
+          "n": 44573,
+          "raw_mean": 0.454945,
+          "emp_rate": 0.479775,
+          "emp_shrunk": 0.478966,
+          "delta": 0.096524
         },
         "Wrigley Field": {
           "n": 44706,
@@ -1202,11 +1202,11 @@
           "delta": -0.064594
         },
         "Angel Stadium": {
-          "n": 34864,
-          "raw_mean": 0.455734,
-          "emp_rate": 0.466642,
-          "emp_shrunk": 0.466192,
-          "delta": 0.042089
+          "n": 34926,
+          "raw_mean": 0.455936,
+          "emp_rate": 0.467589,
+          "emp_shrunk": 0.467109,
+          "delta": 0.04496
         },
         "Estadio de Beisbol Monterrey": {
           "n": 367,
@@ -1230,11 +1230,11 @@
           "delta": -0.09426
         },
         "Oracle Park": {
-          "n": 30815,
-          "raw_mean": 0.420896,
-          "emp_rate": 0.372059,
-          "emp_shrunk": 0.374326,
-          "delta": -0.194607
+          "n": 30878,
+          "raw_mean": 0.420442,
+          "emp_rate": 0.3713,
+          "emp_shrunk": 0.373577,
+          "delta": -0.195942
         },
         "London Stadium": {
           "n": 243,
@@ -1265,11 +1265,11 @@
           "delta": 0.388103
         },
         "American Family Field": {
-          "n": 24848,
-          "raw_mean": 0.422532,
-          "emp_rate": 0.409007,
-          "emp_shrunk": 0.409777,
-          "delta": -0.052502
+          "n": 24911,
+          "raw_mean": 0.422172,
+          "emp_rate": 0.407972,
+          "emp_shrunk": 0.408779,
+          "delta": -0.055153
         },
         "loanDepot park": {
           "n": 24802,
@@ -1293,11 +1293,11 @@
           "delta": 0.280893
         },
         "Rate Field": {
-          "n": 6707,
-          "raw_mean": 0.439176,
-          "emp_rate": 0.464887,
-          "emp_shrunk": 0.460188,
-          "delta": 0.084921
+          "n": 6771,
+          "raw_mean": 0.439403,
+          "emp_rate": 0.469945,
+          "emp_shrunk": 0.464406,
+          "delta": 0.10097
         },
         "Daikin Park": {
           "n": 6434,
@@ -1328,27 +1328,27 @@
           "delta": 0.00547
         },
         "Las Vegas Ballpark": {
-          "n": 245,
-          "raw_mean": 0.57616,
-          "emp_rate": 0.746939,
-          "emp_shrunk": 0.600137,
-          "delta": 0.099009
+          "n": 253,
+          "raw_mean": 0.576559,
+          "emp_rate": 0.754941,
+          "emp_shrunk": 0.602304,
+          "delta": 0.10641
         }
       },
       "9.5": {
         "Kauffman Stadium": {
-          "n": 43721,
-          "raw_mean": 0.331323,
-          "emp_rate": 0.372567,
-          "emp_shrunk": 0.371199,
-          "delta": 0.175129
+          "n": 43776,
+          "raw_mean": 0.331217,
+          "emp_rate": 0.372099,
+          "emp_shrunk": 0.370744,
+          "delta": 0.173661
         },
         "PNC Park": {
-          "n": 43937,
-          "raw_mean": 0.330447,
-          "emp_rate": 0.343606,
-          "emp_shrunk": 0.343171,
-          "delta": 0.056972
+          "n": 44002,
+          "raw_mean": 0.330316,
+          "emp_rate": 0.343098,
+          "emp_shrunk": 0.342677,
+          "delta": 0.055368
         },
         "Tropicana Field": {
           "n": 40211,
@@ -1393,18 +1393,18 @@
           "delta": -0.154591
         },
         "Oriole Park at Camden Yards": {
-          "n": 44672,
-          "raw_mean": 0.343649,
-          "emp_rate": 0.348317,
-          "emp_shrunk": 0.348165,
-          "delta": 0.01996
+          "n": 44739,
+          "raw_mean": 0.343498,
+          "emp_rate": 0.347795,
+          "emp_shrunk": 0.347656,
+          "delta": 0.018384
         },
         "Great American Ball Park": {
-          "n": 43296,
-          "raw_mean": 0.344299,
-          "emp_rate": 0.358255,
-          "emp_shrunk": 0.357788,
-          "delta": 0.059213
+          "n": 43368,
+          "raw_mean": 0.344216,
+          "emp_rate": 0.35766,
+          "emp_shrunk": 0.357211,
+          "delta": 0.05707
         },
         "Miller Park": {
           "n": 19632,
@@ -1449,18 +1449,18 @@
           "delta": -0.389926
         },
         "Nationals Park": {
-          "n": 44607,
-          "raw_mean": 0.341442,
-          "emp_rate": 0.359383,
-          "emp_shrunk": 0.358799,
-          "delta": 0.076294
+          "n": 44654,
+          "raw_mean": 0.341524,
+          "emp_rate": 0.360057,
+          "emp_shrunk": 0.359455,
+          "delta": 0.078782
         },
         "Rogers Centre": {
-          "n": 39613,
-          "raw_mean": 0.327182,
-          "emp_rate": 0.325474,
-          "emp_shrunk": 0.325536,
-          "delta": -0.007484
+          "n": 39678,
+          "raw_mean": 0.32723,
+          "emp_rate": 0.326579,
+          "emp_shrunk": 0.326603,
+          "delta": -0.002849
         },
         "U.S. Cellular Field": {
           "n": 4551,
@@ -1484,11 +1484,11 @@
           "delta": 0.033869
         },
         "Citi Field": {
-          "n": 46285,
-          "raw_mean": 0.310353,
-          "emp_rate": 0.268186,
-          "emp_shrunk": 0.26951,
-          "delta": -0.198641
+          "n": 46335,
+          "raw_mean": 0.310552,
+          "emp_rate": 0.267897,
+          "emp_shrunk": 0.269234,
+          "delta": -0.200968
         },
         "Coors Field": {
           "n": 39790,
@@ -1498,18 +1498,18 @@
           "delta": 0.50893
         },
         "Fenway Park": {
-          "n": 42974,
-          "raw_mean": 0.353267,
-          "emp_rate": 0.370689,
-          "emp_shrunk": 0.370102,
-          "delta": 0.072928
+          "n": 43024,
+          "raw_mean": 0.353673,
+          "emp_rate": 0.371421,
+          "emp_shrunk": 0.370823,
+          "delta": 0.074242
         },
         "Target Field": {
-          "n": 44510,
-          "raw_mean": 0.344852,
-          "emp_rate": 0.360863,
-          "emp_shrunk": 0.360341,
-          "delta": 0.067862
+          "n": 44573,
+          "raw_mean": 0.344749,
+          "emp_rate": 0.360353,
+          "emp_shrunk": 0.359845,
+          "delta": 0.066164
         },
         "Wrigley Field": {
           "n": 44706,
@@ -1568,11 +1568,11 @@
           "delta": -0.095181
         },
         "Angel Stadium": {
-          "n": 34864,
-          "raw_mean": 0.347457,
-          "emp_rate": 0.361089,
-          "emp_shrunk": 0.360526,
-          "delta": 0.057158
+          "n": 34926,
+          "raw_mean": 0.347628,
+          "emp_rate": 0.362223,
+          "emp_shrunk": 0.361622,
+          "delta": 0.061149
         },
         "Estadio de Beisbol Monterrey": {
           "n": 367,
@@ -1596,11 +1596,11 @@
           "delta": -0.16828
         },
         "Oracle Park": {
-          "n": 30815,
-          "raw_mean": 0.316626,
-          "emp_rate": 0.284082,
-          "emp_shrunk": 0.285593,
-          "delta": -0.147563
+          "n": 30878,
+          "raw_mean": 0.316265,
+          "emp_rate": 0.283503,
+          "emp_shrunk": 0.285021,
+          "delta": -0.148702
         },
         "London Stadium": {
           "n": 243,
@@ -1631,11 +1631,11 @@
           "delta": 0.303104
         },
         "American Family Field": {
-          "n": 24848,
-          "raw_mean": 0.320368,
-          "emp_rate": 0.327552,
-          "emp_shrunk": 0.327143,
-          "delta": 0.030943
+          "n": 24911,
+          "raw_mean": 0.320079,
+          "emp_rate": 0.326723,
+          "emp_shrunk": 0.326346,
+          "delta": 0.028648
         },
         "loanDepot park": {
           "n": 24802,
@@ -1659,11 +1659,11 @@
           "delta": 0.347445
         },
         "Rate Field": {
-          "n": 6707,
-          "raw_mean": 0.33031,
-          "emp_rate": 0.307887,
-          "emp_shrunk": 0.311986,
-          "delta": -0.08407
+          "n": 6771,
+          "raw_mean": 0.329951,
+          "emp_rate": 0.314429,
+          "emp_shrunk": 0.317244,
+          "delta": -0.05806
         },
         "Daikin Park": {
           "n": 6434,
@@ -1694,27 +1694,27 @@
           "delta": -0.120029
         },
         "Las Vegas Ballpark": {
-          "n": 245,
-          "raw_mean": 0.461433,
-          "emp_rate": 0.746939,
-          "emp_shrunk": 0.501519,
-          "delta": 0.160648
+          "n": 253,
+          "raw_mean": 0.462554,
+          "emp_rate": 0.754941,
+          "emp_shrunk": 0.504752,
+          "delta": 0.169075
         }
       },
       "10.5": {
         "Kauffman Stadium": {
-          "n": 43721,
-          "raw_mean": 0.263911,
-          "emp_rate": 0.291805,
-          "emp_shrunk": 0.29088,
-          "delta": 0.134624
+          "n": 43776,
+          "raw_mean": 0.263827,
+          "emp_rate": 0.291438,
+          "emp_shrunk": 0.290523,
+          "delta": 0.133328
         },
         "PNC Park": {
-          "n": 43937,
-          "raw_mean": 0.265861,
-          "emp_rate": 0.286547,
-          "emp_shrunk": 0.285864,
-          "delta": 0.100166
+          "n": 44002,
+          "raw_mean": 0.265748,
+          "emp_rate": 0.286123,
+          "emp_shrunk": 0.285452,
+          "delta": 0.098725
         },
         "Tropicana Field": {
           "n": 40211,
@@ -1759,18 +1759,18 @@
           "delta": -0.159435
         },
         "Oriole Park at Camden Yards": {
-          "n": 44672,
-          "raw_mean": 0.276804,
-          "emp_rate": 0.289376,
-          "emp_shrunk": 0.288967,
-          "delta": 0.059969
+          "n": 44739,
+          "raw_mean": 0.276672,
+          "emp_rate": 0.288943,
+          "emp_shrunk": 0.288544,
+          "delta": 0.058565
         },
         "Great American Ball Park": {
-          "n": 43296,
-          "raw_mean": 0.275889,
-          "emp_rate": 0.297949,
-          "emp_shrunk": 0.29721,
-          "delta": 0.104329
+          "n": 43368,
+          "raw_mean": 0.275818,
+          "emp_rate": 0.297454,
+          "emp_shrunk": 0.296731,
+          "delta": 0.102386
         },
         "Miller Park": {
           "n": 19632,
@@ -1815,18 +1815,18 @@
           "delta": -0.36193
         },
         "Nationals Park": {
-          "n": 44607,
-          "raw_mean": 0.274235,
-          "emp_rate": 0.285157,
-          "emp_shrunk": 0.284802,
-          "delta": 0.052473
+          "n": 44654,
+          "raw_mean": 0.274288,
+          "emp_rate": 0.285909,
+          "emp_shrunk": 0.285532,
+          "delta": 0.055788
         },
         "Rogers Centre": {
-          "n": 39613,
-          "raw_mean": 0.26089,
-          "emp_rate": 0.261556,
-          "emp_shrunk": 0.261531,
-          "delta": 0.003322
+          "n": 39678,
+          "raw_mean": 0.260937,
+          "emp_rate": 0.262765,
+          "emp_shrunk": 0.262699,
+          "delta": 0.009113
         },
         "U.S. Cellular Field": {
           "n": 4551,
@@ -1850,11 +1850,11 @@
           "delta": -0.041461
         },
         "Citi Field": {
-          "n": 46285,
-          "raw_mean": 0.24666,
-          "emp_rate": 0.216182,
-          "emp_shrunk": 0.217139,
-          "delta": -0.165909
+          "n": 46335,
+          "raw_mean": 0.246809,
+          "emp_rate": 0.215949,
+          "emp_shrunk": 0.216917,
+          "delta": -0.16802
         },
         "Coors Field": {
           "n": 39790,
@@ -1864,18 +1864,18 @@
           "delta": 0.556056
         },
         "Fenway Park": {
-          "n": 42974,
-          "raw_mean": 0.284368,
-          "emp_rate": 0.319542,
-          "emp_shrunk": 0.318356,
-          "delta": 0.16156
+          "n": 43024,
+          "raw_mean": 0.284617,
+          "emp_rate": 0.319171,
+          "emp_shrunk": 0.318007,
+          "delta": 0.158724
         },
         "Target Field": {
-          "n": 44510,
-          "raw_mean": 0.277259,
-          "emp_rate": 0.303595,
-          "emp_shrunk": 0.302736,
-          "delta": 0.123794
+          "n": 44573,
+          "raw_mean": 0.277164,
+          "emp_rate": 0.303166,
+          "emp_shrunk": 0.302319,
+          "delta": 0.122296
         },
         "Wrigley Field": {
           "n": 44706,
@@ -1934,11 +1934,11 @@
           "delta": -0.196126
         },
         "Angel Stadium": {
-          "n": 34864,
-          "raw_mean": 0.278781,
-          "emp_rate": 0.295176,
-          "emp_shrunk": 0.294499,
-          "delta": 0.076883
+          "n": 34926,
+          "raw_mean": 0.278959,
+          "emp_rate": 0.296427,
+          "emp_shrunk": 0.295707,
+          "delta": 0.081808
         },
         "Estadio de Beisbol Monterrey": {
           "n": 367,
@@ -1962,11 +1962,11 @@
           "delta": -0.190721
         },
         "Oracle Park": {
-          "n": 30815,
-          "raw_mean": 0.253962,
-          "emp_rate": 0.227487,
-          "emp_shrunk": 0.228716,
-          "delta": -0.137987
+          "n": 30878,
+          "raw_mean": 0.253667,
+          "emp_rate": 0.227022,
+          "emp_shrunk": 0.228257,
+          "delta": -0.13903
         },
         "London Stadium": {
           "n": 243,
@@ -1997,11 +1997,11 @@
           "delta": 0.359825
         },
         "American Family Field": {
-          "n": 24848,
-          "raw_mean": 0.25607,
-          "emp_rate": 0.256359,
-          "emp_shrunk": 0.256342,
-          "delta": 0.001428
+          "n": 24911,
+          "raw_mean": 0.255843,
+          "emp_rate": 0.25571,
+          "emp_shrunk": 0.255718,
+          "delta": -0.000656
         },
         "loanDepot park": {
           "n": 24802,
@@ -2025,11 +2025,11 @@
           "delta": 0.04699
         },
         "Rate Field": {
-          "n": 6707,
-          "raw_mean": 0.264191,
-          "emp_rate": 0.242731,
-          "emp_shrunk": 0.246654,
-          "delta": -0.09224
+          "n": 6771,
+          "raw_mean": 0.263681,
+          "emp_rate": 0.240437,
+          "emp_shrunk": 0.244652,
+          "delta": -0.100413
         },
         "Daikin Park": {
           "n": 6434,
@@ -2060,27 +2060,27 @@
           "delta": -0.369286
         },
         "Las Vegas Ballpark": {
-          "n": 245,
-          "raw_mean": 0.387509,
-          "emp_rate": 0.518367,
-          "emp_shrunk": 0.405882,
-          "delta": 0.076778
+          "n": 253,
+          "raw_mean": 0.388277,
+          "emp_rate": 0.533597,
+          "emp_shrunk": 0.40925,
+          "delta": 0.087494
         }
       },
       "11.5": {
         "Kauffman Stadium": {
-          "n": 43721,
-          "raw_mean": 0.187872,
-          "emp_rate": 0.199058,
-          "emp_shrunk": 0.198687,
-          "delta": 0.069374
+          "n": 43776,
+          "raw_mean": 0.187822,
+          "emp_rate": 0.198808,
+          "emp_shrunk": 0.198444,
+          "delta": 0.068175
         },
         "PNC Park": {
-          "n": 43937,
-          "raw_mean": 0.189142,
-          "emp_rate": 0.185311,
-          "emp_shrunk": 0.185437,
-          "delta": -0.024337
+          "n": 44002,
+          "raw_mean": 0.189056,
+          "emp_rate": 0.185037,
+          "emp_shrunk": 0.18517,
+          "delta": -0.025553
         },
         "Tropicana Field": {
           "n": 40211,
@@ -2125,18 +2125,18 @@
           "delta": -0.126376
         },
         "Oriole Park at Camden Yards": {
-          "n": 44672,
-          "raw_mean": 0.198375,
-          "emp_rate": 0.225824,
-          "emp_shrunk": 0.224932,
-          "delta": 0.15933
+          "n": 44739,
+          "raw_mean": 0.198271,
+          "emp_rate": 0.225486,
+          "emp_shrunk": 0.224603,
+          "delta": 0.158091
         },
         "Great American Ball Park": {
-          "n": 43296,
-          "raw_mean": 0.197272,
-          "emp_rate": 0.210112,
-          "emp_shrunk": 0.209682,
-          "delta": 0.07659
+          "n": 43368,
+          "raw_mean": 0.197202,
+          "emp_rate": 0.209763,
+          "emp_shrunk": 0.209343,
+          "delta": 0.074984
         },
         "Miller Park": {
           "n": 19632,
@@ -2181,18 +2181,18 @@
           "delta": -0.200825
         },
         "Nationals Park": {
-          "n": 44607,
-          "raw_mean": 0.196495,
-          "emp_rate": 0.218307,
-          "emp_shrunk": 0.217597,
-          "delta": 0.128621
+          "n": 44654,
+          "raw_mean": 0.196524,
+          "emp_rate": 0.218077,
+          "emp_shrunk": 0.217376,
+          "delta": 0.127139
         },
         "Rogers Centre": {
-          "n": 39613,
-          "raw_mean": 0.186292,
-          "emp_rate": 0.181632,
-          "emp_shrunk": 0.181802,
-          "delta": -0.029895
+          "n": 39678,
+          "raw_mean": 0.186301,
+          "emp_rate": 0.181335,
+          "emp_shrunk": 0.181516,
+          "delta": -0.031887
         },
         "U.S. Cellular Field": {
           "n": 4551,
@@ -2216,11 +2216,11 @@
           "delta": -0.113357
         },
         "Citi Field": {
-          "n": 46285,
-          "raw_mean": 0.175635,
-          "emp_rate": 0.154218,
-          "emp_shrunk": 0.154891,
-          "delta": -0.150541
+          "n": 46335,
+          "raw_mean": 0.175742,
+          "emp_rate": 0.154052,
+          "emp_shrunk": 0.154732,
+          "delta": -0.152489
         },
         "Coors Field": {
           "n": 39790,
@@ -2230,18 +2230,18 @@
           "delta": 0.609813
         },
         "Fenway Park": {
-          "n": 42974,
-          "raw_mean": 0.203841,
-          "emp_rate": 0.23947,
-          "emp_shrunk": 0.238269,
-          "delta": 0.200261
+          "n": 43024,
+          "raw_mean": 0.20404,
+          "emp_rate": 0.239192,
+          "emp_shrunk": 0.238008,
+          "delta": 0.197599
         },
         "Target Field": {
-          "n": 44510,
-          "raw_mean": 0.197128,
-          "emp_rate": 0.213637,
-          "emp_shrunk": 0.213099,
-          "delta": 0.097997
+          "n": 44573,
+          "raw_mean": 0.197043,
+          "emp_rate": 0.213335,
+          "emp_shrunk": 0.212805,
+          "delta": 0.096778
         },
         "Wrigley Field": {
           "n": 44706,
@@ -2300,11 +2300,11 @@
           "delta": -0.175038
         },
         "Angel Stadium": {
-          "n": 34864,
-          "raw_mean": 0.198414,
-          "emp_rate": 0.194556,
-          "emp_shrunk": 0.194715,
-          "delta": -0.023422
+          "n": 34926,
+          "raw_mean": 0.198468,
+          "emp_rate": 0.194211,
+          "emp_shrunk": 0.194386,
+          "delta": -0.025862
         },
         "Estadio de Beisbol Monterrey": {
           "n": 367,
@@ -2328,11 +2328,11 @@
           "delta": -0.18615
         },
         "Oracle Park": {
-          "n": 30815,
-          "raw_mean": 0.182139,
-          "emp_rate": 0.163427,
-          "emp_shrunk": 0.164295,
-          "delta": -0.124685
+          "n": 30878,
+          "raw_mean": 0.181916,
+          "emp_rate": 0.163093,
+          "emp_shrunk": 0.163965,
+          "delta": -0.125592
         },
         "London Stadium": {
           "n": 243,
@@ -2363,11 +2363,11 @@
           "delta": 0.305806
         },
         "American Family Field": {
-          "n": 24848,
-          "raw_mean": 0.182027,
-          "emp_rate": 0.177962,
-          "emp_shrunk": 0.178193,
-          "delta": -0.02596
+          "n": 24911,
+          "raw_mean": 0.181877,
+          "emp_rate": 0.177512,
+          "emp_shrunk": 0.17776,
+          "delta": -0.027917
         },
         "loanDepot park": {
           "n": 24802,
@@ -2391,11 +2391,11 @@
           "delta": 0.145623
         },
         "Rate Field": {
-          "n": 6707,
-          "raw_mean": 0.187458,
-          "emp_rate": 0.156106,
-          "emp_shrunk": 0.161836,
-          "delta": -0.178019
+          "n": 6771,
+          "raw_mean": 0.186996,
+          "emp_rate": 0.15463,
+          "emp_shrunk": 0.1605,
+          "delta": -0.184866
         },
         "Daikin Park": {
           "n": 6434,
@@ -2426,22 +2426,22 @@
           "delta": -0.191397
         },
         "Las Vegas Ballpark": {
-          "n": 245,
-          "raw_mean": 0.306769,
-          "emp_rate": 0.518367,
-          "emp_shrunk": 0.336477,
-          "delta": 0.136238
+          "n": 253,
+          "raw_mean": 0.307508,
+          "emp_rate": 0.533597,
+          "emp_shrunk": 0.340138,
+          "delta": 0.149116
         }
       }
     },
     "temp": {
       "6.5": {
         "65-79F": {
-          "n": 723114,
-          "raw_mean": 0.642617,
-          "emp_rate": 0.641163,
-          "emp_shrunk": 0.641165,
-          "delta": -0.006315
+          "n": 723561,
+          "raw_mean": 0.642602,
+          "emp_rate": 0.641132,
+          "emp_shrunk": 0.641134,
+          "delta": -0.006386
         },
         "<50F": {
           "n": 35541,
@@ -2451,27 +2451,27 @@
           "delta": -0.054978
         },
         "80+F": {
-          "n": 362363,
-          "raw_mean": 0.664873,
-          "emp_rate": 0.694171,
-          "emp_shrunk": 0.694075,
-          "delta": 0.13415
+          "n": 362647,
+          "raw_mean": 0.664988,
+          "emp_rate": 0.694411,
+          "emp_shrunk": 0.694314,
+          "delta": 0.134762
         },
         "50-64F": {
-          "n": 207631,
-          "raw_mean": 0.63315,
-          "emp_rate": 0.61341,
-          "emp_shrunk": 0.613524,
-          "delta": -0.083606
+          "n": 207694,
+          "raw_mean": 0.633102,
+          "emp_rate": 0.613224,
+          "emp_shrunk": 0.613338,
+          "delta": -0.08418
         }
       },
       "7.5": {
         "65-79F": {
-          "n": 723114,
-          "raw_mean": 0.519299,
-          "emp_rate": 0.51844,
-          "emp_shrunk": 0.518441,
-          "delta": -0.003435
+          "n": 723561,
+          "raw_mean": 0.519275,
+          "emp_rate": 0.518484,
+          "emp_shrunk": 0.518486,
+          "delta": -0.003162
         },
         "<50F": {
           "n": 35541,
@@ -2481,27 +2481,27 @@
           "delta": -0.04214
         },
         "80+F": {
-          "n": 362363,
-          "raw_mean": 0.543921,
-          "emp_rate": 0.586851,
-          "emp_shrunk": 0.586709,
-          "delta": 0.174238
+          "n": 362647,
+          "raw_mean": 0.544028,
+          "emp_rate": 0.58699,
+          "emp_shrunk": 0.586848,
+          "delta": 0.174382
         },
         "50-64F": {
-          "n": 207631,
-          "raw_mean": 0.509464,
-          "emp_rate": 0.491651,
-          "emp_shrunk": 0.491753,
-          "delta": -0.070849
+          "n": 207694,
+          "raw_mean": 0.509418,
+          "emp_rate": 0.491502,
+          "emp_shrunk": 0.491605,
+          "delta": -0.071261
         }
       },
       "8.5": {
         "65-79F": {
-          "n": 723114,
-          "raw_mean": 0.434252,
-          "emp_rate": 0.431843,
-          "emp_shrunk": 0.431847,
-          "delta": -0.009792
+          "n": 723561,
+          "raw_mean": 0.434223,
+          "emp_rate": 0.431842,
+          "emp_shrunk": 0.431846,
+          "delta": -0.00968
         },
         "<50F": {
           "n": 35541,
@@ -2511,27 +2511,27 @@
           "delta": -0.132231
         },
         "80+F": {
-          "n": 362363,
-          "raw_mean": 0.458519,
-          "emp_rate": 0.50193,
-          "emp_shrunk": 0.501787,
-          "delta": 0.173456
+          "n": 362647,
+          "raw_mean": 0.458616,
+          "emp_rate": 0.502136,
+          "emp_shrunk": 0.501992,
+          "delta": 0.173883
         },
         "50-64F": {
-          "n": 207631,
-          "raw_mean": 0.42421,
-          "emp_rate": 0.403528,
-          "emp_shrunk": 0.403647,
-          "delta": -0.084775
+          "n": 207694,
+          "raw_mean": 0.424166,
+          "emp_rate": 0.403406,
+          "emp_shrunk": 0.403525,
+          "delta": -0.085103
         }
       },
       "9.5": {
         "65-79F": {
-          "n": 723114,
-          "raw_mean": 0.327818,
-          "emp_rate": 0.320149,
-          "emp_shrunk": 0.320161,
-          "delta": -0.034961
+          "n": 723561,
+          "raw_mean": 0.327779,
+          "emp_rate": 0.320129,
+          "emp_shrunk": 0.320142,
+          "delta": -0.034874
         },
         "<50F": {
           "n": 35541,
@@ -2541,27 +2541,27 @@
           "delta": -0.169324
         },
         "80+F": {
-          "n": 362363,
-          "raw_mean": 0.349634,
-          "emp_rate": 0.384777,
-          "emp_shrunk": 0.384661,
-          "delta": 0.150837
+          "n": 362647,
+          "raw_mean": 0.349711,
+          "emp_rate": 0.384936,
+          "emp_shrunk": 0.38482,
+          "delta": 0.151169
         },
         "50-64F": {
-          "n": 207631,
-          "raw_mean": 0.318806,
-          "emp_rate": 0.295866,
-          "emp_shrunk": 0.295998,
-          "delta": -0.107163
+          "n": 207694,
+          "raw_mean": 0.318772,
+          "emp_rate": 0.295776,
+          "emp_shrunk": 0.295909,
+          "delta": -0.107435
         }
       },
       "10.5": {
         "65-79F": {
-          "n": 723114,
-          "raw_mean": 0.26217,
-          "emp_rate": 0.256791,
-          "emp_shrunk": 0.2568,
-          "delta": -0.027947
+          "n": 723561,
+          "raw_mean": 0.262135,
+          "emp_rate": 0.256722,
+          "emp_shrunk": 0.256731,
+          "delta": -0.028129
         },
         "<50F": {
           "n": 35541,
@@ -2571,27 +2571,27 @@
           "delta": -0.208364
         },
         "80+F": {
-          "n": 362363,
-          "raw_mean": 0.28094,
-          "emp_rate": 0.316473,
-          "emp_shrunk": 0.316355,
-          "delta": 0.16923
+          "n": 362647,
+          "raw_mean": 0.280993,
+          "emp_rate": 0.316547,
+          "emp_shrunk": 0.31643,
+          "delta": 0.169314
         },
         "50-64F": {
-          "n": 207631,
-          "raw_mean": 0.253852,
-          "emp_rate": 0.232374,
-          "emp_shrunk": 0.232497,
-          "delta": -0.116093
+          "n": 207694,
+          "raw_mean": 0.253826,
+          "emp_rate": 0.232303,
+          "emp_shrunk": 0.232427,
+          "delta": -0.116346
         }
       },
       "11.5": {
         "65-79F": {
-          "n": 723114,
-          "raw_mean": 0.187188,
-          "emp_rate": 0.185375,
-          "emp_shrunk": 0.185378,
-          "delta": -0.011946
+          "n": 723561,
+          "raw_mean": 0.187159,
+          "emp_rate": 0.18526,
+          "emp_shrunk": 0.185263,
+          "delta": -0.01251
         },
         "<50F": {
           "n": 35541,
@@ -2601,50 +2601,50 @@
           "delta": -0.267607
         },
         "80+F": {
-          "n": 362363,
-          "raw_mean": 0.200925,
-          "emp_rate": 0.230382,
-          "emp_shrunk": 0.230285,
-          "delta": 0.173818
+          "n": 362647,
+          "raw_mean": 0.200957,
+          "emp_rate": 0.230224,
+          "emp_shrunk": 0.230127,
+          "delta": 0.172732
         },
         "50-64F": {
-          "n": 207631,
-          "raw_mean": 0.180736,
-          "emp_rate": 0.159186,
-          "emp_shrunk": 0.15931,
-          "delta": -0.152003
+          "n": 207694,
+          "raw_mean": 0.180719,
+          "emp_rate": 0.159138,
+          "emp_shrunk": 0.159262,
+          "delta": -0.152244
         }
       }
     },
     "wind": {
       "6.5": {
         "other_10plus": {
-          "n": 142604,
-          "raw_mean": 0.651954,
-          "emp_rate": 0.667625,
-          "emp_shrunk": 0.667516,
-          "delta": 0.069333
+          "n": 142706,
+          "raw_mean": 0.651962,
+          "emp_rate": 0.667477,
+          "emp_shrunk": 0.667369,
+          "delta": 0.068634
         },
         "out_10plus": {
-          "n": 172007,
-          "raw_mean": 0.649346,
-          "emp_rate": 0.646881,
-          "emp_shrunk": 0.646895,
-          "delta": -0.010749
+          "n": 172307,
+          "raw_mean": 0.649504,
+          "emp_rate": 0.647118,
+          "emp_shrunk": 0.647132,
+          "delta": -0.010405
         },
         "other_0to5": {
-          "n": 302055,
-          "raw_mean": 0.641524,
-          "emp_rate": 0.644412,
-          "emp_shrunk": 0.644403,
-          "delta": 0.012539
+          "n": 302120,
+          "raw_mean": 0.641559,
+          "emp_rate": 0.644489,
+          "emp_shrunk": 0.644479,
+          "delta": 0.012723
         },
         "other_6to9": {
-          "n": 179844,
-          "raw_mean": 0.641828,
-          "emp_rate": 0.639855,
-          "emp_shrunk": 0.639865,
-          "delta": -0.008527
+          "n": 179969,
+          "raw_mean": 0.641797,
+          "emp_rate": 0.639755,
+          "emp_shrunk": 0.639766,
+          "delta": -0.008825
         },
         "out_0to5": {
           "n": 98269,
@@ -2661,11 +2661,11 @@
           "delta": -0.003286
         },
         "out_6to9": {
-          "n": 169136,
-          "raw_mean": 0.657779,
-          "emp_rate": 0.666505,
-          "emp_shrunk": 0.666454,
-          "delta": 0.038778
+          "n": 169275,
+          "raw_mean": 0.657772,
+          "emp_rate": 0.666779,
+          "emp_shrunk": 0.666726,
+          "delta": 0.040034
         },
         "in_6to9": {
           "n": 105068,
@@ -2675,11 +2675,11 @@
           "delta": -0.019585
         },
         "in_10plus": {
-          "n": 75892,
-          "raw_mean": 0.64439,
-          "emp_rate": 0.654456,
-          "emp_shrunk": 0.654325,
-          "delta": 0.043636
+          "n": 75955,
+          "raw_mean": 0.644249,
+          "emp_rate": 0.653914,
+          "emp_shrunk": 0.653788,
+          "delta": 0.041876
         },
         "calm_0to5": {
           "n": 17875,
@@ -2705,32 +2705,32 @@
       },
       "7.5": {
         "other_10plus": {
-          "n": 142604,
-          "raw_mean": 0.530164,
-          "emp_rate": 0.558189,
-          "emp_shrunk": 0.557994,
-          "delta": 0.112223
+          "n": 142706,
+          "raw_mean": 0.530175,
+          "emp_rate": 0.558119,
+          "emp_shrunk": 0.557925,
+          "delta": 0.111898
         },
         "out_10plus": {
-          "n": 172007,
-          "raw_mean": 0.528014,
-          "emp_rate": 0.538746,
-          "emp_shrunk": 0.538683,
-          "delta": 0.04287
+          "n": 172307,
+          "raw_mean": 0.52816,
+          "emp_rate": 0.539171,
+          "emp_shrunk": 0.539108,
+          "delta": 0.043994
         },
         "other_0to5": {
-          "n": 302055,
-          "raw_mean": 0.517407,
-          "emp_rate": 0.51871,
-          "emp_shrunk": 0.518706,
-          "delta": 0.005201
+          "n": 302120,
+          "raw_mean": 0.517428,
+          "emp_rate": 0.518814,
+          "emp_shrunk": 0.518809,
+          "delta": 0.005534
         },
         "other_6to9": {
-          "n": 179844,
-          "raw_mean": 0.517563,
-          "emp_rate": 0.508919,
-          "emp_shrunk": 0.508967,
-          "delta": -0.03441
+          "n": 179969,
+          "raw_mean": 0.517525,
+          "emp_rate": 0.50891,
+          "emp_shrunk": 0.508957,
+          "delta": -0.034297
         },
         "out_0to5": {
           "n": 98269,
@@ -2747,11 +2747,11 @@
           "delta": 0.078026
         },
         "out_6to9": {
-          "n": 169136,
-          "raw_mean": 0.535982,
-          "emp_rate": 0.55142,
-          "emp_shrunk": 0.551329,
-          "delta": 0.061864
+          "n": 169275,
+          "raw_mean": 0.535964,
+          "emp_rate": 0.551393,
+          "emp_shrunk": 0.551302,
+          "delta": 0.06183
         },
         "in_6to9": {
           "n": 105068,
@@ -2761,11 +2761,11 @@
           "delta": -0.02779
         },
         "in_10plus": {
-          "n": 75892,
-          "raw_mean": 0.523693,
-          "emp_rate": 0.543746,
-          "emp_shrunk": 0.543486,
-          "delta": 0.079538
+          "n": 75955,
+          "raw_mean": 0.523557,
+          "emp_rate": 0.543295,
+          "emp_shrunk": 0.543039,
+          "delta": 0.078285
         },
         "calm_0to5": {
           "n": 17875,
@@ -2791,32 +2791,32 @@
       },
       "8.5": {
         "other_10plus": {
-          "n": 142604,
-          "raw_mean": 0.445138,
-          "emp_rate": 0.471018,
-          "emp_shrunk": 0.470837,
-          "delta": 0.103553
+          "n": 142706,
+          "raw_mean": 0.445132,
+          "emp_rate": 0.47101,
+          "emp_shrunk": 0.47083,
+          "delta": 0.10355
         },
         "out_10plus": {
-          "n": 172007,
-          "raw_mean": 0.443441,
-          "emp_rate": 0.449203,
-          "emp_shrunk": 0.449169,
-          "delta": 0.023179
+          "n": 172307,
+          "raw_mean": 0.443582,
+          "emp_rate": 0.449367,
+          "emp_shrunk": 0.449333,
+          "delta": 0.023274
         },
         "other_0to5": {
-          "n": 302055,
-          "raw_mean": 0.432198,
-          "emp_rate": 0.430375,
-          "emp_shrunk": 0.430381,
-          "delta": -0.007406
+          "n": 302120,
+          "raw_mean": 0.43221,
+          "emp_rate": 0.430498,
+          "emp_shrunk": 0.430503,
+          "delta": -0.006958
         },
         "other_6to9": {
-          "n": 179844,
-          "raw_mean": 0.432672,
-          "emp_rate": 0.429973,
-          "emp_shrunk": 0.429988,
-          "delta": -0.010945
+          "n": 179969,
+          "raw_mean": 0.432637,
+          "emp_rate": 0.430019,
+          "emp_shrunk": 0.430033,
+          "delta": -0.010617
         },
         "out_0to5": {
           "n": 98269,
@@ -2833,11 +2833,11 @@
           "delta": 0.084174
         },
         "out_6to9": {
-          "n": 169136,
-          "raw_mean": 0.450655,
-          "emp_rate": 0.469232,
-          "emp_shrunk": 0.469123,
-          "delta": 0.074356
+          "n": 169275,
+          "raw_mean": 0.450626,
+          "emp_rate": 0.469272,
+          "emp_shrunk": 0.469162,
+          "delta": 0.074636
         },
         "in_6to9": {
           "n": 105068,
@@ -2847,11 +2847,11 @@
           "delta": -0.037412
         },
         "in_10plus": {
-          "n": 75892,
-          "raw_mean": 0.437797,
-          "emp_rate": 0.447109,
-          "emp_shrunk": 0.446988,
-          "delta": 0.037259
+          "n": 75955,
+          "raw_mean": 0.437666,
+          "emp_rate": 0.446738,
+          "emp_shrunk": 0.44662,
+          "delta": 0.036303
         },
         "calm_0to5": {
           "n": 17875,
@@ -2877,32 +2877,32 @@
       },
       "9.5": {
         "other_10plus": {
-          "n": 142604,
-          "raw_mean": 0.337272,
-          "emp_rate": 0.360186,
-          "emp_shrunk": 0.360027,
-          "delta": 0.100227
+          "n": 142706,
+          "raw_mean": 0.337264,
+          "emp_rate": 0.360258,
+          "emp_shrunk": 0.360098,
+          "delta": 0.100573
         },
         "out_10plus": {
-          "n": 172007,
-          "raw_mean": 0.335938,
-          "emp_rate": 0.332812,
-          "emp_shrunk": 0.33283,
-          "delta": -0.013965
+          "n": 172307,
+          "raw_mean": 0.336015,
+          "emp_rate": 0.332523,
+          "emp_shrunk": 0.332543,
+          "delta": -0.015601
         },
         "other_0to5": {
-          "n": 302055,
-          "raw_mean": 0.326159,
-          "emp_rate": 0.320829,
-          "emp_shrunk": 0.320847,
-          "delta": -0.024274
+          "n": 302120,
+          "raw_mean": 0.326165,
+          "emp_rate": 0.320975,
+          "emp_shrunk": 0.320992,
+          "delta": -0.023636
         },
         "other_6to9": {
-          "n": 179844,
-          "raw_mean": 0.326386,
-          "emp_rate": 0.317675,
-          "emp_shrunk": 0.317723,
-          "delta": -0.039676
+          "n": 179969,
+          "raw_mean": 0.326361,
+          "emp_rate": 0.317799,
+          "emp_shrunk": 0.317846,
+          "delta": -0.038996
         },
         "out_0to5": {
           "n": 98269,
@@ -2919,11 +2919,11 @@
           "delta": 0.051558
         },
         "out_6to9": {
-          "n": 169136,
-          "raw_mean": 0.3427,
-          "emp_rate": 0.352894,
-          "emp_shrunk": 0.352834,
-          "delta": 0.044676
+          "n": 169275,
+          "raw_mean": 0.342649,
+          "emp_rate": 0.353029,
+          "emp_shrunk": 0.352968,
+          "delta": 0.045493
         },
         "in_6to9": {
           "n": 105068,
@@ -2933,11 +2933,11 @@
           "delta": -0.021077
         },
         "in_10plus": {
-          "n": 75892,
-          "raw_mean": 0.33195,
-          "emp_rate": 0.326411,
-          "emp_shrunk": 0.326483,
-          "delta": -0.024758
+          "n": 75955,
+          "raw_mean": 0.331846,
+          "emp_rate": 0.32614,
+          "emp_shrunk": 0.326215,
+          "delta": -0.025509
         },
         "calm_0to5": {
           "n": 17875,
@@ -2963,32 +2963,32 @@
       },
       "10.5": {
         "other_10plus": {
-          "n": 142604,
-          "raw_mean": 0.270547,
-          "emp_rate": 0.28812,
-          "emp_shrunk": 0.287997,
-          "delta": 0.086717
+          "n": 142706,
+          "raw_mean": 0.270537,
+          "emp_rate": 0.288243,
+          "emp_shrunk": 0.28812,
+          "delta": 0.087367
         },
         "out_10plus": {
-          "n": 172007,
-          "raw_mean": 0.269035,
-          "emp_rate": 0.274187,
-          "emp_shrunk": 0.274157,
-          "delta": 0.025891
+          "n": 172307,
+          "raw_mean": 0.269069,
+          "emp_rate": 0.273709,
+          "emp_shrunk": 0.273682,
+          "delta": 0.023334
         },
         "other_0to5": {
-          "n": 302055,
-          "raw_mean": 0.260401,
-          "emp_rate": 0.253298,
-          "emp_shrunk": 0.253322,
-          "delta": -0.037088
+          "n": 302120,
+          "raw_mean": 0.260407,
+          "emp_rate": 0.253459,
+          "emp_shrunk": 0.253482,
+          "delta": -0.036274
         },
         "other_6to9": {
-          "n": 179844,
-          "raw_mean": 0.261025,
-          "emp_rate": 0.260415,
-          "emp_shrunk": 0.260418,
-          "delta": -0.003151
+          "n": 179969,
+          "raw_mean": 0.261013,
+          "emp_rate": 0.260578,
+          "emp_shrunk": 0.260581,
+          "delta": -0.002242
         },
         "out_0to5": {
           "n": 98269,
@@ -3005,11 +3005,11 @@
           "delta": 0.046885
         },
         "out_6to9": {
-          "n": 169136,
-          "raw_mean": 0.274716,
-          "emp_rate": 0.284197,
-          "emp_shrunk": 0.284142,
-          "delta": 0.046818
+          "n": 169275,
+          "raw_mean": 0.274664,
+          "emp_rate": 0.284011,
+          "emp_shrunk": 0.283956,
+          "delta": 0.046166
         },
         "in_6to9": {
           "n": 105068,
@@ -3019,11 +3019,11 @@
           "delta": 0.011642
         },
         "in_10plus": {
-          "n": 75892,
-          "raw_mean": 0.265529,
-          "emp_rate": 0.262939,
-          "emp_shrunk": 0.262973,
-          "delta": -0.013147
+          "n": 75955,
+          "raw_mean": 0.265447,
+          "emp_rate": 0.262721,
+          "emp_shrunk": 0.262757,
+          "delta": -0.013841
         },
         "calm_0to5": {
           "n": 17875,
@@ -3049,32 +3049,32 @@
       },
       "11.5": {
         "other_10plus": {
-          "n": 142604,
-          "raw_mean": 0.193242,
-          "emp_rate": 0.206958,
-          "emp_shrunk": 0.206862,
-          "delta": 0.085134
+          "n": 142706,
+          "raw_mean": 0.193235,
+          "emp_rate": 0.20681,
+          "emp_shrunk": 0.206715,
+          "delta": 0.084285
         },
         "out_10plus": {
-          "n": 172007,
-          "raw_mean": 0.192433,
-          "emp_rate": 0.196132,
-          "emp_shrunk": 0.19611,
-          "delta": 0.023495
+          "n": 172307,
+          "raw_mean": 0.19245,
+          "emp_rate": 0.19579,
+          "emp_shrunk": 0.195771,
+          "delta": 0.021226
         },
         "other_0to5": {
-          "n": 302055,
-          "raw_mean": 0.185646,
-          "emp_rate": 0.182718,
-          "emp_shrunk": 0.182728,
-          "delta": -0.019416
+          "n": 302120,
+          "raw_mean": 0.185647,
+          "emp_rate": 0.182679,
+          "emp_shrunk": 0.182689,
+          "delta": -0.019688
         },
         "other_6to9": {
-          "n": 179844,
-          "raw_mean": 0.185882,
-          "emp_rate": 0.182564,
-          "emp_shrunk": 0.182582,
-          "delta": -0.021958
+          "n": 179969,
+          "raw_mean": 0.185857,
+          "emp_rate": 0.182437,
+          "emp_shrunk": 0.182456,
+          "delta": -0.022641
         },
         "out_0to5": {
           "n": 98269,
@@ -3091,11 +3091,11 @@
           "delta": 0.101951
         },
         "out_6to9": {
-          "n": 169136,
-          "raw_mean": 0.196589,
-          "emp_rate": 0.200253,
-          "emp_shrunk": 0.200232,
-          "delta": 0.022906
+          "n": 169275,
+          "raw_mean": 0.196546,
+          "emp_rate": 0.200136,
+          "emp_shrunk": 0.200115,
+          "delta": 0.022445
         },
         "in_6to9": {
           "n": 105068,
@@ -3105,11 +3105,11 @@
           "delta": -0.049283
         },
         "in_10plus": {
-          "n": 75892,
-          "raw_mean": 0.190047,
-          "emp_rate": 0.187846,
-          "emp_shrunk": 0.187875,
-          "delta": -0.014176
+          "n": 75955,
+          "raw_mean": 0.189991,
+          "emp_rate": 0.18769,
+          "emp_shrunk": 0.18772,
+          "delta": -0.014826
         },
         "calm_0to5": {
           "n": 17875,
@@ -3137,18 +3137,18 @@
     "park_wind": {
       "6.5": {
         "Kauffman Stadium__other_10plus": {
-          "n": 14611,
-          "raw_mean": 0.643221,
-          "emp_rate": 0.692424,
-          "emp_shrunk": 0.687027,
-          "delta": 0.196884
+          "n": 14666,
+          "raw_mean": 0.642754,
+          "emp_rate": 0.689827,
+          "emp_shrunk": 0.684681,
+          "delta": 0.188032
         },
         "PNC Park__out_10plus": {
-          "n": 10337,
-          "raw_mean": 0.664613,
-          "emp_rate": 0.678824,
-          "emp_shrunk": 0.676716,
-          "delta": 0.0548
+          "n": 10402,
+          "raw_mean": 0.66376,
+          "emp_rate": 0.674582,
+          "emp_shrunk": 0.672985,
+          "delta": 0.041625
         },
         "Tropicana Field__other_0to5": {
           "n": 40211,
@@ -3305,11 +3305,11 @@
           "delta": -0.086149
         },
         "Oriole Park at Camden Yards__out_6to9": {
-          "n": 9772,
-          "raw_mean": 0.67051,
-          "emp_rate": 0.699959,
-          "emp_shrunk": 0.695378,
-          "delta": 0.114891
+          "n": 9839,
+          "raw_mean": 0.670152,
+          "emp_rate": 0.702002,
+          "emp_shrunk": 0.697077,
+          "delta": 0.124542
         },
         "Globe Life Park in Arlington__out_10plus": {
           "n": 963,
@@ -3354,11 +3354,11 @@
           "delta": 0.052447
         },
         "Great American Ball Park__out_10plus": {
-          "n": 2986,
-          "raw_mean": 0.689048,
-          "emp_rate": 0.672472,
-          "emp_shrunk": 0.678706,
-          "delta": -0.047841
+          "n": 3058,
+          "raw_mean": 0.690604,
+          "emp_rate": 0.680183,
+          "emp_shrunk": 0.684044,
+          "delta": -0.030523
         },
         "Nationals Park__out_10plus": {
           "n": 3827,
@@ -3375,11 +3375,11 @@
           "delta": -0.031069
         },
         "Rogers Centre__other_0to5": {
-          "n": 17903,
-          "raw_mean": 0.626502,
-          "emp_rate": 0.629727,
-          "emp_shrunk": 0.629432,
-          "delta": 0.012543
+          "n": 17968,
+          "raw_mean": 0.627136,
+          "emp_rate": 0.631066,
+          "emp_shrunk": 0.630708,
+          "delta": 0.015308
         },
         "U.S. Cellular Field__out_10plus": {
           "n": 831,
@@ -3403,11 +3403,11 @@
           "delta": -0.092767
         },
         "Citi Field__out_10plus": {
-          "n": 11647,
-          "raw_mean": 0.628574,
-          "emp_rate": 0.608483,
-          "emp_shrunk": 0.611172,
-          "delta": -0.073861
+          "n": 11697,
+          "raw_mean": 0.629807,
+          "emp_rate": 0.610156,
+          "emp_shrunk": 0.612777,
+          "delta": -0.072387
         },
         "Coors Field__other_6to9": {
           "n": 5055,
@@ -3515,11 +3515,11 @@
           "delta": -0.015761
         },
         "Fenway Park__out_10plus": {
-          "n": 8931,
-          "raw_mean": 0.680976,
-          "emp_rate": 0.672265,
-          "emp_shrunk": 0.673726,
-          "delta": -0.033172
+          "n": 8981,
+          "raw_mean": 0.682416,
+          "emp_rate": 0.67409,
+          "emp_shrunk": 0.67548,
+          "delta": -0.031819
         },
         "Target Field__in_10plus": {
           "n": 5392,
@@ -4320,11 +4320,11 @@
           "delta": 0.093507
         },
         "Nationals Park__other_10plus": {
-          "n": 1923,
-          "raw_mean": 0.617199,
-          "emp_rate": 0.48986,
-          "emp_shrunk": 0.551426,
-          "delta": -0.271242
+          "n": 1970,
+          "raw_mean": 0.622386,
+          "emp_rate": 0.50203,
+          "emp_shrunk": 0.559495,
+          "delta": -0.260577
         },
         "Wrigley Field__out_10plus": {
           "n": 5282,
@@ -4586,11 +4586,11 @@
           "delta": -0.17951
         },
         "Target Field__out_10plus": {
-          "n": 7560,
-          "raw_mean": 0.637654,
-          "emp_rate": 0.621032,
-          "emp_shrunk": 0.624228,
-          "delta": -0.057662
+          "n": 7623,
+          "raw_mean": 0.6377,
+          "emp_rate": 0.624164,
+          "emp_shrunk": 0.626749,
+          "delta": -0.047097
         },
         "Rogers Centre__out_10plus": {
           "n": 3456,
@@ -4971,11 +4971,11 @@
           "delta": -0.038014
         },
         "Angel Stadium__other_6to9": {
-          "n": 7509,
-          "raw_mean": 0.644691,
-          "emp_rate": 0.631109,
-          "emp_shrunk": 0.633735,
-          "delta": -0.047507
+          "n": 7571,
+          "raw_mean": 0.646113,
+          "emp_rate": 0.63413,
+          "emp_shrunk": 0.636432,
+          "delta": -0.042086
         },
         "Angel Stadium__other_10plus": {
           "n": 1732,
@@ -5125,11 +5125,11 @@
           "delta": 0.311591
         },
         "Oracle Park__other_6to9": {
-          "n": 839,
-          "raw_mean": 0.577808,
-          "emp_rate": 0.624553,
-          "emp_shrunk": 0.592669,
-          "delta": 0.06123
+          "n": 902,
+          "raw_mean": 0.564023,
+          "emp_rate": 0.580931,
+          "emp_shrunk": 0.569667,
+          "delta": 0.022989
         },
         "London Stadium__other_10plus": {
           "n": 129,
@@ -5419,11 +5419,11 @@
           "delta": -0.071848
         },
         "American Family Field__in_10plus": {
-          "n": 1686,
-          "raw_mean": 0.698977,
-          "emp_rate": 0.707592,
-          "emp_shrunk": 0.703144,
-          "delta": 0.019882
+          "n": 1749,
+          "raw_mean": 0.690878,
+          "emp_rate": 0.682104,
+          "emp_shrunk": 0.686554,
+          "delta": -0.020169
         },
         "loanDepot park__other_10plus": {
           "n": 348,
@@ -5748,11 +5748,11 @@
           "delta": 0.106717
         },
         "Rate Field__out_6to9": {
-          "n": 576,
-          "raw_mean": 0.71286,
+          "n": 640,
+          "raw_mean": 0.708278,
           "emp_rate": 1.0,
-          "emp_shrunk": 0.78247,
-          "delta": 0.370802
+          "emp_shrunk": 0.784796,
+          "delta": 0.406797
         },
         "Rate Field__other_0to5": {
           "n": 359,
@@ -5860,27 +5860,27 @@
           "delta": -0.063219
         },
         "Las Vegas Ballpark__out_6to9": {
-          "n": 162,
-          "raw_mean": 0.825239,
+          "n": 170,
+          "raw_mean": 0.822781,
           "emp_rate": 1.0,
-          "emp_shrunk": 0.839668,
-          "delta": 0.103512
+          "emp_shrunk": 0.838074,
+          "delta": 0.108663
         }
       },
       "7.5": {
         "Kauffman Stadium__other_10plus": {
-          "n": 14611,
-          "raw_mean": 0.522379,
-          "emp_rate": 0.579495,
-          "emp_shrunk": 0.57323,
-          "delta": 0.205466
+          "n": 14666,
+          "raw_mean": 0.521922,
+          "emp_rate": 0.577322,
+          "emp_shrunk": 0.571266,
+          "delta": 0.199273
         },
         "PNC Park__out_10plus": {
-          "n": 10337,
-          "raw_mean": 0.547053,
-          "emp_rate": 0.586437,
-          "emp_shrunk": 0.580596,
-          "delta": 0.136451
+          "n": 10402,
+          "raw_mean": 0.546176,
+          "emp_rate": 0.582773,
+          "emp_shrunk": 0.577374,
+          "delta": 0.126772
         },
         "Tropicana Field__other_0to5": {
           "n": 40211,
@@ -6037,11 +6037,11 @@
           "delta": -0.022391
         },
         "Oriole Park at Camden Yards__out_6to9": {
-          "n": 9772,
-          "raw_mean": 0.547442,
-          "emp_rate": 0.554134,
-          "emp_shrunk": 0.553093,
-          "delta": 0.022838
+          "n": 9839,
+          "raw_mean": 0.546688,
+          "emp_rate": 0.550361,
+          "emp_shrunk": 0.549793,
+          "delta": 0.012535
         },
         "Globe Life Park in Arlington__out_10plus": {
           "n": 963,
@@ -6086,11 +6086,11 @@
           "delta": 0.146024
         },
         "Great American Ball Park__out_10plus": {
-          "n": 2986,
-          "raw_mean": 0.579501,
-          "emp_rate": 0.672472,
-          "emp_shrunk": 0.637506,
-          "delta": 0.243828
+          "n": 3058,
+          "raw_mean": 0.579292,
+          "emp_rate": 0.680183,
+          "emp_shrunk": 0.642801,
+          "delta": 0.267674
         },
         "Nationals Park__out_10plus": {
           "n": 3827,
@@ -6107,11 +6107,11 @@
           "delta": -0.049731
         },
         "Rogers Centre__other_0to5": {
-          "n": 17903,
-          "raw_mean": 0.502743,
-          "emp_rate": 0.520248,
-          "emp_shrunk": 0.518649,
-          "delta": 0.063659
+          "n": 17968,
+          "raw_mean": 0.503135,
+          "emp_rate": 0.521984,
+          "emp_shrunk": 0.520267,
+          "delta": 0.068574
         },
         "U.S. Cellular Field__out_10plus": {
           "n": 831,
@@ -6135,11 +6135,11 @@
           "delta": -0.0315
         },
         "Citi Field__out_10plus": {
-          "n": 11647,
-          "raw_mean": 0.502723,
-          "emp_rate": 0.460204,
-          "emp_shrunk": 0.465896,
-          "delta": -0.14752
+          "n": 11697,
+          "raw_mean": 0.503857,
+          "emp_rate": 0.462512,
+          "emp_shrunk": 0.468026,
+          "delta": -0.143501
         },
         "Coors Field__other_6to9": {
           "n": 5055,
@@ -6247,11 +6247,11 @@
           "delta": 0.052528
         },
         "Fenway Park__out_10plus": {
-          "n": 8931,
-          "raw_mean": 0.556943,
-          "emp_rate": 0.58101,
-          "emp_shrunk": 0.576973,
-          "delta": 0.081594
+          "n": 8981,
+          "raw_mean": 0.558826,
+          "emp_rate": 0.583343,
+          "emp_shrunk": 0.579249,
+          "delta": 0.083293
         },
         "Target Field__in_10plus": {
           "n": 5392,
@@ -7052,11 +7052,11 @@
           "delta": -0.125749
         },
         "Nationals Park__other_10plus": {
-          "n": 1923,
-          "raw_mean": 0.497293,
-          "emp_rate": 0.357774,
-          "emp_shrunk": 0.425229,
-          "delta": -0.290517
+          "n": 1970,
+          "raw_mean": 0.502517,
+          "emp_rate": 0.373096,
+          "emp_shrunk": 0.434889,
+          "delta": -0.271999
         },
         "Wrigley Field__out_10plus": {
           "n": 5282,
@@ -7318,11 +7318,11 @@
           "delta": -0.067206
         },
         "Target Field__out_10plus": {
-          "n": 7560,
-          "raw_mean": 0.518357,
-          "emp_rate": 0.502646,
-          "emp_shrunk": 0.505667,
-          "delta": -0.050791
+          "n": 7623,
+          "raw_mean": 0.518374,
+          "emp_rate": 0.506756,
+          "emp_shrunk": 0.508975,
+          "delta": -0.037623
         },
         "Rogers Centre__out_10plus": {
           "n": 3456,
@@ -7703,11 +7703,11 @@
           "delta": -0.004749
         },
         "Angel Stadium__other_6to9": {
-          "n": 7509,
-          "raw_mean": 0.514997,
-          "emp_rate": 0.454921,
-          "emp_shrunk": 0.466537,
-          "delta": -0.194056
+          "n": 7571,
+          "raw_mean": 0.516262,
+          "emp_rate": 0.459384,
+          "emp_shrunk": 0.47031,
+          "delta": -0.183974
         },
         "Angel Stadium__other_10plus": {
           "n": 1732,
@@ -7857,11 +7857,11 @@
           "delta": -0.064149
         },
         "Oracle Park__other_6to9": {
-          "n": 839,
-          "raw_mean": 0.431643,
-          "emp_rate": 0.386174,
-          "emp_shrunk": 0.417187,
-          "delta": -0.05918
+          "n": 902,
+          "raw_mean": 0.419703,
+          "emp_rate": 0.359202,
+          "emp_shrunk": 0.399506,
+          "delta": -0.083531
         },
         "London Stadium__other_10plus": {
           "n": 129,
@@ -8151,11 +8151,11 @@
           "delta": -0.088675
         },
         "American Family Field__in_10plus": {
-          "n": 1686,
-          "raw_mean": 0.591187,
-          "emp_rate": 0.672598,
-          "emp_shrunk": 0.630561,
-          "delta": 0.165752
+          "n": 1749,
+          "raw_mean": 0.582829,
+          "emp_rate": 0.64837,
+          "emp_shrunk": 0.615129,
+          "delta": 0.134525
         },
         "loanDepot park__other_10plus": {
           "n": 348,
@@ -8480,11 +8480,11 @@
           "delta": 0.014882
         },
         "Rate Field__out_6to9": {
-          "n": 576,
-          "raw_mean": 0.584755,
-          "emp_rate": 0.902778,
-          "emp_shrunk": 0.661852,
-          "delta": 0.329231
+          "n": 640,
+          "raw_mean": 0.583529,
+          "emp_rate": 0.9125,
+          "emp_shrunk": 0.669817,
+          "delta": 0.370078
         },
         "Rate Field__other_0to5": {
           "n": 359,
@@ -8592,27 +8592,27 @@
           "delta": -0.018297
         },
         "Las Vegas Ballpark__out_6to9": {
-          "n": 162,
-          "raw_mean": 0.692315,
-          "emp_rate": 0.617284,
-          "emp_shrunk": 0.686119,
-          "delta": -0.028924
+          "n": 170,
+          "raw_mean": 0.691551,
+          "emp_rate": 0.635294,
+          "emp_shrunk": 0.686696,
+          "delta": -0.022661
         }
       },
       "8.5": {
         "Kauffman Stadium__other_10plus": {
-          "n": 14611,
-          "raw_mean": 0.438308,
-          "emp_rate": 0.510506,
-          "emp_shrunk": 0.502587,
-          "delta": 0.25838
+          "n": 14666,
+          "raw_mean": 0.437885,
+          "emp_rate": 0.508591,
+          "emp_shrunk": 0.500862,
+          "delta": 0.253199
         },
         "PNC Park__out_10plus": {
-          "n": 10337,
-          "raw_mean": 0.460576,
-          "emp_rate": 0.506723,
-          "emp_shrunk": 0.499879,
-          "delta": 0.157542
+          "n": 10402,
+          "raw_mean": 0.459791,
+          "emp_rate": 0.503557,
+          "emp_shrunk": 0.497101,
+          "delta": 0.149587
         },
         "Tropicana Field__other_0to5": {
           "n": 40211,
@@ -8769,11 +8769,11 @@
           "delta": -0.026784
         },
         "Oriole Park at Camden Yards__out_6to9": {
-          "n": 9772,
-          "raw_mean": 0.465349,
-          "emp_rate": 0.489562,
-          "emp_shrunk": 0.485796,
-          "delta": 0.081993
+          "n": 9839,
+          "raw_mean": 0.464542,
+          "emp_rate": 0.486228,
+          "emp_shrunk": 0.482875,
+          "delta": 0.07354
         },
         "Globe Life Park in Arlington__out_10plus": {
           "n": 963,
@@ -8818,11 +8818,11 @@
           "delta": 0.179773
         },
         "Great American Ball Park__out_10plus": {
-          "n": 2986,
-          "raw_mean": 0.491622,
-          "emp_rate": 0.525452,
-          "emp_shrunk": 0.512729,
-          "delta": 0.08444
+          "n": 3058,
+          "raw_mean": 0.490225,
+          "emp_rate": 0.51308,
+          "emp_shrunk": 0.504612,
+          "delta": 0.057553
         },
         "Nationals Park__out_10plus": {
           "n": 3827,
@@ -8839,11 +8839,11 @@
           "delta": -0.050662
         },
         "Rogers Centre__other_0to5": {
-          "n": 17903,
-          "raw_mean": 0.418245,
-          "emp_rate": 0.416355,
-          "emp_shrunk": 0.416528,
-          "delta": -0.007064
+          "n": 17968,
+          "raw_mean": 0.418503,
+          "emp_rate": 0.418466,
+          "emp_shrunk": 0.418469,
+          "delta": -0.000136
         },
         "U.S. Cellular Field__out_10plus": {
           "n": 831,
@@ -8867,11 +8867,11 @@
           "delta": 0.005808
         },
         "Citi Field__out_10plus": {
-          "n": 11647,
-          "raw_mean": 0.420742,
-          "emp_rate": 0.386194,
-          "emp_shrunk": 0.390818,
-          "delta": -0.124145
+          "n": 11697,
+          "raw_mean": 0.421799,
+          "emp_rate": 0.388818,
+          "emp_shrunk": 0.393216,
+          "delta": -0.118421
         },
         "Coors Field__other_6to9": {
           "n": 5055,
@@ -8979,11 +8979,11 @@
           "delta": -0.036326
         },
         "Fenway Park__out_10plus": {
-          "n": 8931,
-          "raw_mean": 0.472815,
-          "emp_rate": 0.491994,
-          "emp_shrunk": 0.488777,
-          "delta": 0.063947
+          "n": 8981,
+          "raw_mean": 0.474907,
+          "emp_rate": 0.494822,
+          "emp_shrunk": 0.491497,
+          "delta": 0.066443
         },
         "Target Field__in_10plus": {
           "n": 5392,
@@ -9784,11 +9784,11 @@
           "delta": -0.034658
         },
         "Nationals Park__other_10plus": {
-          "n": 1923,
-          "raw_mean": 0.414298,
-          "emp_rate": 0.25585,
-          "emp_shrunk": 0.332457,
-          "delta": -0.350869
+          "n": 1970,
+          "raw_mean": 0.417912,
+          "emp_rate": 0.273604,
+          "emp_shrunk": 0.342504,
+          "delta": -0.320803
         },
         "Wrigley Field__out_10plus": {
           "n": 5282,
@@ -10050,11 +10050,11 @@
           "delta": -9.8e-05
         },
         "Target Field__out_10plus": {
-          "n": 7560,
-          "raw_mean": 0.434994,
-          "emp_rate": 0.409788,
-          "emp_shrunk": 0.414636,
-          "delta": -0.083331
+          "n": 7623,
+          "raw_mean": 0.435133,
+          "emp_rate": 0.414666,
+          "emp_shrunk": 0.418576,
+          "delta": -0.067683
         },
         "Rogers Centre__out_10plus": {
           "n": 3456,
@@ -10435,11 +10435,11 @@
           "delta": -0.111276
         },
         "Angel Stadium__other_6to9": {
-          "n": 7509,
-          "raw_mean": 0.426836,
-          "emp_rate": 0.352111,
-          "emp_shrunk": 0.36656,
-          "delta": -0.252231
+          "n": 7571,
+          "raw_mean": 0.428002,
+          "emp_rate": 0.357416,
+          "emp_shrunk": 0.370975,
+          "delta": -0.238031
         },
         "Angel Stadium__other_10plus": {
           "n": 1732,
@@ -10589,11 +10589,11 @@
           "delta": -0.188965
         },
         "Oracle Park__other_6to9": {
-          "n": 839,
-          "raw_mean": 0.353538,
-          "emp_rate": 0.235995,
-          "emp_shrunk": 0.316168,
-          "delta": -0.167913
+          "n": 902,
+          "raw_mean": 0.342676,
+          "emp_rate": 0.219512,
+          "emp_shrunk": 0.301561,
+          "delta": -0.188486
         },
         "London Stadium__other_10plus": {
           "n": 129,
@@ -10883,11 +10883,11 @@
           "delta": -0.078827
         },
         "American Family Field__in_10plus": {
-          "n": 1686,
-          "raw_mean": 0.505018,
-          "emp_rate": 0.599051,
-          "emp_shrunk": 0.550497,
-          "delta": 0.182605
+          "n": 1749,
+          "raw_mean": 0.496915,
+          "emp_rate": 0.577473,
+          "emp_shrunk": 0.536615,
+          "delta": 0.159064
         },
         "loanDepot park__other_10plus": {
           "n": 348,
@@ -11212,11 +11212,11 @@
           "delta": -0.105634
         },
         "Rate Field__out_6to9": {
-          "n": 576,
-          "raw_mean": 0.497613,
-          "emp_rate": 0.796875,
-          "emp_shrunk": 0.570161,
-          "delta": 0.292058
+          "n": 640,
+          "raw_mean": 0.494166,
+          "emp_rate": 0.817187,
+          "emp_shrunk": 0.578893,
+          "delta": 0.341568
         },
         "Rate Field__other_0to5": {
           "n": 359,
@@ -11324,27 +11324,27 @@
           "delta": 0.017239
         },
         "Las Vegas Ballpark__out_6to9": {
-          "n": 162,
-          "raw_mean": 0.621354,
-          "emp_rate": 0.617284,
-          "emp_shrunk": 0.621018,
-          "delta": -0.001428
+          "n": 170,
+          "raw_mean": 0.619821,
+          "emp_rate": 0.635294,
+          "emp_shrunk": 0.621156,
+          "delta": 0.00567
         }
       },
       "9.5": {
         "Kauffman Stadium__other_10plus": {
-          "n": 14611,
-          "raw_mean": 0.332746,
-          "emp_rate": 0.43214,
-          "emp_shrunk": 0.421238,
-          "delta": 0.3781
+          "n": 14666,
+          "raw_mean": 0.332424,
+          "emp_rate": 0.43052,
+          "emp_shrunk": 0.419796,
+          "delta": 0.373633
         },
         "PNC Park__out_10plus": {
-          "n": 10337,
-          "raw_mean": 0.35203,
-          "emp_rate": 0.380091,
-          "emp_shrunk": 0.375929,
-          "delta": 0.103267
+          "n": 10402,
+          "raw_mean": 0.351342,
+          "emp_rate": 0.377716,
+          "emp_shrunk": 0.373825,
+          "delta": 0.097306
         },
         "Tropicana Field__other_0to5": {
           "n": 40211,
@@ -11501,11 +11501,11 @@
           "delta": -0.079488
         },
         "Oriole Park at Camden Yards__out_6to9": {
-          "n": 9772,
-          "raw_mean": 0.359256,
-          "emp_rate": 0.38508,
-          "emp_shrunk": 0.381063,
-          "delta": 0.093557
+          "n": 9839,
+          "raw_mean": 0.358462,
+          "emp_rate": 0.382458,
+          "emp_shrunk": 0.378747,
+          "delta": 0.087174
         },
         "Globe Life Park in Arlington__out_10plus": {
           "n": 963,
@@ -11550,11 +11550,11 @@
           "delta": 0.079419
         },
         "Great American Ball Park__out_10plus": {
-          "n": 2986,
-          "raw_mean": 0.379125,
-          "emp_rate": 0.43704,
-          "emp_shrunk": 0.415258,
-          "delta": 0.150993
+          "n": 3058,
+          "raw_mean": 0.377126,
+          "emp_rate": 0.42675,
+          "emp_shrunk": 0.408363,
+          "delta": 0.131029
         },
         "Nationals Park__out_10plus": {
           "n": 3827,
@@ -11571,11 +11571,11 @@
           "delta": -0.096573
         },
         "Rogers Centre__other_0to5": {
-          "n": 17903,
-          "raw_mean": 0.314759,
-          "emp_rate": 0.287047,
-          "emp_shrunk": 0.289579,
-          "delta": -0.119468
+          "n": 17968,
+          "raw_mean": 0.31491,
+          "emp_rate": 0.289626,
+          "emp_shrunk": 0.291928,
+          "delta": -0.108773
         },
         "U.S. Cellular Field__out_10plus": {
           "n": 831,
@@ -11599,11 +11599,11 @@
           "delta": 0.063413
         },
         "Citi Field__out_10plus": {
-          "n": 11647,
-          "raw_mean": 0.314207,
-          "emp_rate": 0.257577,
-          "emp_shrunk": 0.265157,
-          "delta": -0.238808
+          "n": 11697,
+          "raw_mean": 0.314977,
+          "emp_rate": 0.256476,
+          "emp_shrunk": 0.264278,
+          "delta": -0.246899
         },
         "Coors Field__other_6to9": {
           "n": 5055,
@@ -11711,11 +11711,11 @@
           "delta": -0.084784
         },
         "Fenway Park__out_10plus": {
-          "n": 8931,
-          "raw_mean": 0.361177,
-          "emp_rate": 0.373306,
-          "emp_shrunk": 0.371272,
-          "delta": 0.043495
+          "n": 8981,
+          "raw_mean": 0.363079,
+          "emp_rate": 0.376795,
+          "emp_shrunk": 0.374505,
+          "delta": 0.049087
         },
         "Target Field__in_10plus": {
           "n": 5392,
@@ -12516,11 +12516,11 @@
           "delta": 0.049532
         },
         "Nationals Park__other_10plus": {
-          "n": 1923,
-          "raw_mean": 0.318929,
-          "emp_rate": 0.24233,
-          "emp_shrunk": 0.279364,
-          "delta": -0.188922
+          "n": 1970,
+          "raw_mean": 0.321305,
+          "emp_rate": 0.260406,
+          "emp_shrunk": 0.289483,
+          "delta": -0.150119
         },
         "Wrigley Field__out_10plus": {
           "n": 5282,
@@ -12782,11 +12782,11 @@
           "delta": -0.023148
         },
         "Target Field__out_10plus": {
-          "n": 7560,
-          "raw_mean": 0.330489,
-          "emp_rate": 0.317857,
-          "emp_shrunk": 0.320286,
-          "delta": -0.046482
+          "n": 7623,
+          "raw_mean": 0.330007,
+          "emp_rate": 0.31523,
+          "emp_shrunk": 0.318053,
+          "delta": -0.054581
         },
         "Rogers Centre__out_10plus": {
           "n": 3456,
@@ -13167,11 +13167,11 @@
           "delta": -0.09456
         },
         "Angel Stadium__other_6to9": {
-          "n": 7509,
-          "raw_mean": 0.325689,
-          "emp_rate": 0.270609,
-          "emp_shrunk": 0.281259,
-          "delta": -0.210476
+          "n": 7571,
+          "raw_mean": 0.326659,
+          "emp_rate": 0.276582,
+          "emp_shrunk": 0.286201,
+          "delta": -0.190574
         },
         "Angel Stadium__other_10plus": {
           "n": 1732,
@@ -13321,11 +13321,11 @@
           "delta": -0.319854
         },
         "Oracle Park__other_6to9": {
-          "n": 839,
-          "raw_mean": 0.26745,
-          "emp_rate": 0.235995,
-          "emp_shrunk": 0.25745,
-          "delta": -0.051667
+          "n": 902,
+          "raw_mean": 0.258529,
+          "emp_rate": 0.219512,
+          "emp_shrunk": 0.245504,
+          "delta": -0.069108
         },
         "London Stadium__other_10plus": {
           "n": 129,
@@ -13615,11 +13615,11 @@
           "delta": -0.045328
         },
         "American Family Field__in_10plus": {
-          "n": 1686,
-          "raw_mean": 0.400467,
-          "emp_rate": 0.561684,
-          "emp_shrunk": 0.478439,
-          "delta": 0.317225
+          "n": 1749,
+          "raw_mean": 0.393468,
+          "emp_rate": 0.541452,
+          "emp_shrunk": 0.466397,
+          "delta": 0.298143
         },
         "loanDepot park__other_10plus": {
           "n": 348,
@@ -13944,11 +13944,11 @@
           "delta": -0.091791
         },
         "Rate Field__out_6to9": {
-          "n": 576,
-          "raw_mean": 0.354965,
-          "emp_rate": 0.295139,
-          "emp_shrunk": 0.340462,
-          "delta": -0.063952
+          "n": 640,
+          "raw_mean": 0.348703,
+          "emp_rate": 0.365625,
+          "emp_shrunk": 0.353142,
+          "delta": 0.019486
         },
         "Rate Field__other_0to5": {
           "n": 359,
@@ -14056,27 +14056,27 @@
           "delta": -0.051029
         },
         "Las Vegas Ballpark__out_6to9": {
-          "n": 162,
-          "raw_mean": 0.509305,
-          "emp_rate": 0.617284,
-          "emp_shrunk": 0.518221,
-          "delta": 0.035691
+          "n": 170,
+          "raw_mean": 0.50872,
+          "emp_rate": 0.635294,
+          "emp_shrunk": 0.519643,
+          "delta": 0.043728
         }
       },
       "10.5": {
         "Kauffman Stadium__other_10plus": {
-          "n": 14611,
-          "raw_mean": 0.263732,
-          "emp_rate": 0.327219,
-          "emp_shrunk": 0.320256,
-          "delta": 0.274062
+          "n": 14666,
+          "raw_mean": 0.263484,
+          "emp_rate": 0.325992,
+          "emp_shrunk": 0.319159,
+          "delta": 0.270301
         },
         "PNC Park__out_10plus": {
-          "n": 10337,
-          "raw_mean": 0.284773,
-          "emp_rate": 0.350585,
-          "emp_shrunk": 0.340825,
-          "delta": 0.261287
+          "n": 10402,
+          "raw_mean": 0.284177,
+          "emp_rate": 0.348395,
+          "emp_shrunk": 0.338921,
+          "delta": 0.255731
         },
         "Tropicana Field__other_0to5": {
           "n": 40211,
@@ -14233,11 +14233,11 @@
           "delta": -0.095879
         },
         "Oriole Park at Camden Yards__out_6to9": {
-          "n": 9772,
-          "raw_mean": 0.290629,
-          "emp_rate": 0.331457,
-          "emp_shrunk": 0.325106,
-          "delta": 0.161929
+          "n": 9839,
+          "raw_mean": 0.289938,
+          "emp_rate": 0.3292,
+          "emp_shrunk": 0.323128,
+          "delta": 0.15625
         },
         "Globe Life Park in Arlington__out_10plus": {
           "n": 963,
@@ -14282,11 +14282,11 @@
           "delta": 0.043926
         },
         "Great American Ball Park__out_10plus": {
-          "n": 2986,
-          "raw_mean": 0.307092,
-          "emp_rate": 0.352646,
-          "emp_shrunk": 0.335513,
-          "delta": 0.130395
+          "n": 3058,
+          "raw_mean": 0.30536,
+          "emp_rate": 0.344343,
+          "emp_shrunk": 0.329899,
+          "delta": 0.113259
         },
         "Nationals Park__out_10plus": {
           "n": 3827,
@@ -14303,11 +14303,11 @@
           "delta": -0.033539
         },
         "Rogers Centre__other_0to5": {
-          "n": 17903,
-          "raw_mean": 0.251652,
-          "emp_rate": 0.240742,
-          "emp_shrunk": 0.241738,
-          "delta": -0.053351
+          "n": 17968,
+          "raw_mean": 0.25179,
+          "emp_rate": 0.243488,
+          "emp_shrunk": 0.244244,
+          "delta": -0.040459
         },
         "U.S. Cellular Field__out_10plus": {
           "n": 831,
@@ -14331,11 +14331,11 @@
           "delta": -0.027892
         },
         "Citi Field__out_10plus": {
-          "n": 11647,
-          "raw_mean": 0.249774,
-          "emp_rate": 0.21293,
-          "emp_shrunk": 0.217862,
-          "delta": -0.178351
+          "n": 11697,
+          "raw_mean": 0.250352,
+          "emp_rate": 0.21202,
+          "emp_shrunk": 0.217132,
+          "delta": -0.185721
         },
         "Coors Field__other_6to9": {
           "n": 5055,
@@ -14443,11 +14443,11 @@
           "delta": -0.19335
         },
         "Fenway Park__out_10plus": {
-          "n": 8931,
-          "raw_mean": 0.293217,
-          "emp_rate": 0.332773,
-          "emp_shrunk": 0.326138,
-          "delta": 0.154107
+          "n": 8981,
+          "raw_mean": 0.294364,
+          "emp_rate": 0.330921,
+          "emp_shrunk": 0.324817,
+          "delta": 0.142561
         },
         "Target Field__in_10plus": {
           "n": 5392,
@@ -15248,11 +15248,11 @@
           "delta": 0.03587
         },
         "Nationals Park__other_10plus": {
-          "n": 1923,
-          "raw_mean": 0.255611,
-          "emp_rate": 0.164327,
-          "emp_shrunk": 0.208461,
-          "delta": -0.265322
+          "n": 1970,
+          "raw_mean": 0.257256,
+          "emp_rate": 0.184264,
+          "emp_shrunk": 0.219114,
+          "delta": -0.210555
         },
         "Wrigley Field__out_10plus": {
           "n": 5282,
@@ -15514,11 +15514,11 @@
           "delta": 0.007961
         },
         "Target Field__out_10plus": {
-          "n": 7560,
-          "raw_mean": 0.266187,
-          "emp_rate": 0.288757,
-          "emp_shrunk": 0.284416,
-          "delta": 0.091397
+          "n": 7623,
+          "raw_mean": 0.265718,
+          "emp_rate": 0.28637,
+          "emp_shrunk": 0.282425,
+          "delta": 0.083995
         },
         "Rogers Centre__out_10plus": {
           "n": 3456,
@@ -15899,11 +15899,11 @@
           "delta": -0.087671
         },
         "Angel Stadium__other_6to9": {
-          "n": 7509,
-          "raw_mean": 0.260184,
-          "emp_rate": 0.226262,
-          "emp_shrunk": 0.232821,
-          "delta": -0.147439
+          "n": 7571,
+          "raw_mean": 0.261156,
+          "emp_rate": 0.232598,
+          "emp_shrunk": 0.238084,
+          "delta": -0.123246
         },
         "Angel Stadium__other_10plus": {
           "n": 1732,
@@ -16053,11 +16053,11 @@
           "delta": -0.44021
         },
         "Oracle Park__other_6to9": {
-          "n": 839,
-          "raw_mean": 0.210837,
-          "emp_rate": 0.112038,
-          "emp_shrunk": 0.179426,
-          "delta": -0.20035
+          "n": 902,
+          "raw_mean": 0.203738,
+          "emp_rate": 0.104213,
+          "emp_shrunk": 0.170514,
+          "delta": -0.218896
         },
         "London Stadium__other_10plus": {
           "n": 129,
@@ -16347,11 +16347,11 @@
           "delta": -0.065342
         },
         "American Family Field__in_10plus": {
-          "n": 1686,
-          "raw_mean": 0.318288,
-          "emp_rate": 0.331554,
-          "emp_shrunk": 0.324704,
-          "delta": 0.029414
+          "n": 1749,
+          "raw_mean": 0.312808,
+          "emp_rate": 0.319611,
+          "emp_shrunk": 0.31616,
+          "delta": 0.015553
         },
         "loanDepot park__other_10plus": {
           "n": 348,
@@ -16676,11 +16676,11 @@
           "delta": -0.085835
         },
         "Rate Field__out_6to9": {
-          "n": 576,
-          "raw_mean": 0.280305,
-          "emp_rate": 0.295139,
-          "emp_shrunk": 0.283901,
-          "delta": 0.017757
+          "n": 640,
+          "raw_mean": 0.273296,
+          "emp_rate": 0.265625,
+          "emp_shrunk": 0.271284,
+          "delta": -0.010155
         },
         "Rate Field__other_0to5": {
           "n": 359,
@@ -16788,27 +16788,27 @@
           "delta": -0.027625
         },
         "Las Vegas Ballpark__out_6to9": {
-          "n": 162,
-          "raw_mean": 0.444242,
-          "emp_rate": 0.617284,
-          "emp_shrunk": 0.45853,
-          "delta": 0.057701
+          "n": 170,
+          "raw_mean": 0.442715,
+          "emp_rate": 0.635294,
+          "emp_shrunk": 0.459334,
+          "delta": 0.067124
         }
       },
       "11.5": {
         "Kauffman Stadium__other_10plus": {
-          "n": 14611,
-          "raw_mean": 0.187315,
-          "emp_rate": 0.220587,
-          "emp_shrunk": 0.216938,
-          "delta": 0.183949
+          "n": 14666,
+          "raw_mean": 0.187168,
+          "emp_rate": 0.21976,
+          "emp_shrunk": 0.216197,
+          "delta": 0.180552
         },
         "PNC Park__out_10plus": {
-          "n": 10337,
-          "raw_mean": 0.202244,
-          "emp_rate": 0.223663,
-          "emp_shrunk": 0.220486,
-          "delta": 0.109494
+          "n": 10402,
+          "raw_mean": 0.2018,
+          "emp_rate": 0.222265,
+          "emp_shrunk": 0.219246,
+          "delta": 0.105017
         },
         "Tropicana Field__other_0to5": {
           "n": 40211,
@@ -16965,11 +16965,11 @@
           "delta": -0.094795
         },
         "Oriole Park at Camden Yards__out_6to9": {
-          "n": 9772,
-          "raw_mean": 0.207768,
-          "emp_rate": 0.23291,
-          "emp_shrunk": 0.229,
-          "delta": 0.124461
+          "n": 9839,
+          "raw_mean": 0.207234,
+          "emp_rate": 0.231324,
+          "emp_shrunk": 0.227599,
+          "delta": 0.11976
         },
         "Globe Life Park in Arlington__out_10plus": {
           "n": 963,
@@ -17014,11 +17014,11 @@
           "delta": 0.159388
         },
         "Great American Ball Park__out_10plus": {
-          "n": 2986,
-          "raw_mean": 0.221798,
-          "emp_rate": 0.252177,
-          "emp_shrunk": 0.240752,
-          "delta": 0.106654
+          "n": 3058,
+          "raw_mean": 0.220234,
+          "emp_rate": 0.246239,
+          "emp_shrunk": 0.236604,
+          "delta": 0.092915
         },
         "Nationals Park__out_10plus": {
           "n": 3827,
@@ -17035,11 +17035,11 @@
           "delta": -0.128744
         },
         "Rogers Centre__other_0to5": {
-          "n": 17903,
-          "raw_mean": 0.179721,
-          "emp_rate": 0.185332,
-          "emp_shrunk": 0.184819,
-          "delta": 0.034212
+          "n": 17968,
+          "raw_mean": 0.179766,
+          "emp_rate": 0.184662,
+          "emp_shrunk": 0.184216,
+          "delta": 0.029894
         },
         "U.S. Cellular Field__out_10plus": {
           "n": 831,
@@ -17063,11 +17063,11 @@
           "delta": -0.142475
         },
         "Citi Field__out_10plus": {
-          "n": 11647,
-          "raw_mean": 0.178402,
-          "emp_rate": 0.162359,
-          "emp_shrunk": 0.164507,
-          "delta": -0.097856
+          "n": 11697,
+          "raw_mean": 0.178812,
+          "emp_rate": 0.161665,
+          "emp_shrunk": 0.163952,
+          "delta": -0.104695
         },
         "Coors Field__other_6to9": {
           "n": 5055,
@@ -17175,11 +17175,11 @@
           "delta": -0.179488
         },
         "Fenway Park__out_10plus": {
-          "n": 8931,
-          "raw_mean": 0.212156,
-          "emp_rate": 0.249356,
-          "emp_shrunk": 0.243116,
-          "delta": 0.176306
+          "n": 8981,
+          "raw_mean": 0.213062,
+          "emp_rate": 0.247968,
+          "emp_shrunk": 0.24214,
+          "delta": 0.165584
         },
         "Target Field__in_10plus": {
           "n": 5392,
@@ -17980,11 +17980,11 @@
           "delta": 0.22495
         },
         "Nationals Park__other_10plus": {
-          "n": 1923,
-          "raw_mean": 0.183412,
-          "emp_rate": 0.112324,
-          "emp_shrunk": 0.146694,
-          "delta": -0.26737
+          "n": 1970,
+          "raw_mean": 0.184388,
+          "emp_rate": 0.109645,
+          "emp_shrunk": 0.145331,
+          "delta": -0.284803
         },
         "Wrigley Field__out_10plus": {
           "n": 5282,
@@ -18246,11 +18246,11 @@
           "delta": 0.031408
         },
         "Target Field__out_10plus": {
-          "n": 7560,
-          "raw_mean": 0.19093,
-          "emp_rate": 0.210847,
-          "emp_shrunk": 0.207016,
-          "delta": 0.100975
+          "n": 7623,
+          "raw_mean": 0.190484,
+          "emp_rate": 0.209104,
+          "emp_shrunk": 0.205547,
+          "delta": 0.094888
         },
         "Rogers Centre__out_10plus": {
           "n": 3456,
@@ -18631,11 +18631,11 @@
           "delta": -0.079818
         },
         "Angel Stadium__other_6to9": {
-          "n": 7509,
-          "raw_mean": 0.187684,
-          "emp_rate": 0.174457,
-          "emp_shrunk": 0.177015,
-          "delta": -0.071575
+          "n": 7571,
+          "raw_mean": 0.188021,
+          "emp_rate": 0.173029,
+          "emp_shrunk": 0.175908,
+          "delta": -0.081398
         },
         "Angel Stadium__other_10plus": {
           "n": 1732,
@@ -18785,11 +18785,11 @@
           "delta": -0.233402
         },
         "Oracle Park__other_6to9": {
-          "n": 839,
-          "raw_mean": 0.144295,
-          "emp_rate": 0.038141,
-          "emp_shrunk": 0.110546,
-          "delta": -0.30511
+          "n": 902,
+          "raw_mean": 0.139302,
+          "emp_rate": 0.035477,
+          "emp_shrunk": 0.104642,
+          "delta": -0.325575
         },
         "London Stadium__other_10plus": {
           "n": 129,
@@ -19079,11 +19079,11 @@
           "delta": -0.041952
         },
         "American Family Field__in_10plus": {
-          "n": 1686,
-          "raw_mean": 0.226913,
-          "emp_rate": 0.235469,
-          "emp_shrunk": 0.231051,
-          "delta": 0.023438
+          "n": 1749,
+          "raw_mean": 0.223162,
+          "emp_rate": 0.226987,
+          "emp_shrunk": 0.225047,
+          "delta": 0.01084
         },
         "loanDepot park__other_10plus": {
           "n": 348,
@@ -19408,11 +19408,11 @@
           "delta": -0.079748
         },
         "Rate Field__out_6to9": {
-          "n": 576,
-          "raw_mean": 0.198119,
-          "emp_rate": 0.194444,
-          "emp_shrunk": 0.197229,
-          "delta": -0.005617
+          "n": 640,
+          "raw_mean": 0.192166,
+          "emp_rate": 0.175,
+          "emp_shrunk": 0.187664,
+          "delta": -0.029268
         },
         "Rate Field__other_0to5": {
           "n": 359,
@@ -19520,22 +19520,22 @@
           "delta": 0.001441
         },
         "Las Vegas Ballpark__out_6to9": {
-          "n": 162,
-          "raw_mean": 0.361756,
-          "emp_rate": 0.617284,
-          "emp_shrunk": 0.382855,
-          "delta": 0.090301
+          "n": 170,
+          "raw_mean": 0.360269,
+          "emp_rate": 0.635294,
+          "emp_shrunk": 0.384002,
+          "delta": 0.101601
         }
       }
     },
     "density_alt": {
       "6.5": {
         "2_5k_5k": {
-          "n": 455199,
-          "raw_mean": 0.657982,
-          "emp_rate": 0.675388,
-          "emp_shrunk": 0.675331,
-          "delta": 0.078082
+          "n": 455667,
+          "raw_mean": 0.658056,
+          "emp_rate": 0.675458,
+          "emp_shrunk": 0.675401,
+          "delta": 0.078075
         },
         "<0": {
           "n": 87975,
@@ -19545,25 +19545,25 @@
           "delta": -0.12055
         },
         "1k_2_5k": {
-          "n": 530617,
-          "raw_mean": 0.638743,
-          "emp_rate": 0.632852,
-          "emp_shrunk": 0.632869,
-          "delta": -0.025369
+          "n": 530872,
+          "raw_mean": 0.638747,
+          "emp_rate": 0.63291,
+          "emp_shrunk": 0.632926,
+          "delta": -0.02514
         },
         "0_1k": {
-          "n": 168486,
-          "raw_mean": 0.632948,
-          "emp_rate": 0.612935,
-          "emp_shrunk": 0.613112,
-          "delta": -0.084471
+          "n": 168549,
+          "raw_mean": 0.632853,
+          "emp_rate": 0.612706,
+          "emp_shrunk": 0.612884,
+          "delta": -0.085026
         },
         "unknown": {
-          "n": 42495,
-          "raw_mean": 0.676598,
-          "emp_rate": 0.729804,
-          "emp_shrunk": 0.727989,
-          "delta": 0.246263
+          "n": 42503,
+          "raw_mean": 0.676616,
+          "emp_rate": 0.729854,
+          "emp_shrunk": 0.72804,
+          "delta": 0.246433
         },
         "5k+": {
           "n": 43877,
@@ -19575,11 +19575,11 @@
       },
       "7.5": {
         "2_5k_5k": {
-          "n": 455199,
-          "raw_mean": 0.536147,
-          "emp_rate": 0.563619,
-          "emp_shrunk": 0.563529,
-          "delta": 0.110655
+          "n": 455667,
+          "raw_mean": 0.536205,
+          "emp_rate": 0.563657,
+          "emp_shrunk": 0.563567,
+          "delta": 0.110578
         },
         "<0": {
           "n": 87975,
@@ -19589,25 +19589,25 @@
           "delta": -0.108143
         },
         "1k_2_5k": {
-          "n": 530617,
-          "raw_mean": 0.515521,
-          "emp_rate": 0.510417,
-          "emp_shrunk": 0.510432,
-          "delta": -0.020372
+          "n": 530872,
+          "raw_mean": 0.515522,
+          "emp_rate": 0.510534,
+          "emp_shrunk": 0.510548,
+          "delta": -0.019909
         },
         "0_1k": {
-          "n": 168486,
-          "raw_mean": 0.50922,
-          "emp_rate": 0.484361,
-          "emp_shrunk": 0.48458,
-          "delta": -0.098584
+          "n": 168549,
+          "raw_mean": 0.509127,
+          "emp_rate": 0.48418,
+          "emp_shrunk": 0.4844,
+          "delta": -0.098935
         },
         "unknown": {
-          "n": 42495,
-          "raw_mean": 0.555938,
-          "emp_rate": 0.621767,
-          "emp_shrunk": 0.619523,
-          "delta": 0.26283
+          "n": 42503,
+          "raw_mean": 0.555961,
+          "emp_rate": 0.621838,
+          "emp_shrunk": 0.619593,
+          "delta": 0.263036
         },
         "5k+": {
           "n": 43877,
@@ -19619,11 +19619,11 @@
       },
       "8.5": {
         "2_5k_5k": {
-          "n": 455199,
-          "raw_mean": 0.450735,
-          "emp_rate": 0.47807,
-          "emp_shrunk": 0.47798,
-          "delta": 0.109564
+          "n": 455667,
+          "raw_mean": 0.450781,
+          "emp_rate": 0.478038,
+          "emp_shrunk": 0.477948,
+          "delta": 0.109251
         },
         "<0": {
           "n": 87975,
@@ -19633,25 +19633,25 @@
           "delta": -0.162367
         },
         "1k_2_5k": {
-          "n": 530617,
-          "raw_mean": 0.430714,
-          "emp_rate": 0.424417,
-          "emp_shrunk": 0.424435,
-          "delta": -0.025655
+          "n": 530872,
+          "raw_mean": 0.43071,
+          "emp_rate": 0.424575,
+          "emp_shrunk": 0.424592,
+          "delta": -0.024994
         },
         "0_1k": {
-          "n": 168486,
-          "raw_mean": 0.423976,
-          "emp_rate": 0.398757,
-          "emp_shrunk": 0.39898,
-          "delta": -0.103246
+          "n": 168549,
+          "raw_mean": 0.423892,
+          "emp_rate": 0.398608,
+          "emp_shrunk": 0.398831,
+          "delta": -0.10352
         },
         "unknown": {
-          "n": 42495,
-          "raw_mean": 0.470593,
-          "emp_rate": 0.533051,
-          "emp_shrunk": 0.530921,
-          "delta": 0.241606
+          "n": 42503,
+          "raw_mean": 0.470616,
+          "emp_rate": 0.533139,
+          "emp_shrunk": 0.531008,
+          "delta": 0.241863
         },
         "5k+": {
           "n": 43877,
@@ -19663,11 +19663,11 @@
       },
       "9.5": {
         "2_5k_5k": {
-          "n": 455199,
-          "raw_mean": 0.342587,
-          "emp_rate": 0.363423,
-          "emp_shrunk": 0.363355,
-          "delta": 0.090957
+          "n": 455667,
+          "raw_mean": 0.342616,
+          "emp_rate": 0.363399,
+          "emp_shrunk": 0.363331,
+          "delta": 0.090721
         },
         "<0": {
           "n": 87975,
@@ -19677,25 +19677,25 @@
           "delta": -0.175534
         },
         "1k_2_5k": {
-          "n": 530617,
-          "raw_mean": 0.324712,
-          "emp_rate": 0.309704,
-          "emp_shrunk": 0.309746,
-          "delta": -0.069107
+          "n": 530872,
+          "raw_mean": 0.324692,
+          "emp_rate": 0.309798,
+          "emp_shrunk": 0.30984,
+          "delta": -0.068575
         },
         "0_1k": {
-          "n": 168486,
-          "raw_mean": 0.318219,
-          "emp_rate": 0.288796,
-          "emp_shrunk": 0.289055,
-          "delta": -0.138008
+          "n": 168549,
+          "raw_mean": 0.318152,
+          "emp_rate": 0.288688,
+          "emp_shrunk": 0.288947,
+          "delta": -0.138224
         },
         "unknown": {
-          "n": 42495,
-          "raw_mean": 0.360021,
-          "emp_rate": 0.419061,
-          "emp_shrunk": 0.417048,
-          "delta": 0.240368
+          "n": 42503,
+          "raw_mean": 0.360047,
+          "emp_rate": 0.41917,
+          "emp_shrunk": 0.417155,
+          "delta": 0.240696
         },
         "5k+": {
           "n": 43877,
@@ -19707,11 +19707,11 @@
       },
       "10.5": {
         "2_5k_5k": {
-          "n": 455199,
-          "raw_mean": 0.27483,
-          "emp_rate": 0.298201,
-          "emp_shrunk": 0.298125,
-          "delta": 0.11401
+          "n": 455667,
+          "raw_mean": 0.274845,
+          "emp_rate": 0.298134,
+          "emp_shrunk": 0.298058,
+          "delta": 0.113614
         },
         "<0": {
           "n": 87975,
@@ -19721,25 +19721,25 @@
           "delta": -0.193212
         },
         "1k_2_5k": {
-          "n": 530617,
-          "raw_mean": 0.25944,
-          "emp_rate": 0.246451,
-          "emp_shrunk": 0.246487,
-          "delta": -0.068553
+          "n": 530872,
+          "raw_mean": 0.259421,
+          "emp_rate": 0.246455,
+          "emp_shrunk": 0.246491,
+          "delta": -0.068431
         },
         "0_1k": {
-          "n": 168486,
-          "raw_mean": 0.25358,
-          "emp_rate": 0.22752,
-          "emp_shrunk": 0.22775,
-          "delta": -0.141449
+          "n": 168549,
+          "raw_mean": 0.253526,
+          "emp_rate": 0.227435,
+          "emp_shrunk": 0.227665,
+          "delta": -0.141646
         },
         "unknown": {
-          "n": 42495,
-          "raw_mean": 0.289669,
-          "emp_rate": 0.32352,
-          "emp_shrunk": 0.322366,
-          "delta": 0.154072
+          "n": 42503,
+          "raw_mean": 0.289692,
+          "emp_rate": 0.323648,
+          "emp_shrunk": 0.32249,
+          "delta": 0.154528
         },
         "5k+": {
           "n": 43877,
@@ -19751,11 +19751,11 @@
       },
       "11.5": {
         "2_5k_5k": {
-          "n": 455199,
-          "raw_mean": 0.196261,
-          "emp_rate": 0.214704,
-          "emp_shrunk": 0.214643,
-          "delta": 0.112669
+          "n": 455667,
+          "raw_mean": 0.196265,
+          "emp_rate": 0.214483,
+          "emp_shrunk": 0.214424,
+          "delta": 0.111339
         },
         "<0": {
           "n": 87975,
@@ -19765,25 +19765,25 @@
           "delta": -0.296329
         },
         "1k_2_5k": {
-          "n": 530617,
-          "raw_mean": 0.185156,
-          "emp_rate": 0.177689,
-          "emp_shrunk": 0.17771,
-          "delta": -0.05014
+          "n": 530872,
+          "raw_mean": 0.185138,
+          "emp_rate": 0.177604,
+          "emp_shrunk": 0.177625,
+          "delta": -0.050605
         },
         "0_1k": {
-          "n": 168486,
-          "raw_mean": 0.180547,
-          "emp_rate": 0.1552,
-          "emp_shrunk": 0.155424,
-          "delta": -0.180035
+          "n": 168549,
+          "raw_mean": 0.180507,
+          "emp_rate": 0.155142,
+          "emp_shrunk": 0.155366,
+          "delta": -0.180205
         },
         "unknown": {
-          "n": 42495,
-          "raw_mean": 0.207543,
-          "emp_rate": 0.251771,
-          "emp_shrunk": 0.250263,
-          "delta": 0.242588
+          "n": 42503,
+          "raw_mean": 0.207566,
+          "emp_rate": 0.251912,
+          "emp_shrunk": 0.2504,
+          "delta": 0.243178
         },
         "5k+": {
           "n": 43877,
@@ -19797,32 +19797,32 @@
     "hr_factor": {
       "6.5": {
         "0.95_1.05": {
-          "n": 406006,
-          "raw_mean": 0.64985,
-          "emp_rate": 0.664365,
-          "emp_shrunk": 0.664311,
-          "delta": 0.064185
+          "n": 414081,
+          "raw_mean": 0.650088,
+          "emp_rate": 0.665445,
+          "emp_shrunk": 0.665389,
+          "delta": 0.067977
         },
         "0.85_0.95": {
-          "n": 328752,
-          "raw_mean": 0.634023,
-          "emp_rate": 0.618856,
-          "emp_shrunk": 0.618924,
-          "delta": -0.064529
+          "n": 328940,
+          "raw_mean": 0.633979,
+          "emp_rate": 0.61869,
+          "emp_shrunk": 0.61876,
+          "delta": -0.065036
         },
         "1.05_1.15": {
-          "n": 272343,
-          "raw_mean": 0.652483,
-          "emp_rate": 0.667893,
-          "emp_shrunk": 0.667809,
-          "delta": 0.06832
+          "n": 264697,
+          "raw_mean": 0.652211,
+          "emp_rate": 0.666396,
+          "emp_shrunk": 0.666316,
+          "delta": 0.062796
         },
         "1.15+": {
-          "n": 128485,
-          "raw_mean": 0.661318,
-          "emp_rate": 0.679044,
-          "emp_shrunk": 0.67884,
-          "delta": 0.079271
+          "n": 128612,
+          "raw_mean": 0.661441,
+          "emp_rate": 0.679361,
+          "emp_shrunk": 0.679155,
+          "delta": 0.080167
         },
         "unknown": {
           "n": 115073,
@@ -19832,41 +19832,41 @@
           "delta": -0.013461
         },
         "<0.85": {
-          "n": 77990,
-          "raw_mean": 0.642693,
-          "emp_rate": 0.616682,
-          "emp_shrunk": 0.617172,
-          "delta": -0.10951
+          "n": 78040,
+          "raw_mean": 0.642884,
+          "emp_rate": 0.616927,
+          "emp_shrunk": 0.617417,
+          "delta": -0.109305
         }
       },
       "7.5": {
         "0.95_1.05": {
-          "n": 406006,
-          "raw_mean": 0.527708,
-          "emp_rate": 0.546982,
-          "emp_shrunk": 0.546911,
-          "delta": 0.077251
+          "n": 414081,
+          "raw_mean": 0.527892,
+          "emp_rate": 0.547724,
+          "emp_shrunk": 0.547652,
+          "delta": 0.079504
         },
         "0.85_0.95": {
-          "n": 328752,
-          "raw_mean": 0.510926,
-          "emp_rate": 0.498652,
-          "emp_shrunk": 0.498708,
-          "delta": -0.048877
+          "n": 328940,
+          "raw_mean": 0.510879,
+          "emp_rate": 0.498556,
+          "emp_shrunk": 0.498612,
+          "delta": -0.049074
         },
         "1.05_1.15": {
-          "n": 272343,
-          "raw_mean": 0.528741,
-          "emp_rate": 0.546612,
-          "emp_shrunk": 0.546514,
-          "delta": 0.071507
+          "n": 264697,
+          "raw_mean": 0.528479,
+          "emp_rate": 0.545469,
+          "emp_shrunk": 0.545373,
+          "delta": 0.067955
         },
         "1.15+": {
-          "n": 128485,
-          "raw_mean": 0.539643,
-          "emp_rate": 0.567981,
-          "emp_shrunk": 0.567654,
-          "delta": 0.113377
+          "n": 128612,
+          "raw_mean": 0.539734,
+          "emp_rate": 0.568407,
+          "emp_shrunk": 0.568077,
+          "delta": 0.114737
         },
         "unknown": {
           "n": 115073,
@@ -19876,41 +19876,41 @@
           "delta": 0.032929
         },
         "<0.85": {
-          "n": 77990,
-          "raw_mean": 0.51844,
-          "emp_rate": 0.487601,
-          "emp_shrunk": 0.488183,
-          "delta": -0.121069
+          "n": 78040,
+          "raw_mean": 0.518681,
+          "emp_rate": 0.487929,
+          "emp_shrunk": 0.488509,
+          "delta": -0.12073
         }
       },
       "8.5": {
         "0.95_1.05": {
-          "n": 406006,
-          "raw_mean": 0.442516,
-          "emp_rate": 0.461456,
-          "emp_shrunk": 0.461387,
-          "delta": 0.076196
+          "n": 414081,
+          "raw_mean": 0.442627,
+          "emp_rate": 0.461801,
+          "emp_shrunk": 0.461732,
+          "delta": 0.077134
         },
         "0.85_0.95": {
-          "n": 328752,
-          "raw_mean": 0.426401,
-          "emp_rate": 0.414817,
-          "emp_shrunk": 0.41487,
-          "delta": -0.047319
+          "n": 328940,
+          "raw_mean": 0.426356,
+          "emp_rate": 0.414769,
+          "emp_shrunk": 0.414821,
+          "delta": -0.047335
         },
         "1.05_1.15": {
-          "n": 272343,
-          "raw_mean": 0.442436,
-          "emp_rate": 0.450113,
-          "emp_shrunk": 0.45007,
-          "delta": 0.030897
+          "n": 264697,
+          "raw_mean": 0.442245,
+          "emp_rate": 0.449412,
+          "emp_shrunk": 0.449372,
+          "delta": 0.028844
         },
         "1.15+": {
-          "n": 128485,
-          "raw_mean": 0.454613,
-          "emp_rate": 0.487979,
-          "emp_shrunk": 0.487594,
-          "delta": 0.132416
+          "n": 128612,
+          "raw_mean": 0.454649,
+          "emp_rate": 0.487925,
+          "emp_shrunk": 0.487541,
+          "delta": 0.132058
         },
         "unknown": {
           "n": 115073,
@@ -19920,41 +19920,41 @@
           "delta": 0.027045
         },
         "<0.85": {
-          "n": 77990,
-          "raw_mean": 0.433081,
-          "emp_rate": 0.400795,
-          "emp_shrunk": 0.401404,
-          "delta": -0.130325
+          "n": 78040,
+          "raw_mean": 0.433347,
+          "emp_rate": 0.401179,
+          "emp_shrunk": 0.401786,
+          "delta": -0.129822
         }
       },
       "9.5": {
         "0.95_1.05": {
-          "n": 406006,
-          "raw_mean": 0.334671,
-          "emp_rate": 0.343478,
-          "emp_shrunk": 0.343445,
-          "delta": 0.039157
+          "n": 414081,
+          "raw_mean": 0.334709,
+          "emp_rate": 0.34345,
+          "emp_shrunk": 0.343418,
+          "delta": 0.038867
         },
         "0.85_0.95": {
-          "n": 328752,
-          "raw_mean": 0.321335,
-          "emp_rate": 0.307362,
-          "emp_shrunk": 0.307426,
-          "delta": -0.064537
+          "n": 328940,
+          "raw_mean": 0.321301,
+          "emp_rate": 0.307375,
+          "emp_shrunk": 0.307438,
+          "delta": -0.064323
         },
         "1.05_1.15": {
-          "n": 272343,
-          "raw_mean": 0.335087,
-          "emp_rate": 0.341481,
-          "emp_shrunk": 0.341446,
-          "delta": 0.028408
+          "n": 264697,
+          "raw_mean": 0.334986,
+          "emp_rate": 0.341398,
+          "emp_shrunk": 0.341362,
+          "delta": 0.028486
         },
         "1.15+": {
-          "n": 128485,
-          "raw_mean": 0.345455,
-          "emp_rate": 0.365436,
-          "emp_shrunk": 0.365205,
-          "delta": 0.086234
+          "n": 128612,
+          "raw_mean": 0.345463,
+          "emp_rate": 0.365502,
+          "emp_shrunk": 0.365271,
+          "delta": 0.086487
         },
         "unknown": {
           "n": 115073,
@@ -19964,41 +19964,41 @@
           "delta": -0.008106
         },
         "<0.85": {
-          "n": 77990,
-          "raw_mean": 0.328865,
-          "emp_rate": 0.303603,
-          "emp_shrunk": 0.30408,
-          "delta": -0.114621
+          "n": 78040,
+          "raw_mean": 0.329104,
+          "emp_rate": 0.304049,
+          "emp_shrunk": 0.304522,
+          "delta": -0.113619
         }
       },
       "10.5": {
         "0.95_1.05": {
-          "n": 406006,
-          "raw_mean": 0.267828,
-          "emp_rate": 0.276718,
-          "emp_shrunk": 0.276685,
-          "delta": 0.044703
+          "n": 414081,
+          "raw_mean": 0.267851,
+          "emp_rate": 0.276465,
+          "emp_shrunk": 0.276434,
+          "delta": 0.043332
         },
         "0.85_0.95": {
-          "n": 328752,
-          "raw_mean": 0.256618,
-          "emp_rate": 0.242465,
-          "emp_shrunk": 0.24253,
-          "delta": -0.075236
+          "n": 328940,
+          "raw_mean": 0.256595,
+          "emp_rate": 0.242515,
+          "emp_shrunk": 0.242579,
+          "delta": -0.074849
         },
         "1.05_1.15": {
-          "n": 272343,
-          "raw_mean": 0.268339,
-          "emp_rate": 0.282012,
-          "emp_shrunk": 0.281937,
-          "delta": 0.068192
+          "n": 264697,
+          "raw_mean": 0.268264,
+          "emp_rate": 0.282357,
+          "emp_shrunk": 0.282277,
+          "delta": 0.070256
         },
         "1.15+": {
-          "n": 128485,
-          "raw_mean": 0.277156,
-          "emp_rate": 0.292828,
-          "emp_shrunk": 0.292647,
-          "delta": 0.076052
+          "n": 128612,
+          "raw_mean": 0.277157,
+          "emp_rate": 0.292966,
+          "emp_shrunk": 0.292784,
+          "delta": 0.076708
         },
         "unknown": {
           "n": 115073,
@@ -20008,41 +20008,41 @@
           "delta": -0.023269
         },
         "<0.85": {
-          "n": 77990,
-          "raw_mean": 0.264034,
-          "emp_rate": 0.25084,
-          "emp_shrunk": 0.251089,
-          "delta": -0.067707
+          "n": 78040,
+          "raw_mean": 0.264185,
+          "emp_rate": 0.250679,
+          "emp_shrunk": 0.250934,
+          "delta": -0.069307
         }
       },
       "11.5": {
         "0.95_1.05": {
-          "n": 406006,
-          "raw_mean": 0.191084,
-          "emp_rate": 0.195364,
-          "emp_shrunk": 0.195348,
-          "delta": 0.02736
+          "n": 414081,
+          "raw_mean": 0.191074,
+          "emp_rate": 0.194701,
+          "emp_shrunk": 0.194688,
+          "delta": 0.023216
         },
         "0.85_0.95": {
-          "n": 328752,
-          "raw_mean": 0.182743,
-          "emp_rate": 0.171725,
-          "emp_shrunk": 0.171775,
-          "delta": -0.075228
+          "n": 328940,
+          "raw_mean": 0.18272,
+          "emp_rate": 0.171627,
+          "emp_shrunk": 0.171677,
+          "delta": -0.075756
         },
         "1.05_1.15": {
-          "n": 272343,
-          "raw_mean": 0.191948,
-          "emp_rate": 0.207804,
-          "emp_shrunk": 0.207717,
-          "delta": 0.098664
+          "n": 264697,
+          "raw_mean": 0.191939,
+          "emp_rate": 0.208884,
+          "emp_shrunk": 0.208789,
+          "delta": 0.105217
         },
         "1.15+": {
-          "n": 128485,
-          "raw_mean": 0.198448,
-          "emp_rate": 0.213753,
-          "emp_shrunk": 0.213576,
-          "delta": 0.092517
+          "n": 128612,
+          "raw_mean": 0.198442,
+          "emp_rate": 0.213604,
+          "emp_shrunk": 0.213429,
+          "delta": 0.091682
         },
         "unknown": {
           "n": 115073,
@@ -20052,30 +20052,30 @@
           "delta": 0.005497
         },
         "<0.85": {
-          "n": 77990,
-          "raw_mean": 0.188706,
-          "emp_rate": 0.17633,
-          "emp_shrunk": 0.176564,
-          "delta": -0.081364
+          "n": 78040,
+          "raw_mean": 0.188825,
+          "emp_rate": 0.176217,
+          "emp_shrunk": 0.176455,
+          "delta": -0.082891
         }
       }
     }
   },
   "lineage": {
     "schema_version": 1,
-    "built_at_utc": "2026-06-14T22:30:37.296233Z",
+    "built_at_utc": "2026-06-15T23:01:28.716516Z",
     "builder_path": "cache/build_mlb_stage2_run_env.py",
-    "git_sha": "adc16932f4ad",
+    "git_sha": "68a5a66d62b5",
     "git_branch": "main",
-    "git_dirty": null,
+    "git_dirty": true,
     "input_hashes": {
-      "cache/mlb_ou_cache.json": "sha256:c8d741821c03a1e3"
+      "cache/mlb_ou_cache.json": "sha256:37dcdf3f8e16d20d"
     },
     "input_dir_summaries": {
       "data/games/regular": {
-        "n_files": 24326,
+        "n_files": 24341,
         "min_mtime_utc": "2026-04-04T18:16:10.668634Z",
-        "max_mtime_utc": "2026-06-14T21:02:12.222718Z"
+        "max_mtime_utc": "2026-06-15T21:10:07.769511Z"
       }
     },
     "python_version": "3.11.0",

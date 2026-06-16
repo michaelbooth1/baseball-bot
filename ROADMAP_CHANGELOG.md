@@ -58,9 +58,17 @@ tape** and **0 of 108 adverse-drift losses had real selling against us**. The
 adverse drift is quote movement in thin/illiquid books, NOT informed flow.
 Consequences: the market-anchored model (Hygiene #11) is **de-prioritized**
 (its "informed flow" premise doesn't hold), and a new **Hygiene #12 —
-entry-timing / liquidity-aware execution** becomes the top execution lever
-(cheap, not a model). The `_shadow_clv_health` alert was corrected (it had
-pointed at a market-anchored lever). Full suite 1771 passed. Prior review
+liquidity-aware entry filter** becomes the top execution lever (cheap, not a
+model). The `_shadow_clv_health` alert was corrected (it had pointed at a
+market-anchored lever). **Then validated + thresholded Hygiene #12** before
+building it (`by_book_quality` taker-ROI tertiles in `build_shadow_clv.py`):
+"skip flat-tape" is a trap (~98% of bets are flat — not discriminating), and
+spread / trade-recency give no clean split — but **top-of-book DEPTH does**:
+deep books (entry depth ≥ ~5,800) returned **+13.2% taker ROI** (n=203, 78%
+WR) vs **−5.2%** for the bottom 2/3 (n=406), overall +1%. So Hygiene #12 is a
+**single depth-floor gate** (not a flat-tape filter); operator picks the cut
+from the tertile curve, confirm depth→ROI on live re-entry. `book_quality_
+verdict = ACTIONABLE_FILTER`. Full suite 1775 passed. Prior review
 **2026-06-14** below.
 
 Last roadmap review: **2026-06-14** (week-log audit of 06-07→06-13, plus

@@ -72,7 +72,7 @@ operator should read next. Use this to triage; full text is below.
 | 8 | UNDER per-line calibration | Re-run `--per-line-min-rows` for `--side under` once data supports it | **Deferred 2026-06-11 with evidence**: per-line UNDER is overfit on current counterfactual-label data (held-out logloss 0.813 vs 0.711 pooled; line-5.5 isotonic maps raw 0.05→0.82). Revisit when real UNDER paper outcomes accumulate (B4 runway). | B4 sample growth |
 | 9 | Calibrator-enforce floor `enforce_min_raw` 0.90→0.95 | One-line config (`signal_config.py` or override file) | **Recommended by the 06-14 audit, held for evidence.** Triple-corroborated: edge_shaving deep-dive verdict JUSTIFIED@0.95 ([0.95,1.0) = −17% ROI correctly blocked, [0.90,0.95) ~breakeven so shouldn't be shrunk); `L_enforce_min_raw_095` +$3.83 (COLLECTING); the daily "muting winners" alert (≈−$94/wk would-block, 7/7 days). Caveat: the day-level would-block cohort is noisier than the 30d aggregate (06-13 showed both bands net-negative — see the new band-split diagnostic). | More `L` evidence (firms on live re-entry) + sign-off |
 | 10 | Gate `gate_max_base_fv` 0.99→0.95 | `promote.py gate-threshold` | **Recommended by the 06-14 audit, held for sign-off.** Cert's own sweep + gate_counterfactual + post-calibrator window all agree (+$73/30d, +$152 lifetime, no window-reversal; newly-blocked 0.95–0.99 band = 75 filled bets @ −15.8%). The cert's nominal `KEEP` verdict is a heuristic artifact — it only inspects the current threshold (3 blocked) and ignores its own sweep. The `Q_max_base_fv_095` fleet arm (2026-06-15) now accrues FV-level paired-delta evidence on it. | Live re-entry (filled-bet evidence) + sign-off |
-| 12 | Entry-timing / liquidity-aware execution (the response to the CHASING finding) | Liquidity/quiet-book entry filter | **🔼 NEW 2026-06-15, now the top execution lever.** The shadow-CLV tape layer found the residual is **CHASING**: 97.7% of placed bets enter on a FLAT tape (no trades in 30s) into thin/wide books, and the 2-min adverse drift is quote-only. So the fix is cheap **execution-side**, not a model: don't bet into thin/quiet/wide books (liquidity floor, recent-trade-activity filter), wait for quote confirmation, and lean on the 06-04 `--max-limit-gap-below-ask` fill-gap cap. Scope the filter from the tape features (`trades_last_30s_count`, spread, `seconds_since_last_trade`). | Design the filter + live re-entry to measure |
+| 12 | Liquidity-aware entry filter — **top-of-book DEPTH floor** (response to the CHASING finding) | One gate: skip when entry top-depth < threshold | **🔼 VALIDATED + THRESHOLDED 2026-06-15.** The shadow-CLV liquidity validation found the actionable metric is **top-of-book depth**, NOT flat-tape (which is ~universal — that was a trap) and NOT spread/recency (no clean split). Deep books (entry `best_bid_size+best_ask_size` ≥ **~5,800**) returned **+13.2% taker ROI** (n=203, 78% WR); the bottom 2/3 by depth returned **−5.2%** (n=406); overall +1%. So a single depth-floor gate keeps the +EV book. Tradeoff: a ≥5,800 floor skips ~2/3 of volume — operator picks the cut from the tertile curve (`book_quality_verdict`). Caveat: paper-entry data + depth may proxy game-profile — confirm on live re-entry. | Operator picks cut + live re-entry to measure |
 | 11 | Market-anchored-alpha runtime shadow (unblocks T8 fleet arm) | 7-file live-pipeline ship (shadow only) | **🟦 QUEUED but ⬇️ DE-PRIORITIZED 2026-06-15.** Spec: [docs/operational/market-anchored-alpha-runtime-shadow.md](docs/operational/market-anchored-alpha-runtime-shadow.md). **Premise weakened:** the tape layer showed the adverse selection is **CHASING, not informed flow** (0/108 adverse losses had real selling against us), so a market-anchored "respond to informed flow" model is the WRONG lever — see Hygiene #12. What survives is only the narrow OOS-positive `no_score_drift`+`mid_no_vig` *calibration* improvement; keep this as that modest lever, below #12. | Operator sign-off; de-prioritized below Hygiene #12 |
 
 ### Research findings
@@ -765,16 +765,31 @@ _Accumulating debt; not blocking, but worth closing on a regular cadence so the 
     against us in 2 min, it is **quote movement in a thin/illiquid book**,
     not the market knowing something — we are entering quiet, wide books and
     the quote drifts off us (consistent with the −2.1c mean shadow-CLV).
-    **The fix is execution-side and cheap**, not a model: a liquidity /
-    quiet-book entry filter (skip when `trades_last_30s_count == 0` /
-    `seconds_since_last_trade` is large / spread is wide), wait for quote
-    confirmation, and the 2026-06-04 `--max-limit-gap-below-ask` fill-gap cap
-    is the first related slice. Design the filter thresholds from the tape
-    feature distributions; measure on live re-entry. This **outranks the
-    market-anchored model (Hygiene #11)** — that lever answers a problem
-    (informed flow) we don't have. Files: `build_shadow_clv.py` (diagnostic,
-    shipped), `scripts/trading/live_pricing.py` / `signal_pipeline*.py`
-    (the eventual filter, sign-off + re-entry gated).
+    **The fix is execution-side and cheap**, not a model.
+
+    **Validated + thresholded 2026-06-15** (shadow-CLV liquidity validation,
+    `by_book_quality` / `book_quality_verdict`). Bucketing realized taker ROI
+    by entry book quality settled the "what to filter on" question:
+    - **"Skip flat-tape" is a trap** — ~98% of bets are flat-tape, so it is
+      not a discriminating cohort (a flat-tape filter would shut the bot off).
+    - **Spread and trade-recency are NOT clean filters** (non-monotonic /
+      reversed: e.g. staler books were *slightly better*, both spread extremes
+      mildly −EV).
+    - **Top-of-book DEPTH is the actionable metric.** Deep books (entry
+      `best_bid_size + best_ask_size` ≥ **~5,800**) returned **+13.2% taker
+      ROI** (n=203, 78% WR); the bottom two-thirds by depth returned
+      **−5.2%** (n=406); overall taker ROI was only +1%. So a single
+      depth-floor gate keeps the profitable book.
+    **Design:** one gate — skip when entry top-of-book depth < threshold.
+    The ≥5,800 (66th-pct) cut skips ~2/3 of volume for +13% ROI; the operator
+    picks a less/more aggressive cut from the tertile curve. **Caveats:**
+    paper-entry data (fills at ask), and depth may proxy game-profile
+    (high-liquidity = high-profile games) — confirm the depth→ROI link holds
+    on live re-entry before shipping the gate. This **outranks the
+    market-anchored model (Hygiene #11)** — that lever answers informed flow,
+    a problem we don't have. Files: `build_shadow_clv.py` (validation,
+    shipped), `scripts/trading/signal_pipeline*.py` / `live_pricing.py` (the
+    eventual depth-floor gate, sign-off + re-entry gated).
 
 ## Research findings
 
